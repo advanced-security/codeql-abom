@@ -420,7 +420,7 @@ A Codespace starts the dev container with `--network host`, so the container is 
 network and the Demo's firewall rules land in the VM's tables, where they outlive the container: a
 rebuild finds them in place, so `confine` refills its own chain and adds its jump only once. It runs
 `postStartCommand` in a pass of its own, and that pass left what the start wrote unreadable to the
-Demo's user. Four rules follow, and `scripts/test_devcontainer.py` holds each one:
+Demo's user. Five rules follow, and `scripts/test_devcontainer.py` holds each one:
 
 - **The Demo's user ID is outside the system range.** The owner rule matches that ID across the VM,
   and a system ID could belong to one of the VM's own services, such as its resolver.
@@ -435,6 +435,9 @@ Demo's user. Four rules follow, and `scripts/test_devcontainer.py` holds each on
   the certificate, so a fault there leaves authoring off rather than the Demo down. Whether that
   pass applied a stricter umask or a default ACL on `/tmp` is not established; the start holds
   against both.
+- **A Demo that does not start leaves the Codespace's start succeeding.** Codespaces skips
+  `postAttachCommand` after a `postStartCommand` fails, and the status each attach prints is what
+  says why the Demo is down and what to run.
 
 ### Per-Codespace lifecycle
 

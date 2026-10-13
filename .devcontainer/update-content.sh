@@ -6,10 +6,14 @@ cd "$(dirname "$0")/.."
 # shellcheck source=.devcontainer/lib.sh
 . "$PWD/.devcontainer/lib.sh"
 codeql=$(tr -d '[:space:]' <.codeql-version)
+# A Codespace runs this in a terminal, where .NET would redraw its progress into the creation log.
+export MSBUILDTERMINALLOGGER=off
+export DOTNET_NOLOGO=1
 
-# Downloading first leaves the builds nothing to fetch, so only the downloads need retrying.
+# make builds with the toolchain the Makefile pins. Downloading it and the modules first leaves the
+# builds nothing to fetch, so only the downloads need retrying.
 echo "update-content: building ABOM"
-retry go mod download
+retry make download
 make build
 install -m 0755 bin/codeql-abom /opt/abom-demo/codeql-abom
 echo "update-content: publishing its interface"
@@ -26,9 +30,10 @@ while IFS= read -r manifest; do
 	retry as_demo codeql pack ci "$PWD/$(dirname "$manifest")" </dev/null
 done < <(find ql/actions -name codeql-pack.yml | sort)
 echo "update-content: installing the packs a Demo's own queries and tests use"
-as_demo /opt/abom-demo/codeql-abom demo init --dir "$scratch/demo" --sources "$PWD/testdata/corpus"
+as_demo /opt/abom-demo/codeql-abom demo init --dir "$scratch/demo" --sources "$PWD/testdata/corpus" >/dev/null
 retry as_demo codeql pack install "$scratch/demo/ql"
-retry as_demo codeql pack install --additional-packs "$scratch/demo/ql" "$scratch/demo/ql/test"
+# The tests' pack resolves the Demo's own query pack locally, which is the point of the scratch Demo.
+retry as_demo codeql pack install --no-strict-mode --additional-packs "$scratch/demo/ql" "$scratch/demo/ql/test"
 # ABOM's own PrintAST runs the Actions tool pack ql-mcp publishes for this CodeQL release.
 retry as_demo codeql pack download "advanced-security/ql-mcp-actions-tools-src@${codeql#v}"
 

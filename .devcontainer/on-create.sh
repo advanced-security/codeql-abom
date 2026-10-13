@@ -35,7 +35,7 @@ echo "on-create: installing the Copilot CLI and ql-mcp for the Demo's user"
 sudo install -d -o "$(id -u)" -g abom-demo -m 0755 /opt/abom-demo
 sudo install -d -o abom-demo -g abom-demo -m 0755 /opt/abom-demo/tools
 as_demo() { sudo -u abom-demo -H env -i PATH="/opt/codeql:$PATH" HOME=/home/abom-demo LANG=C.UTF-8 "$@"; }
-retry as_demo npm install --prefix /opt/abom-demo/tools --no-fund --no-audit --no-update-notifier \
+retry as_demo npm install --prefix /opt/abom-demo/tools --no-fund --no-audit --no-update-notifier --no-progress \
 	"@github/copilot@$copilot" "codeql-development-mcp-server@${codeql#v}"
 echo "on-create: installing ql-mcp's Actions tool packs"
 retry as_demo env CODEQL_PATH=/opt/codeql/codeql \

@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -131,16 +132,18 @@ class ConfigurationTests(unittest.TestCase):
         self.assertIn("getent hosts", confine, "the proof never tries a lookup")
 
     # Otherwise the Go feature builds ten tools at their latest versions and pipes golangci-lint's
-    # installer into a root shell: three minutes of each Codespace's creation, unpinned, and a
-    # failure that leaves a recovery container.
-    def test_the_image_builds_no_go_tools_at_their_latest_versions(self):
-        go = self.config()["features"]["ghcr.io/devcontainers/features/go:1"]
-        self.assertIs(go.get("installGoTools"), False)
+    # installer into a root shell, and the Node feature installs pnpm at its latest version with its
+    # install scripts refused: minutes of each Codespace's creation, unpinned, for tools the Demo never
+    # runs, and failures that leave a recovery container.
+    def test_the_image_installs_no_extra_tools_at_their_latest_versions(self):
+        features = self.config()["features"]
+        self.assertIs(features["ghcr.io/devcontainers/features/go:1"].get("installGoTools"), False)
+        self.assertEqual(features["ghcr.io/devcontainers/features/node:1"].get("pnpmVersion"), "none")
 
     # In a Codespace a lifecycle command that fails leaves a recovery container holding none of the
     # tools, so one dropped connection during creation cost the whole Codespace.
     def test_every_network_step_of_creation_is_retried(self):
-        network = re.compile(r"\b(npm install|setup-packs|codeql pack|go mod download|dotnet restore)\b")
+        network = re.compile(r"\b(npm install|setup-packs|codeql pack|go mod download|make download|dotnet restore)\b")
         for name in ["on-create.sh", "update-content.sh"]:
             script = DEVCONTAINER / name
             with self.subTest(script=name):
@@ -151,6 +154,26 @@ class ConfigurationTests(unittest.TestCase):
                     self.assertTrue(step.startswith("retry "), step)
                 for step in [line for line in commands(script) if re.search(r"\bcurl\b", line)]:
                     self.assertIn("--retry", step)
+
+    # make builds with the toolchain the Makefile pins, which go downloads the first time it runs. A
+    # download outside make fetched only the modules, so the build still reached the network unretried.
+    def test_the_build_downloads_nothing_that_was_not_retried(self):
+        lines = commands(DEVCONTAINER / "update-content.sh")
+        downloads = [i for i, line in enumerate(lines) if line == "retry make download"]
+        builds = [i for i, line in enumerate(lines) if line == "make build"]
+        self.assertTrue(downloads, "nothing fetches the pinned toolchain under retry")
+        self.assertTrue(builds)
+        self.assertLess(downloads[0], builds[0])
+        self.assertRegex((ROOT / "Makefile").read_text(), r"(?m)^download:\n\t@?go mod download\b")
+
+    # A Codespace runs lifecycle commands in a terminal, so tools draw progress into the creation log:
+    # .NET's redrew itself into 3,500 lines there, the log a recovery container leaves to read.
+    def test_creation_draws_no_progress_into_its_log(self):
+        update = (DEVCONTAINER / "update-content.sh").read_text()
+        self.assertRegex(update, r"(?m)^export MSBUILDTERMINALLOGGER=off\b")
+        self.assertRegex(update, r"(?m)^export DOTNET_NOLOGO=1\b")
+        for step in [line for line in commands(DEVCONTAINER / "on-create.sh") if "npm install" in line]:
+            self.assertIn("--no-progress", step)
 
     # A Codespace stop clears the Demo's directory, so each start gives the new Demo the sign-in again.
     def test_each_start_gives_the_demo_an_existing_sign_in(self):
@@ -181,6 +204,16 @@ class ConfigurationTests(unittest.TestCase):
         self.assertTrue(checks, "nothing checks the certificate as the Demo's user before offering authoring")
         self.assertTrue(offers)
         self.assertLess(checks[0], offers[0])
+
+    # demo serve that refuses its arguments exits at once, and the start still waited out its 30
+    # seconds before saying so.
+    def test_a_demo_that_exits_is_reported_as_soon_as_it_exits(self):
+        script = (DEVCONTAINER / "start-demo.sh").read_text()
+        wait = re.search(r"(?ms)^for _ in \$\(seq 1 30\); do\n(.*?)^done$", script)
+        self.assertIsNotNone(wait, "the start no longer waits for the Demo to answer")
+        self.assertIn('/proc/$serve', wait.group(1), "the wait never looks at whether the Demo is still running")
+        # Something else holding the port can accept a connection and never answer.
+        self.assertRegex(wait.group(1), r"curl [^\n]*--max-time \d", "one request can outlast the whole wait")
 
 
 class CopilotLoginTests(unittest.TestCase):
@@ -343,8 +376,11 @@ class StatusTests(unittest.TestCase):
         scratch = tempfile.TemporaryDirectory()
         self.addCleanup(scratch.cleanup)
         tools = Path(scratch.name)
+        self.logs = tools / "logs"
+        self.logs.mkdir()
         # The Demo as curl reaches it: loopback is admitted, and the forwarded address as told.
         tool(tools / "curl", """#!/bin/sh
+[ -z "${DEMO_DOWN:-}" ] || exit 7
 case "$*" in
 *"Host: "*) printf '%s' "$FORWARDED_ANSWER" ;;
 */api/instance*) printf '%s' '{"mode":"demo","authoring":"copilot"}' ;;
@@ -353,13 +389,28 @@ case "$*" in
 esac
 """)
         self.environment = dict(os.environ, PATH=f"{tools}{os.pathsep}{os.environ['PATH']}", CODESPACES="true",
-                                CODESPACE_NAME="fluffy-space",
+                                CODESPACE_NAME="fluffy-space", ABOM_DEMO_LOGS=str(self.logs),
                                 GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN="app.github.dev")
 
-    def status(self, forwarded_answer):
+    def status(self, forwarded_answer, **environment):
         return subprocess.run(["bash", str(DEVCONTAINER / "status.sh")],
-                              env=dict(self.environment, FORWARDED_ANSWER=forwarded_answer),
+                              env=dict(self.environment, FORWARDED_ANSWER=forwarded_answer, **environment),
                               capture_output=True, text=True, timeout=30, check=False)
+
+    # The Ports panel is one more thing to find; the terminal can print the address itself.
+    def test_in_a_codespace_it_names_the_address_to_open(self):
+        result = self.status("200")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("https://fluffy-space-8099.app.github.dev/", result.stdout)
+
+    # "See serve.log" sent people to read a file for one line: the reason the Demo stopped.
+    def test_a_demo_that_is_not_answering_shows_why_from_its_log(self):
+        (self.logs / "serve.log").write_text("serve: listening\ndemo serve: egress-ca.pem holds no certificate\n")
+        result = self.status("200", DEMO_DOWN="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("not answering", result.stdout)
+        self.assertIn("demo serve: egress-ca.pem holds no certificate", result.stdout)
+        self.assertNotIn("serve: listening", result.stdout)
 
     # The Demo admits loopback and the one forwarded address it was started with. Started where the
     # environment named none, it refuses every request the browser makes.
@@ -381,6 +432,23 @@ esac
         result = self.status("403")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("refuses", result.stdout)
+
+
+class PostStartTests(unittest.TestCase):
+    """post-start.sh, which each start of a Codespace runs."""
+
+    # A postStartCommand that fails makes Codespaces skip postAttachCommand, so the status that says
+    # what went wrong and what to run never reached whoever was waiting for the Demo.
+    def test_a_demo_that_fails_to_start_does_not_fail_the_codespace_start(self):
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        here = Path(scratch.name)
+        shutil.copy(DEVCONTAINER / "post-start.sh", here / "post-start.sh")
+        tool(here / "start-demo.sh", '#!/bin/sh\necho "start-demo $*"\nexit 1\n')
+        result = subprocess.run(["bash", str(here / "post-start.sh")], capture_output=True, text=True,
+                                timeout=30, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("start-demo --fresh", result.stdout)
 
 
 if __name__ == "__main__":

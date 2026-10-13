@@ -124,15 +124,25 @@ setsid sudo -u abom-demo -H env -i PATH="$PATH" HOME=/home/abom-demo LANG=C.UTF-
 	sh -c 'umask 007; exec "$@"' sh \
 	"$bin" demo serve --dir "$root" --addr "127.0.0.1:$port" --ui-dir /opt/abom-demo/ui/wwwroot \
 	--codeql /opt/codeql/codeql --allow-host "$hosts" "${authoring[@]}" >>"$logs/serve.log" 2>&1 &
-echo $! >"$logs/serve.pid"
+serve=$!
+echo "$serve" >"$logs/serve.pid"
 
 for _ in $(seq 1 30); do
-	if curl -fs -o /dev/null "http://127.0.0.1:$port/api/instance"; then
-		echo "start-demo: ABOM Demo is serving on port $port; open it from the Ports panel"
+	if curl -fs --max-time 2 -o /dev/null "http://127.0.0.1:$port/api/instance"; then
+		if [ -n "$hosts" ]; then
+			echo "start-demo: ABOM Demo is serving at https://$hosts/"
+		else
+			echo "start-demo: ABOM Demo is serving on port $port; open it from the Ports panel"
+		fi
 		exit 0
 	fi
+	[ -d "/proc/$serve" ] || break
 	sleep 1
 done
-echo "start-demo: the Demo did not answer within 30s; see $logs/serve.log" >&2
+if [ -d "/proc/$serve" ]; then
+	echo "start-demo: the Demo did not answer within 30s; see $logs/serve.log" >&2
+else
+	echo "start-demo: the Demo stopped as it started; see $logs/serve.log" >&2
+fi
 tail -n 20 "$logs/serve.log" >&2
 exit 1
