@@ -5,7 +5,6 @@ import os
 import ipaddress
 import re
 import secrets
-import shutil
 import signal
 import subprocess
 import sys
@@ -24,6 +23,8 @@ BACKEND_ENV = "ABOM_TEST_STORE_BACKEND"
 # How many processes run the store suite at once; each test migrates its own schema, so they share
 # one primary without seeing each other.
 SHARDS_ENV = "ABOM_TEST_SHARDS"
+# The same split on every machine, so a failure between tests that share a shard reproduces anywhere.
+DEFAULT_SHARDS = 4
 PROBE = ["python3", "-c", """
 import os, socket, struct, urllib.parse
 url = urllib.parse.urlsplit(os.environ["ABOM_TEST_POSTGRES_DSN"])
@@ -34,45 +35,65 @@ print("PostgreSQL answered its wire protocol; storage compatibility was not test
 """]
 
 
+def shard_count():
+    """How many processes run the store suite: ABOM_TEST_SHARDS, or DEFAULT_SHARDS when unset."""
+    value = os.environ.get(SHARDS_ENV, "").strip()
+    if not value:
+        return DEFAULT_SHARDS
+    try:
+        shards = int(value)
+    except ValueError:
+        shards = 0
+    if shards < 1:
+        raise RuntimeError(f"{SHARDS_ENV} must be a positive integer, not {value!r}")
+    return shards
+
+
 def shard_store(environment):
     """Run the store suite on PostgreSQL as one compile and several concurrent processes."""
-    shards = max(1, int(os.environ.get(SHARDS_ENV) or min(4, os.cpu_count() or 1)))
+    shards = shard_count()
     package = os.path.join(os.getcwd(), "internal", "store")
-    scratch = tempfile.mkdtemp(prefix="abom-store-shards-")
-    processes = []
-    try:
+    with tempfile.TemporaryDirectory(prefix="abom-store-shards-") as scratch:
         binary = os.path.join(scratch, "store.test")
         built = subprocess.run(["go", "test", "-c", "-race", "-o", binary, "./internal/store"],
                                env=environment, check=False)
         if built.returncode:
             return built.returncode
         listed = subprocess.run([binary, "-test.list", "."], cwd=package, env=environment,
-                                check=True, capture_output=True, text=True, timeout=120)
+                                check=False, capture_output=True, text=True, timeout=120)
+        if listed.returncode:
+            output = ((listed.stdout or "") + (listed.stderr or "")).strip()
+            raise RuntimeError(f"listing the store tests failed with exit {listed.returncode}: {output}")
         names = sorted(name for name in listed.stdout.split() if name.startswith("Test"))
+        if not names:
+            raise RuntimeError("the store test binary listed no tests, so the suite would pass having run none")
         groups = [group for group in (names[i::shards] for i in range(shards)) if group]
         print(f"store tests: {len(names)} tests in {len(groups)} concurrent processes", flush=True)
-        for index, group in enumerate(groups):
-            log = open(os.path.join(scratch, f"shard-{index}.log"), "w+")
-            process = subprocess.Popen(
-                [binary, "-test.run", "^(" + "|".join(group) + ")$", "-test.count=1", "-test.timeout=20m"],
-                cwd=package, env=environment, stdout=log, stderr=subprocess.STDOUT)
-            processes.append((index, group, process, log))
-        failed = 0
-        for index, group, process, log in processes:
-            code = process.wait()
-            log.seek(0)
-            print(f"--- store shard {index + 1} of {len(groups)}: {len(group)} tests, exit {code}", flush=True)
-            print(log.read(), end="", flush=True)
-            failed = failed or code
-        return failed
-    finally:
-        # Interrupted: a shard still running would hold the container this run is about to remove.
-        for _, _, process, log in processes:
-            if process.poll() is None:
-                process.kill()
-                process.wait()
-            log.close()
-        shutil.rmtree(scratch, ignore_errors=True)
+        processes = []
+        try:
+            for index, group in enumerate(groups):
+                path = os.path.join(scratch, f"shard-{index}.log")
+                # The shard writes through its own copy of the descriptor, so this one closes at once.
+                with open(path, "w") as log:
+                    process = subprocess.Popen(
+                        [binary, "-test.run", "^(" + "|".join(group) + ")$", "-test.count=1", "-test.timeout=20m"],
+                        cwd=package, env=environment, stdout=log, stderr=subprocess.STDOUT)
+                processes.append((index, group, process, path))
+            failed = 0
+            for index, group, process, path in processes:
+                code = process.wait()
+                with open(path) as log:
+                    output = log.read()
+                print(f"--- store shard {index + 1} of {len(groups)}: {len(group)} tests, exit {code}", flush=True)
+                print(output, end="", flush=True)
+                failed = failed or code
+            return failed
+        finally:
+            # Interrupted: a shard still running would hold the container this run is about to remove.
+            for _, _, process, _ in processes:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
 
 
 STORE = [
