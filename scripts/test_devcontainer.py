@@ -166,18 +166,51 @@ class ConfigurationTests(unittest.TestCase):
         self.assertLess(downloads[0], builds[0])
         self.assertRegex((ROOT / "Makefile").read_text(), r"(?m)^download:\n\t@?go mod download\b")
 
-    # A Codespace runs lifecycle commands in a terminal, so tools draw progress into the creation log:
-    # .NET's redrew itself into 3,500 lines there, the log a recovery container leaves to read.
-    def test_creation_draws_no_progress_into_its_log(self):
+    # A Codespace runs lifecycle commands in a terminal, so tools draw progress and terminal control
+    # codes into the creation log: .NET's redrew itself into 3,500 lines there, the log a recovery
+    # container leaves to read.
+    def test_creation_writes_no_terminal_noise_into_its_log(self):
         update = (DEVCONTAINER / "update-content.sh").read_text()
         self.assertRegex(update, r"(?m)^export MSBUILDTERMINALLOGGER=off\b")
         self.assertRegex(update, r"(?m)^export DOTNET_NOLOGO=1\b")
+        # The first use of an SDK checks workloads ABOM does not use, and says so when it cannot.
+        self.assertRegex(update, r"(?m)^export DOTNET_SKIP_WORKLOAD_INTEGRITY_CHECK=true\b")
+        # .NET switches a terminal on its standard input into keypad mode, writing [?1h each start.
+        dotnet = [line for line in commands(DEVCONTAINER / "update-content.sh")
+                  if re.search(r"\bdotnet\b|\bmake publish\b", line)]
+        self.assertTrue(dotnet, "no .NET step found")
+        for step in dotnet:
+            self.assertTrue(step.endswith("</dev/null"), step)
         for step in [line for line in commands(DEVCONTAINER / "on-create.sh") if "npm install" in line]:
             self.assertIn("--no-progress", step)
+
+    # A prebuild runs these before any user or Codespace exists: whatever they read from one would be
+    # absent there, or worse, the prebuild's own, baked into every Codespace made from it.
+    def test_prebuild_steps_need_nothing_only_a_codespace_has(self):
+        codespace_only = re.compile(r"CODESPACE_NAME|GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN|GITHUB_TOKEN|GH_TOKEN|"
+                                    r"GITHUB_USER|copilot-login|gh auth")
+        for name in ["on-create.sh", "update-content.sh", "lib.sh"]:
+            with self.subTest(script=name):
+                self.assertEqual(codespace_only.findall((DEVCONTAINER / name).read_text()), [])
 
     # A Codespace stop clears the Demo's directory, so each start gives the new Demo the sign-in again.
     def test_each_start_gives_the_demo_an_existing_sign_in(self):
         self.assertIn("copilot-login.sh\" --if-signed-in", (DEVCONTAINER / "start-demo.sh").read_text())
+
+    # A session spends its user's AI credits, and one nobody limited spends them until its time limit
+    # runs out. Whoever opens a Codespace may never have read about either.
+    def test_a_codespace_demo_limits_what_one_session_may_spend(self):
+        default = re.search(r"(?m)^credits=\$\{ABOM_DEMO_CREDITS:-(\d+)\}$", (DEVCONTAINER / "start-demo.sh").read_text())
+        self.assertIsNotNone(default, "the start no longer reads ABOM_DEMO_CREDITS with a default")
+        # Copilot refuses a limit below 30 AI credits, so a lower default would refuse every session.
+        self.assertGreaterEqual(int(default.group(1)), 30)
+
+    # ABOM's default model is offered on some Copilot plans only, and on any other every session fails
+    # as it starts, in a Codespace whose user may be on any plan.
+    def test_a_codespace_demo_runs_the_model_it_is_told_to(self):
+        script = (DEVCONTAINER / "start-demo.sh").read_text()
+        self.assertRegex(script, r"(?m)^model=\$\{ABOM_DEMO_MODEL:-\}$")
+        self.assertRegex(script, r'--authoring-model "\$model"')
 
     # The Demo's user reads what the start writes, such as the egress proxy's certificate. In a
     # Codespace it could not, so whoever starts the script must not decide that through their umask.
@@ -397,11 +430,15 @@ esac
                               env=dict(self.environment, FORWARDED_ANSWER=forwarded_answer, **environment),
                               capture_output=True, text=True, timeout=30, check=False)
 
-    # The Ports panel is one more thing to find; the terminal can print the address itself.
+    # The Ports panel is one more thing to find; the terminal can print the address itself. Codespaces
+    # masks the Codespace's name in some output, so the line names the port's panel entry as well.
     def test_in_a_codespace_it_names_the_address_to_open(self):
         result = self.status("200")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("https://fluffy-space-8099.app.github.dev/", result.stdout)
+        address = [line for line in result.stdout.splitlines() if line.startswith("ABOM Demo: https:")]
+        self.assertEqual(len(address), 1, result.stdout)
+        self.assertIn("https://fluffy-space-8099.app.github.dev/", address[0])
+        self.assertIn("Ports panel", address[0])
 
     # "See serve.log" sent people to read a file for one line: the reason the Demo stopped.
     def test_a_demo_that_is_not_answering_shows_why_from_its_log(self):

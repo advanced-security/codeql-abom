@@ -1,12 +1,16 @@
 package harness
 
 import (
+	"encoding/json"
+	"errors"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/rpc"
 )
 
 func aCopilot() *Copilot {
@@ -158,5 +162,57 @@ func TestNoCreditLimitIsSetWhereNoneWasConfigured(t *testing.T) {
 	c.Credits = 0
 	if cfg := c.config(aSetup(t)); cfg.SessionLimits != nil {
 		t.Errorf("limits %+v", cfg.SessionLimits)
+	}
+}
+
+// The runtime holds the model call that would spend past the limit until it is told whether to
+// spend more. The limit is the operator's to raise, never the session's, so ABOM always declines.
+func TestASessionAtItsCreditLimitDeclinesToSpendMoreAndRemembersWhatItSpent(t *testing.T) {
+	answered := make(chan rpc.UIHandlePendingSessionLimitsExhaustedRequest, 2)
+	limit := &creditLimit{answer: func(r rpc.UIHandlePendingSessionLimitsExhaustedRequest) { answered <- r }}
+	limit.observe(copilot.SessionEvent{Data: &copilot.AssistantMessageData{Content: "working"}})
+	if err := limit.reached(); err != nil {
+		t.Fatalf("a message read as the limit: %v", err)
+	}
+	limit.observe(copilot.SessionEvent{Data: &copilot.SessionLimitsExhaustedRequestedData{
+		RequestID: "r1", MaxAiCredits: 30, UsedAiCredits: 31.810175}})
+	select {
+	case r := <-answered:
+		if r.RequestID != "r1" || r.Response.Action != rpc.UISessionLimitsExhaustedResponseActionCancel {
+			t.Errorf("answered %+v, want r1 declined", r)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the held model call was never answered")
+	}
+	var spent *CreditLimitError
+	if err := limit.reached(); !errors.As(err, &spent) || spent.Limit != 30 || spent.Spent != 31.810175 {
+		t.Errorf("remembered %v", err)
+	}
+}
+
+// Copilot CLI 1.0.88 asks nothing of a session like this one: it blocks the model call, says so in
+// a limits status the SDK does not type, and fails the turn. The payload is the one it emitted.
+func TestASessionTheRuntimeBlockedAtItsCreditLimitRemembersWhatItSpent(t *testing.T) {
+	limit := &creditLimit{answer: func(r rpc.UIHandlePendingSessionLimitsExhaustedRequest) {
+		t.Errorf("answered %+v, which nothing asked", r)
+	}}
+	limit.observe(copilot.SessionEvent{Data: &copilot.RawSessionEventData{
+		EventType: "model.response_limits_status",
+		Raw: json.RawMessage(`{"kind":"response_limits_status","turn":0.0,"status":{"aiCreditsUsed":33.07655,` +
+			`"aiCreditsRemaining":0.0,"maxAiCredits":30.0,"isLimitsExhausted":false,"isFinalModelCall":true},` +
+			`"state":"final","message":"This is the session's last model call."}`),
+	}})
+	if err := limit.reached(); err != nil {
+		t.Fatalf("a status that is not exhausted read as the limit: %v", err)
+	}
+	limit.observe(copilot.SessionEvent{Data: &copilot.RawSessionEventData{
+		EventType: "model.response_limits_status",
+		Raw: json.RawMessage(`{"kind":"response_limits_status","turn":0.0,"status":{"aiCreditsUsed":33.07655,` +
+			`"aiCreditsRemaining":0.0,"maxAiCredits":30.0,"isLimitsExhausted":true,"isFinalModelCall":false},` +
+			`"state":"blocked","message":"Session limit reached. Increase or unset the session limit to continue."}`),
+	}})
+	var spent *CreditLimitError
+	if err := limit.reached(); !errors.As(err, &spent) || spent.Limit != 30 || spent.Spent != 33.07655 {
+		t.Errorf("remembered %v", err)
 	}
 }

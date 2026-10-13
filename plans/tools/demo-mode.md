@@ -46,7 +46,12 @@ Built (see [Demo](../../docs/demo.md)): `codeql-abom demo init --dir <root> [--r
 `serve --demo` flag so an ordinary server's flags are refused by construction. `demo egress` is the
 allowlisting proxy. `--replace` acts only on a directory holding a demo manifest; nothing yet proves
 the server is stopped first (pending 5). Copilot authoring is selected by `--copilot-cli`, an
-installed `--ql-mcp` and `--egress-proxy` together; without the proxy it is unavailable.
+installed `--ql-mcp` and `--egress-proxy` together; without the proxy it is unavailable. The ql-mcp
+must come from the CodeQL release `.codeql-version` names: 2.25.2's PrintAST writes an extension for
+a predicate its own query pack lacks, so it starts and then fails inside a session. A Codespace
+installs that release; `make demo` leaves authoring off for any other, and `make demo-check` names
+it. ql-mcp has no `--version`, and starting it starts CodeQL's language and query servers, so the
+release is read from the line it logs first, with a `CODEQL_PATH` that stops it there.
 
 Store a typed dataset marker through `internal/store`, the only SQL owner. A small workspace
 manifest records dataset ID, corpus/scenario format version, toolchain contract, permitted
@@ -243,24 +248,21 @@ It never publishes, enables code scanning, creates alerts or implies offline dis
 
 ## Pending
 
-0. **Report a session its credit limit stopped, then observe one finish.** Copilot refuses a session
-   limit below 30 AI credits. With the default model a session spent about 2.4 credits a model
-   call, so a session capped at 30 stopped at 31.8 after reading the request, the catalog and the
-   library, before writing a query, and reported only *the agent ended without a last word*. An
-   exhausted budget is one of the states that must stay explicit: find what the SDK reports when
-   its limit ends a session and record that as the session's end. Then observe a session that
-   writes and tests a query, and read the egress log for any host refused.
+0. **Observe a session finish, and calibrate the Codespace's credit limit from it.** A Codespace
+   limits a session to 150 AI credits by estimate: with the default model the sessions measured spent
+   2.4 to 3.9 credits a model call, and none has yet been seen to write and test a query. Observe
+   one, read the egress log for any host refused, and set the default from what it spent.
 1. **Qualify the Codespaces profile in a real Codespace.** Needs the operator: merge, configure the
    prebuild for `.devcontainer/devcontainer.json`, and create Codespaces from it. A Codespace of
    this configuration already builds in about seven minutes without a prebuild, confines the Demo's
-   user on the VM's kernel, refuses its lookups and connections, and names its forwarded address to
-   `postStartCommand`. A local dev container run as a Codespace runs it (`--network host`, a DNS
-   resolver on loopback, Dev Containers CLI 0.83.3) also runs the QLaaS loop, and a session in one
-   needed only `api.github.com/copilot_internal/user` and `*.githubcopilot.com`. What is left is what
-   only a Codespace shows: the Demo starts there; a browser's requests through the forwarded port
-   carry that address as their `Host`; the egress log names no other host; a fine-grained token with
-   Copilot Requests authors as gh's own sign-in does; zero retention reads back on the created
-   Codespace; and two users' Codespaces share nothing.
+   user on the VM's kernel, refuses its lookups and connections, starts the Demo, and serves its
+   interface to the owner's browser through the private forwarded port. A local dev container run
+   as a Codespace runs it (`--network host`, a DNS resolver on loopback, Dev Containers CLI 0.83.3)
+   also runs the QLaaS loop, and a session in one needed only `api.github.com/copilot_internal/user`
+   and `*.githubcopilot.com`. What is left is what only a Codespace shows: a session there names no
+   other host in the egress log; a fine-grained token with Copilot Requests authors as gh's own
+   sign-in does; a Codespace made from the prebuild starts the Demo without running the setup;
+   zero retention reads back on the created Codespace; and two users' Codespaces share nothing.
 2. **Admit the Demo's user to its own loopback services only.** In a Codespace the VM's loopback
    also holds the Codespaces agent on 16634–16636, a service on port 2000 of every interface, five
    VS Code ports and the resolver, and the firewall admits the Demo's user to all of them but the
@@ -542,7 +544,14 @@ from canned scripted responses. Scripts may prepare scenarios; they do not imper
   attach or restart never consumes Copilot credits by starting a session automatically.
 - Missing credentials, denied entitlement, exhausted budget, unavailable model, disallowed API
   access or canceled work remain explicit states. Scripted answers are not a successful fallback
-  for this profile.
+  for this profile. A session its credit limit stopped is *stopped*, with the limit and what it
+  spent, never *finished*: Copilot CLI 1.0.88 blocks the model call, says so only in an untyped
+  `model.response_limits_status`, and ends the turn idle, so the agent keeps whatever it said last.
+  The documented `session_limits_exhausted.requested` is answered with `cancel` should it come.
+- A model the account is not offered is refused by `session.create`, before any credit is spent,
+  with `Model "<id>" is not available.` ABOM's default, `claude-opus-5`, is not offered on every
+  Copilot plan, and an organization may not enable it, so `ABOM_DEMO_MODEL` chooses another in either
+  profile; `auto`, which `session.create` accepts, lets Copilot choose.
 - Real local runs and comparisons use current query and CodeQL identities. Simulated alert inputs
   carry `demo-simulated` provenance and can demonstrate review only in a marked demo store.
 

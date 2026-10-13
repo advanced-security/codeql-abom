@@ -25,10 +25,32 @@ The repository's dev container is the Demo, so **Code → Codespaces → Create 
 or the link above starts one. Without a prebuild, creating it builds the image, installs CodeQL,
 the Copilot CLI and ql-mcp, then builds ABOM, which takes about seven minutes. Each start of the
 Codespace starts a Demo over a new dataset under `/tmp/abom-demo`. Each time you attach, the
-terminal prints the Demo's address, which is the forwarded **ABOM Demo** port (8099) in the Ports
-panel, and says whether Copilot authoring is ready. The address is private to you, and the
-simulated GitHub is never forwarded. If the Demo did not start, the terminal says so instead,
-with the last line of its log.
+terminal says where the Demo is and whether Copilot authoring is ready, or, if the Demo did not
+start, why, from the last line of its log.
+
+### Open the Demo
+
+The Demo's interface is the forwarded **ABOM Demo** port, 8099. It is private: GitHub opens it only
+for you, through your sign-in to GitHub in the browser. The simulated GitHub is never forwarded.
+
+- **In the browser running the Codespace**, open the **Ports** panel beside the terminal and, on the
+  **ABOM Demo** row, click the globe icon, **Open in Browser**. The address is
+  `https://<codespace-name>-8099.app.github.dev/`. The terminal prints it each time you attach;
+  where Codespaces masks the Codespace's name, as in the creation log, it reads
+  `https://********-8099.********/`, and the Ports panel has it.
+- **In VS Code on your computer**, connected to the Codespace, the port is forwarded to your computer
+  too: open the local address the Ports panel shows, usually <http://localhost:8099>.
+- **In any browser on your computer, without an editor**, forward the port with the GitHub CLI, then
+  open <http://localhost:8099>:
+
+  ```bash
+  gh auth refresh -h github.com -s codespace   # once, so gh may reach your Codespaces
+  gh codespace ports forward 8099:8099         # asks which Codespace when you have several
+  ```
+
+Keep the port private. The Demo answers its forwarded address whatever the port's visibility, so
+anyone who can open a public port can use your Demo, including authoring sessions that spend your
+Copilot credits.
 
 If the Codespace opens in **recovery mode**, its setup stopped, and the recovery container has none
 of ABOM's tools. **View Creation Log** shows why: the last `on-create:` or `update-content:` line
@@ -51,15 +73,26 @@ sign-in. For a credential you can revoke on its own, `.devcontainer/copilot-logi
 a fine-grained token with only the **Copilot Requests** permission; delete it on GitHub when you are
 done. Classic `ghp_` tokens are refused.
 
+Each session spends your AI credits, a cent each, and in a Codespace one session may spend at most
+150. A session that reaches its limit is stopped and says what it spent; the agent's last message
+stays in its timeline. Restart the Demo with another limit, for example
+`ABOM_DEMO_CREDITS=300 .devcontainer/start-demo.sh`, or set `ABOM_DEMO_CREDITS` as a Codespaces
+secret for every Demo Codespace you create. `0` removes the limit, and Copilot refuses one below 30.
+
+Sessions run ABOM's default model, `claude-opus-5`, which not every Copilot plan or organization
+offers. A session that fails with `Model "claude-opus-5" is not available` needs another: restart
+the Demo with one yours offers, for example `ABOM_DEMO_MODEL=auto .devcontainer/start-demo.sh` to
+let Copilot choose, or set `ABOM_DEMO_MODEL` as a Codespaces secret.
+
 ### Stopping, restarting and deleting
 
 Stopping the Codespace discards the exercise, and the next start begins a new dataset.
 `.devcontainer/start-demo.sh` restarts the Demo without discarding it, `--fresh` discards it, and
-`--stop` stops it; it reads `ABOM_DEMO_CREDITS` as `make demo` does. If the browser is refused,
-restart it from a terminal: the Demo admits only the forwarded address the start named.
-`.devcontainer/status.sh` prints what each attach does. Logs are under `/tmp/abom-demo-logs`. To
-have the Codespace deleted as soon as it stops, create it with a zero retention period; one created
-from the browser keeps your account's default retention unless an organization policy sets one:
+`--stop` stops it. If the browser is refused, restart it from a terminal: the Demo admits only the
+forwarded address the start named. `.devcontainer/status.sh` prints what each attach does. Logs are
+under `/tmp/abom-demo-logs`. To have the Codespace deleted as soon as it stops, create it with a zero
+retention period; one created from the browser keeps your account's default retention unless an
+organization policy sets one:
 
 ```bash
 gh codespace create --repo advanced-security/codeql-abom --retention-period 0h
@@ -144,7 +177,9 @@ needs no credential while it serves. On Linux arm64, which the extension does no
 that `.codeql-version` names, and put its `codeql` directory on `PATH`.
 
 For Copilot authoring, install the Copilot CLI and the CodeQL Development MCP Server release that
-matches `.codeql-version`, from the extracted directory:
+matches `.codeql-version`, from the extracted directory. `make demo` leaves authoring off rather
+than run another ql-mcp release, whose tools can fail inside a session, and `make demo-check` names
+the one it found:
 
 ```bash
 npm install --global @github/copilot@1.0.88 "codeql-development-mcp-server@$(cut -c2- .codeql-version)"
@@ -184,8 +219,10 @@ given only to the Copilot CLI.
 
 `make demo-reset` starts over with a new dataset (stop the Demo first). It also discards the saved
 credential and Tutorial progress. Settings: `ABOM_DEMO_DIR` (default `.abom/demo`), `ABOM_DEMO_ADDR`
-(default `127.0.0.1:8090`) and `ABOM_DEMO_CREDITS`, the AI credits one session may spend (default
-`0`, no limit; Copilot refuses a limit below 30).
+(default `127.0.0.1:8090`), `ABOM_DEMO_CREDITS`, the AI credits, a cent each, one session may
+spend (default `0`, no limit; Copilot refuses a limit below 30), and `ABOM_DEMO_MODEL`, the model
+sessions run (default `claude-opus-5`; `auto` lets Copilot choose). A session that reaches its limit
+is stopped and says what it spent.
 
 ### What reaches the network
 

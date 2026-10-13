@@ -6,9 +6,11 @@ cd "$(dirname "$0")/.."
 # shellcheck source=.devcontainer/lib.sh
 . "$PWD/.devcontainer/lib.sh"
 codeql=$(tr -d '[:space:]' <.codeql-version)
-# A Codespace runs this in a terminal, where .NET would redraw its progress into the creation log.
+# A Codespace runs this in a terminal, where .NET would redraw its progress into the creation log,
+# and its first use would check workloads ABOM does not use.
 export MSBUILDTERMINALLOGGER=off
 export DOTNET_NOLOGO=1
+export DOTNET_SKIP_WORKLOAD_INTEGRITY_CHECK=true
 
 # make builds with the toolchain the Makefile pins. Downloading it and the modules first leaves the
 # builds nothing to fetch, so only the downloads need retrying.
@@ -17,8 +19,9 @@ retry make download
 make build
 install -m 0755 bin/codeql-abom /opt/abom-demo/codeql-abom
 echo "update-content: publishing its interface"
-retry dotnet restore ui/Abom.WebAssembly.csproj
-make publish ABOM_UI=/opt/abom-demo/ui
+# Without a terminal on its standard input, .NET writes no keypad-mode codes into the log.
+retry dotnet restore ui/Abom.WebAssembly.csproj </dev/null
+make publish ABOM_UI=/opt/abom-demo/ui </dev/null
 
 scratch=$(sudo -u abom-demo mktemp -d)
 trap 'sudo rm -rf "$scratch"' EXIT

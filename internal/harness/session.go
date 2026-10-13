@@ -261,11 +261,14 @@ func (s *Sessions) outcome(ctx context.Context, l *live, limit time.Duration, fi
 	s.mu.Lock()
 	stopped := l.stopped
 	s.mu.Unlock()
+	var spent *CreditLimitError
 	switch {
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		return store.SessionStopped, fmt.Sprintf("stopped at the session's time limit of %s", limit)
 	case stopped:
 		return store.SessionStopped, "stopped by an operator"
+	case errors.As(err, &spent):
+		return store.SessionStopped, spent.Error()
 	case err != nil:
 		return store.SessionFailed, clip(err.Error())
 	case strings.TrimSpace(final) == "":

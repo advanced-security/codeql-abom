@@ -17,8 +17,11 @@ port=8099
 egress_port=8098
 bin=/opt/abom-demo/codeql-abom
 tools=/opt/abom-demo/tools/node_modules/.bin
-# AI credits one authoring session may spend; 0 sets no limit.
-credits=${ABOM_DEMO_CREDITS:-0}
+# AI credits, a cent each, one authoring session may spend: whoever opens a Codespace may never have
+# read that a session spends theirs. 0 removes the limit, and Copilot refuses one below 30.
+credits=${ABOM_DEMO_CREDITS:-150}
+# Empty runs ABOM's default model, which not every Copilot plan offers.
+model=${ABOM_DEMO_MODEL:-}
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(dirname "$here")
 
@@ -106,6 +109,7 @@ if confine; then
 		authoring=(--copilot-cli "$tools/copilot" --ql-mcp "$tools/codeql-development-mcp-server"
 			--egress-proxy "http://127.0.0.1:$egress_port" --egress-ca "$ca"
 			--authoring-credits "$credits")
+		[ -z "$model" ] || authoring+=(--authoring-model "$model")
 	fi
 else
 	echo "start-demo: the Demo could not be confined to loopback, so Copilot authoring stays off" |
@@ -130,7 +134,7 @@ echo "$serve" >"$logs/serve.pid"
 for _ in $(seq 1 30); do
 	if curl -fs --max-time 2 -o /dev/null "http://127.0.0.1:$port/api/instance"; then
 		if [ -n "$hosts" ]; then
-			echo "start-demo: ABOM Demo is serving at https://$hosts/"
+			echo "start-demo: ABOM Demo is serving at https://$hosts/ (\"ABOM Demo\" in the Ports panel)"
 		else
 			echo "start-demo: ABOM Demo is serving on port $port; open it from the Ports panel"
 		fi

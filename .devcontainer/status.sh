@@ -15,7 +15,7 @@ instance=$(curl -fsS --max-time 5 "http://127.0.0.1:$port/api/instance" 2>/dev/n
 	exit 0
 }
 if [ -n "$forwarded" ]; then
-	echo "ABOM Demo: https://$forwarded/"
+	echo "ABOM Demo: https://$forwarded/ (\"ABOM Demo\" in the Ports panel)"
 	# The Demo admits loopback and the one forwarded address it was started with, so a Demo started
 	# where nothing named that address refuses every request a browser makes.
 	code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H "Host: $forwarded" \

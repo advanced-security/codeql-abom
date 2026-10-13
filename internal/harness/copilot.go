@@ -2,12 +2,16 @@ package harness
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	copilot "github.com/github/copilot-sdk/go"
@@ -99,6 +103,12 @@ func (c *Copilot) Run(ctx context.Context, s Setup) (string, error) {
 	}
 	defer func() { _ = session.Disconnect() }()
 	defer session.On(s.Gate.Observe)()
+	limit := &creditLimit{answer: func(r rpc.UIHandlePendingSessionLimitsExhaustedRequest) {
+		answer, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_, _ = session.RPC.UI.HandlePendingSessionLimitsExhausted(answer, &r)
+	}}
+	defer session.On(limit.observe)()
 
 	var last string
 	for send := s.Prompt; send != ""; {
@@ -109,6 +119,10 @@ func (c *Copilot) Run(ctx context.Context, s Setup) (string, error) {
 			defer cancel()
 			_ = session.Abort(abort)
 			return "", ctx.Err()
+		}
+		// Anything more sent past the limit is refused in turn, so the session ends here.
+		if spent := limit.reached(); spent != nil {
+			return "", spent
 		}
 		if err != nil {
 			return "", err
@@ -199,3 +213,70 @@ func (c *Copilot) config(s Setup) *copilot.SessionConfig {
 // ErrNoAgent is a session asked of a server that was not given a Copilot CLI to run one.
 var ErrNoAgent = errors.New("this server was started without a Copilot CLI, so it cannot run an " +
 	"authoring session; name one with --copilot-cli or COPILOT_CLI_PATH")
+
+// CreditLimitError is a session its runtime stopped at the credit limit it was started with.
+type CreditLimitError struct {
+	Limit, Spent float64
+}
+
+func (e *CreditLimitError) Error() string {
+	return fmt.Sprintf("stopped at the session's limit of %s AI credits, having spent %s",
+		credits(e.Limit), credits(e.Spent))
+}
+
+func credits(v float64) string {
+	return strconv.FormatFloat(math.Round(v*10)/10, 'f', -1, 64)
+}
+
+// creditLimit is what a session learns when its runtime stops it at its credit limit. Copilot CLI
+// 1.0.88 blocks the model call and reports it in a limits status; the documented flow instead holds
+// the call until it is answered, and the answer is always to spend nothing more: the limit is the
+// operator's to raise, never the session's.
+type creditLimit struct {
+	answer func(rpc.UIHandlePendingSessionLimitsExhaustedRequest)
+	mu     sync.Mutex
+	spent  *CreditLimitError
+}
+
+// limitsStatus is the part of the runtime's limits status a session needs; the SDK does not type it.
+type limitsStatus struct {
+	Status struct {
+		AICreditsUsed     float64 `json:"aiCreditsUsed"`
+		MaxAICredits      float64 `json:"maxAiCredits"`
+		IsLimitsExhausted bool    `json:"isLimitsExhausted"`
+	} `json:"status"`
+}
+
+func (c *creditLimit) observe(e copilot.SessionEvent) {
+	switch d := e.Data.(type) {
+	case *copilot.SessionLimitsExhaustedRequestedData:
+		c.remember(d.MaxAiCredits, d.UsedAiCredits)
+		go c.answer(rpc.UIHandlePendingSessionLimitsExhaustedRequest{
+			RequestID: d.RequestID,
+			Response:  rpc.UISessionLimitsExhaustedResponse{Action: rpc.UISessionLimitsExhaustedResponseActionCancel},
+		})
+	case *copilot.RawSessionEventData:
+		var s limitsStatus
+		if d.EventType == "model.response_limits_status" && json.Unmarshal(d.Raw, &s) == nil &&
+			s.Status.IsLimitsExhausted {
+			c.remember(s.Status.MaxAICredits, s.Status.AICreditsUsed)
+		}
+	}
+}
+
+func (c *creditLimit) remember(limit, spent float64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.spent == nil {
+		c.spent = &CreditLimitError{Limit: limit, Spent: spent}
+	}
+}
+
+func (c *creditLimit) reached() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.spent == nil {
+		return nil
+	}
+	return c.spent
+}
