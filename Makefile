@@ -34,7 +34,7 @@ LDFLAGS := -X main.codeqlVersion=$(CODEQL_VERSION) $(if $(ABOM_VERSION),-X main.
 ABOM_RELEASE ?= $(ABOM_TMP)/release
 
 .PHONY: backend-test bench build check-corrupt corpus check-release-version check-versions clean demo demo-check demo-login \
-	demo-reset e2e e2e-corpus e2e-corpus-run e2e-run \
+	demo-reset e2e e2e-corpus e2e-corpus-run e2e-run test-postgres test-sqlite \
 	fmt itest js lint logs package pins publish ql \
 	quality release-archive release-ui restart script-test security-test selfcheck serve start status stop style test ui \
 	ui-test verify vet
@@ -163,9 +163,8 @@ js:
 script-test:
 	@python3 -m unittest discover -s scripts -p 'test_*.py'
 
-## backend-test: run the store suite and replica routing on isolated Docker PostgreSQL alone.
-backend-test:
-	@python3 scripts/with-postgres.py test
+## backend-test: the same as test-postgres, kept for the name people already use.
+backend-test: test-postgres
 
 # Part of `verify`; missing golangci-lint is reported directly.
 lint:
@@ -350,13 +349,23 @@ check-versions:
 check-release-version:
 	@./scripts/check-release-version.sh
 
-## test: run Go tests under $(ABOM_TMP) because checkout tests need git.
-test: script-test
+## test: every Go test, on both store backends; CI runs the two halves as separate jobs.
+test: script-test test-sqlite test-postgres
+
+## test-sqlite: every package with the race detector, the store on SQLite; needs no Docker.
+## Under $(ABOM_TMP) because checkout tests need git.
+test-sqlite:
 	@if ! command -v git >/dev/null 2>&1; then \
 		echo "git is not installed, and the checkout tests need it"; exit 1; \
 	fi
 	@mkdir -p "$(ABOM_TMP)/gotest"
-	@TMPDIR="$(ABOM_TMP)/gotest" python3 scripts/with-postgres.py suite
+	@TMPDIR="$(ABOM_TMP)/gotest" go test ./... -count=1 -race -timeout=20m
+
+## test-postgres: replica routing against a Docker PostgreSQL physical standby, then the store suite
+## on that primary in ABOM_TEST_SHARDS concurrent processes (default 4).
+test-postgres:
+	@mkdir -p "$(ABOM_TMP)/gotest"
+	@TMPDIR="$(ABOM_TMP)/gotest" python3 scripts/with-postgres.py store
 
 ## ui: catch Razor syntax errors that Go checks cannot see.
 ui:

@@ -142,7 +142,7 @@ jobs:
       - name: Copilot Setup - Install Graphviz
         run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends graphviz
 
-      # `make test` runs the store suite in the PostgreSQL image the harness pins, and pulls it on
+      # `make test-postgres` runs the store suite in the PostgreSQL image the harness pins, and pulls it on
       # first use. The probe starts that image and removes its container; the image stays cached.
       - name: Copilot Setup - Pull the PostgreSQL test image
         run: python3 scripts/with-postgres.py probe

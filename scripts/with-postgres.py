@@ -5,9 +5,11 @@ import os
 import ipaddress
 import re
 import secrets
+import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 
@@ -19,6 +21,9 @@ CONTAINER_ENV = "ABOM_TEST_POSTGRES_CONTAINER"
 REPLICA_ENV = "ABOM_TEST_POSTGRES_REPLICA_DSN"
 REPLICA_CONTAINER_ENV = "ABOM_TEST_POSTGRES_REPLICA_CONTAINER"
 BACKEND_ENV = "ABOM_TEST_STORE_BACKEND"
+# How many processes run the store suite at once; each test migrates its own schema, so they share
+# one primary without seeing each other.
+SHARDS_ENV = "ABOM_TEST_SHARDS"
 PROBE = ["python3", "-c", """
 import os, socket, struct, urllib.parse
 url = urllib.parse.urlsplit(os.environ["ABOM_TEST_POSTGRES_DSN"])
@@ -27,14 +32,61 @@ with socket.create_connection((url.hostname, url.port), 5) as connection:
     assert connection.recv(1) in (b"S", b"N"), "not a PostgreSQL SSL response"
 print("PostgreSQL answered its wire protocol; storage compatibility was not tested")
 """]
+
+
+def shard_store(environment):
+    """Run the store suite on PostgreSQL as one compile and several concurrent processes."""
+    shards = max(1, int(os.environ.get(SHARDS_ENV) or min(4, os.cpu_count() or 1)))
+    package = os.path.join(os.getcwd(), "internal", "store")
+    scratch = tempfile.mkdtemp(prefix="abom-store-shards-")
+    processes = []
+    try:
+        binary = os.path.join(scratch, "store.test")
+        built = subprocess.run(["go", "test", "-c", "-race", "-o", binary, "./internal/store"],
+                               env=environment, check=False)
+        if built.returncode:
+            return built.returncode
+        listed = subprocess.run([binary, "-test.list", "."], cwd=package, env=environment,
+                                check=True, capture_output=True, text=True, timeout=120)
+        names = sorted(name for name in listed.stdout.split() if name.startswith("Test"))
+        groups = [group for group in (names[i::shards] for i in range(shards)) if group]
+        print(f"store tests: {len(names)} tests in {len(groups)} concurrent processes", flush=True)
+        for index, group in enumerate(groups):
+            log = open(os.path.join(scratch, f"shard-{index}.log"), "w+")
+            process = subprocess.Popen(
+                [binary, "-test.run", "^(" + "|".join(group) + ")$", "-test.count=1", "-test.timeout=20m"],
+                cwd=package, env=environment, stdout=log, stderr=subprocess.STDOUT)
+            processes.append((index, group, process, log))
+        failed = 0
+        for index, group, process, log in processes:
+            code = process.wait()
+            log.seek(0)
+            print(f"--- store shard {index + 1} of {len(groups)}: {len(group)} tests, exit {code}", flush=True)
+            print(log.read(), end="", flush=True)
+            failed = failed or code
+        return failed
+    finally:
+        # Interrupted: a shard still running would hold the container this run is about to remove.
+        for _, _, process, log in processes:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            log.close()
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+STORE = [
+    # Replica routing against the physical standby, the one test outside the store that needs it.
+    # First: after the shards, the standby is still replaying their schemas and the test times out.
+    ("postgres", ["go", "test", "./internal/serve", "-run", "^TestPhysicalReplica",
+                  "-count=1", "-race", "-timeout=20m"]),
+    ("postgres", shard_store),
+]
 COMMANDS = {
     "probe": [(None, PROBE)],
-    # PostgreSQL alone: the store suite, and replica routing against the physical standby.
-    "test": [("postgres", ["go", "test", "./internal/store", "./internal/serve", "-count=1", "-timeout=20m"])],
-    "suite": [
-        ("sqlite", ["go", "test", "./...", "-count=1", "-race", "-timeout=20m"]),
-        ("postgres", ["go", "test", "./internal/store", "-count=1", "-race", "-timeout=20m"]),
-    ],
+    # PostgreSQL alone: the store suite in concurrent shards, then replica routing on the standby.
+    "store": STORE,
+    "test": STORE,
 }
 
 
@@ -104,9 +156,12 @@ def run(runs, replicas=False):
             if backend:
                 print(f"store tests: {backend}", flush=True)
                 environment = dict(test_environment, **{BACKEND_ENV: backend})
-            result = subprocess.run(command, env=environment, check=False)
-            if result.returncode:
-                return result.returncode
+            if callable(command):
+                code = command(environment)
+            else:
+                code = subprocess.run(command, env=environment, check=False).returncode
+            if code:
+                return code
         return 0
     finally:
         try:
@@ -178,7 +233,7 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, interrupt)
     try:
         if len(sys.argv) != 2 or sys.argv[1] not in COMMANDS:
-            raise RuntimeError("choose 'probe', 'test' or 'suite' for PostgreSQL verification")
+            raise RuntimeError("choose 'probe', 'store' or 'test' for PostgreSQL verification")
         sys.exit(run(COMMANDS[sys.argv[1]], replicas=sys.argv[1] != "probe"))
     except (OSError, RuntimeError, subprocess.SubprocessError) as error:
         print(f"postgres-tests: {error}", file=sys.stderr)

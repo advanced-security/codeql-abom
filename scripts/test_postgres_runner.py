@@ -206,31 +206,101 @@ class DockerRunnerTests(unittest.TestCase):
         self.assertEqual(calls[-1], ["docker", "rm", "--force", "--volumes", "abc123"])
 
 
-    def test_each_action_selects_the_store_backend_for_its_own_packages(self):
-        for action, expected in [
-            ("suite", [("sqlite", ["./..."]), ("postgres", ["./internal/store"])]),
-            ("test", [("postgres", ["./internal/store", "./internal/serve"])]),
-        ]:
-            with self.subTest(action=action):
-                runs = []
+    def test_backend_test_is_the_sharded_store_suite(self):
+        self.assertIs(runner.COMMANDS["test"], runner.COMMANDS["store"])
+        self.assertEqual([backend for backend, _ in runner.COMMANDS["store"]], ["postgres", "postgres"])
 
-                def execute(args, **kwargs):
-                    if args[:2] == ["docker", "run"]:
-                        return subprocess.CompletedProcess(args, 0, stdout="abc123\n")
-                    if args[:2] == ["docker", "port"]:
-                        return subprocess.CompletedProcess(args, 0, stdout="127.0.0.1:54321\n")
-                    if args[0] == "go":
-                        self.assertIn("-timeout=20m", args)
-                        self.assertTrue(kwargs["env"][runner.REPLICA_ENV])
-                        packages = [arg for arg in args[2:] if arg.startswith("./")]
-                        runs.append((kwargs["env"]["ABOM_TEST_STORE_BACKEND"], packages))
-                    return subprocess.CompletedProcess(args, 0, stdout="")
 
-                with patch.object(runner.subprocess, "run", side_effect=execute), \
-                        patch.object(runner, "replica", return_value=("def456", "127.0.0.1:54322")), \
-                        patch("sys.stdout", new_callable=io.StringIO):
-                    self.assertEqual(runner.run(runner.COMMANDS[action], replicas=True), 0)
-                self.assertEqual(runs, expected)
+class StoreShardTests(unittest.TestCase):
+    """The PostgreSQL store suite is one compile and several concurrent processes on one primary."""
+
+    NAMES = [f"TestStore{i:02d}" for i in range(10)] + ["BenchmarkIgnored", "ExampleIgnored"]
+
+    def shard(self, shards, failing=None):
+        calls, launched = [], []
+
+        def execute(args, **kwargs):
+            calls.append((args, kwargs))
+            if args[:2] == ["docker", "run"]:
+                return subprocess.CompletedProcess(args, 0, stdout="abc123\n")
+            if args[:2] == ["docker", "port"]:
+                return subprocess.CompletedProcess(args, 0, stdout="127.0.0.1:54321\n")
+            if args[:3] == ["go", "test", "-c"]:
+                return subprocess.CompletedProcess(args, 0, stdout="")
+            if len(args) > 1 and args[1] == "-test.list":
+                return subprocess.CompletedProcess(args, 0, stdout="\n".join(self.NAMES) + "\nok\n")
+            if args[:2] == ["go", "test"]:
+                return subprocess.CompletedProcess(args, 0, stdout="")
+            return subprocess.CompletedProcess(args, 0, stdout="")
+
+        class Process:
+            def __init__(process, args, **kwargs):
+                launched.append((args, kwargs))
+                process.args = args
+                process.kwargs = kwargs
+
+            def poll(process):
+                return 0
+
+            def wait(process, timeout=None):
+                run = process.args[process.args.index("-test.run") + 1]
+                return 3 if failing and failing in run else 0
+
+        with patch.object(runner.subprocess, "run", side_effect=execute), \
+                patch.object(runner.subprocess, "Popen", Process), \
+                patch.object(runner, "replica", return_value=("def456", "127.0.0.1:54322")), \
+                patch.dict(os.environ, {runner.SHARDS_ENV: str(shards)}), \
+                patch("sys.stdout", new_callable=io.StringIO):
+            result = runner.run(runner.COMMANDS["store"], replicas=True)
+        return result, calls, launched
+
+    def test_the_store_suite_is_compiled_once_with_the_race_detector(self):
+        result, calls, _ = self.shard(4)
+        self.assertEqual(result, 0)
+        compiles = [args for args, _ in calls if args[:3] == ["go", "test", "-c"]]
+        self.assertEqual(len(compiles), 1)
+        self.assertIn("-race", compiles[0])
+        self.assertIn("./internal/store", compiles[0])
+
+    def test_every_test_runs_in_exactly_one_concurrent_shard(self):
+        result, _, launched = self.shard(4)
+        self.assertEqual(result, 0)
+        self.assertEqual(len(launched), 4)
+        seen = []
+        for args, kwargs in launched:
+            self.assertEqual(kwargs["env"][runner.BACKEND_ENV], "postgres")
+            self.assertTrue(kwargs["env"][runner.DSN_ENV].startswith("postgresql://"))
+            self.assertTrue(kwargs["cwd"].endswith(os.path.join("internal", "store")))
+            self.assertIn("-test.count=1", args)
+            run = args[args.index("-test.run") + 1]
+            self.assertRegex(run, r"^\^\(.*\)\$$")
+            seen += run[2:-2].split("|")
+        self.assertEqual(sorted(seen), [n for n in self.NAMES if n.startswith("Test")])
+
+    def test_more_shards_than_tests_starts_no_empty_process(self):
+        result, _, launched = self.shard(50)
+        self.assertEqual(result, 0)
+        self.assertEqual(len(launched), 10)
+
+    def test_the_standby_test_runs_once_on_postgres_before_the_shards(self):
+        # After the shards the standby is still replaying their schemas and would time out.
+        _, calls, _ = self.shard(2)
+        commands = [args for args, _ in calls if args[:1] == ["go"]]
+        standby = [i for i, args in enumerate(commands) if "./internal/serve" in args]
+        compile_at = next(i for i, args in enumerate(commands) if args[:3] == ["go", "test", "-c"])
+        self.assertEqual(len(standby), 1)
+        self.assertLess(standby[0], compile_at)
+        args, kwargs = next((a, k) for a, k in calls if "./internal/serve" in a)
+        self.assertIn("-race", args)
+        self.assertEqual(args[args.index("-run") + 1], "^TestPhysicalReplica")
+        self.assertEqual(kwargs["env"][runner.BACKEND_ENV], "postgres")
+        self.assertTrue(kwargs["env"][runner.REPLICA_ENV])
+
+    def test_a_failing_shard_fails_the_suite_after_every_shard_reports(self):
+        result, calls, launched = self.shard(4, failing="TestStore03")
+        self.assertNotEqual(result, 0)
+        self.assertEqual(len(launched), 4)
+        self.assertEqual(calls[-1][0], ["docker", "rm", "--force", "--volumes", "abc123"])
 
 
 if __name__ == "__main__":
