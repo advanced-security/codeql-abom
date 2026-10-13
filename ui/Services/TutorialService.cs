@@ -196,17 +196,28 @@ public sealed class TutorialService(IJSRuntime js, NavigationManager nav, ScopeS
     public void WatchWork(string key, string reason, Func<CancellationToken, Task<bool?>> running)
     {
         if (!_work.Add(key)) return;
-        var block = BlockStart(reason);
         const string unknown = "The operation's status could not be read. Tutorial remains unavailable until its status is known.";
         _ = Watch();
+        // Runs synchronously until its first wait, so the block is in place before this returns.
         async Task Watch()
         {
+            using var block = BlockStart(reason);
             try
             {
-                while (true)
+                while (!_lifetime.IsCancellationRequested)
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(3), _lifetime.Token);
-                    var state = await running(_lifetime.Token);
+                    await Task.Delay(TimeSpan.FromSeconds(3), _lifetime.Token)
+                        .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing | ConfigureAwaitOptions.ContinueOnCapturedContext);
+                    if (_lifetime.IsCancellationRequested) break;
+                    bool? state;
+                    try
+                    {
+                        state = await running(_lifetime.Token);
+                    }
+                    catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+                    {
+                        break;
+                    }
                     if (state == false) break;
                     if (state is null)
                         Report(unknown);
@@ -214,12 +225,10 @@ public sealed class TutorialService(IJSRuntime js, NavigationManager nav, ScopeS
                         Report(reason);
                 }
             }
-            catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
             finally
             {
                 _work.Remove(key);
                 if (Notice == unknown) Notice = "";
-                block.Dispose();
             }
         }
     }

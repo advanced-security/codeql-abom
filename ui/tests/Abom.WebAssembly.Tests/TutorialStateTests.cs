@@ -114,8 +114,9 @@ public class TutorialStateTests : AbomTestContext
 
         foreach (var method in new[] { HttpMethod.Post, HttpMethod.Put, HttpMethod.Delete, HttpMethod.Patch })
         {
+            using var request = new HttpRequestMessage(method, "api/tutorial-guard-test");
             var error = await Assert.ThrowsAsync<HttpRequestException>(
-                () => http.SendAsync(new HttpRequestMessage(method, "api/tutorial-guard-test"), Xunit.TestContext.Current.CancellationToken));
+                () => http.SendAsync(request, Xunit.TestContext.Current.CancellationToken));
             Assert.Contains("Exit the tutorial", error.Message);
         }
         Assert.Empty(Sent);
