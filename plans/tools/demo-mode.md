@@ -422,7 +422,7 @@ A Codespace starts the dev container with `--network host`, so the container is 
 network and the Demo's firewall rules land in the VM's tables, where they outlive the container: a
 rebuild finds them in place, so `confine` refills its own chain and adds its jump only once. It runs
 `postStartCommand` in a pass of its own, and that pass left what the start wrote unreadable to the
-Demo's user. Five rules follow, and `scripts/test_devcontainer.py` holds each one:
+Demo's user. Six rules follow, and `scripts/test_devcontainer.py` holds each one:
 
 - **The Demo's user ID is outside the system range.** The owner rule matches that ID across the VM,
   and a system ID could belong to one of the VM's own services, such as its resolver.
@@ -440,6 +440,9 @@ Demo's user. Five rules follow, and `scripts/test_devcontainer.py` holds each on
 - **A Demo that does not start leaves the Codespace's start succeeding.** Codespaces skips
   `postAttachCommand` after a `postStartCommand` fails, and the status each attach prints is what
   says why the Demo is down and what to run.
+- **Lifecycle commands write to a terminal, so the prebuild runs with `TERM=dumb`.** The terminal's
+  type has a keypad mode, and each .NET process switches it on, writing `ESC[?1h ESC=` into the
+  creation log whatever its input is: redirecting .NET's input from `/dev/null` left thirteen.
 
 ### Per-Codespace lifecycle
 
@@ -564,6 +567,10 @@ Do not assume a repository visitor receives development environment secrets: Git
 that they are not injected without write access to the repository. The post-creation credential
 is the user's own `gh` sign-in, handed to the Demo by `.devcontainer/copilot-login.sh`: a device
 flow with the Codespace's tokens unset, or a pasted fine-grained token, and never a classic one.
+`gh` runs that flow without prompts, because its prompts offer to replace the Codespace's own Git
+credentials, and without a clipboard, which `gh` 2.102.0 tries by default and a Codespace lacks;
+without prompts `gh` opens no browser either, so the script shows the code and opens the page
+through the terminal's `$BROWSER`, which in a Codespace is VS Code's.
 Nobody commits, forks or gains repository-write access to author. Codespaces' automatic repository
 token may itself gain write access through platform forking behavior; its existence is never
 authority for ABOM to use real APIs, and it is never the Demo's Copilot credential.

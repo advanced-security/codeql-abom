@@ -175,12 +175,13 @@ class ConfigurationTests(unittest.TestCase):
         self.assertRegex(update, r"(?m)^export DOTNET_NOLOGO=1\b")
         # The first use of an SDK checks workloads ABOM does not use, and says so when it cannot.
         self.assertRegex(update, r"(?m)^export DOTNET_SKIP_WORKLOAD_INTEGRITY_CHECK=true\b")
-        # .NET switches a terminal on its standard input into keypad mode, writing [?1h each start.
-        dotnet = [line for line in commands(DEVCONTAINER / "update-content.sh")
-                  if re.search(r"\bdotnet\b|\bmake publish\b", line)]
-        self.assertTrue(dotnet, "no .NET step found")
-        for step in dotnet:
-            self.assertTrue(step.endswith("</dev/null"), step)
+        # Each .NET process puts a terminal that has a keypad mode into it, writing ESC[?1h ESC= to its
+        # output whatever its input is; a dumb terminal has no such mode.
+        dumb = re.search(r"(?m)^export TERM=dumb$", update)
+        self.assertIsNotNone(dumb, "update-content.sh does not run with a dumb terminal")
+        first_dotnet = re.search(r"(?m)^[^#\n]*(\bdotnet\b|\bmake publish\b)", update)
+        self.assertIsNotNone(first_dotnet, "no .NET step found")
+        self.assertLess(dumb.start(), first_dotnet.start())
         for step in [line for line in commands(DEVCONTAINER / "on-create.sh") if "npm install" in line]:
             self.assertIn("--no-progress", step)
 
@@ -261,10 +262,13 @@ class CopilotLoginTests(unittest.TestCase):
         (self.root / "demo.json").write_text("{}\n")
         self.calls = base / "gh-calls.txt"
         self.stored = base / "gh-stored-login"
+        self.unauthorized = base / "gh-unauthorized"
+        self.opened = base / "browser-opened.txt"
         tools = base / "bin"
         tools.mkdir()
         # gh as it behaves: an exported token answers before a stored login, and login refuses
-        # while GITHUB_TOKEN is exported, which is how a Codespace starts.
+        # while GITHUB_TOKEN is exported, which is how a Codespace starts. Its device flow says what
+        # gh 2.102.0 says on Linux, where it tries a clipboard unless told not to, then waits.
         self.tool(tools / "gh", f"""#!/bin/sh
 printf '%s|GITHUB_TOKEN=%s|GH_TOKEN=%s|PROMPTS=%s\\n' "$*" "${{GITHUB_TOKEN-unset}}" \\
     "${{GH_TOKEN-unset}}" "${{GH_PROMPT_DISABLED-unset}}" >> '{self.calls}'
@@ -276,9 +280,26 @@ case "$1 $2" in
     echo "no oauth token found for github.com" >&2; exit 1 ;;
 "auth login")
     if [ -n "${{GITHUB_TOKEN-}}" ]; then echo "GITHUB_TOKEN is being used for authentication" >&2; exit 1; fi
-    echo gho_signedin > '{self.stored}'; exit 0 ;;
+    echo >&2
+    case " $* " in
+    *" --clipboard=false "*) ;;
+    *) printf '! Failed to copy one-time code to clipboard\\n  No clipboard utilities available.\\n' >&2 ;;
+    esac
+    echo '! First copy your one-time code: C649-B33F' >&2
+    echo 'Open this URL to continue in your web browser: https://github.com/login/device' >&2
+    sleep 0.3
+    if [ -f '{self.unauthorized}' ]; then echo 'error: the one-time code expired' >&2; exit 1; fi
+    echo gho_signedin > '{self.stored}'
+    printf '✓ Authentication complete.\\n✓ Logged in as octocat\\n' >&2
+    exit 0 ;;
 esac
 exit 2
+""")
+        # The browser a VS Code terminal names in $BROWSER: in a Codespace it opens the page in the
+        # browser running the Codespace.
+        self.browser = tools / "browser"
+        self.tool(self.browser, f"""#!/bin/sh
+printf '%s\\n' "$*" >> '{self.opened}'
 """)
         # sudo as this user: the test cannot switch to the Demo's.
         self.tool(tools / "sudo", """#!/bin/sh
@@ -294,6 +315,8 @@ exec "$@"
         self.environment = dict(os.environ, PATH=f"{tools}{os.pathsep}{os.environ['PATH']}",
                                 ABOM_DEMO_ROOT=str(self.root), GITHUB_TOKEN="ghu_codespace")
         self.environment.pop("GH_TOKEN", None)
+        # Run from a VS Code terminal, the tests would open real pages.
+        self.environment.pop("BROWSER", None)
 
     @staticmethod
     def tool(path, body):
@@ -310,6 +333,42 @@ exec "$@"
 
     def gh_calls(self):
         return self.calls.read_text().splitlines() if self.calls.exists() else []
+
+    def pages_opened(self):
+        return self.opened.read_text().splitlines() if self.opened.exists() else []
+
+    # Copying a page address and a code out of a terminal was the whole sign-in, and the address was
+    # the half a terminal can open itself.
+    def test_without_a_sign_in_it_shows_the_code_then_opens_the_sign_in_page_in_the_terminals_browser(self):
+        self.environment["BROWSER"] = str(self.browser)
+        result = self.login(stdin="\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("C649-B33F", result.stdout)
+        self.assertEqual(self.pages_opened(), ["https://github.com/login/device"])
+        self.assertIn("octocat", result.stdout)
+        self.assertEqual(self.saved(), "gho_signedin")
+
+    def test_without_a_browser_it_names_the_page_and_the_code(self):
+        result = self.login()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("https://github.com/login/device", result.stdout)
+        self.assertIn("C649-B33F", result.stdout)
+        self.assertEqual(self.pages_opened(), [])
+
+    # gh 2.102.0 copies the code to a clipboard by default, and a Codespace has none that reaches the
+    # browser, so every sign-in began with a failure and advice to install one.
+    def test_a_sign_in_mentions_no_clipboard(self):
+        self.environment["BROWSER"] = str(self.browser)
+        result = self.login(stdin="\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("clipboard", (result.stdout + result.stderr).lower())
+
+    def test_a_sign_in_that_is_not_completed_saves_nothing_and_says_why(self):
+        self.unauthorized.touch()
+        result = self.login(stdin="\n")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("expired", result.stderr)
+        self.assertIsNone(self.saved())
 
     def test_an_existing_sign_in_is_saved_and_the_codespace_token_is_not(self):
         self.stored.write_text("gho_user\n")

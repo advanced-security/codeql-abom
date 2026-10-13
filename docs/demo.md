@@ -66,8 +66,10 @@ to this repository rather than to you. In the Codespace's terminal, run:
 .devcontainer/copilot-login.sh
 ```
 
-It signs the GitHub CLI in with a one-time code you enter in your browser, then gives that
-sign-in to the Demo. `gh` keeps the sign-in in your Codespace, so later starts give it to each new
+It shows a one-time code and, when you press Enter, opens GitHub's sign-in page in your browser.
+Enter the code there and authorize **GitHub CLI**, and it gives that sign-in to the Demo. From a
+terminal that cannot open your browser, such as `gh codespace ssh`, it prints the page's address
+instead. `gh` keeps the sign-in in your Codespace, so later starts give it to each new
 Demo without asking again. Deleting the Codespace deletes that copy, but does not revoke the
 sign-in. For a credential you can revoke on its own, `.devcontainer/copilot-login.sh --token` takes
 a fine-grained token with only the **Copilot Requests** permission; delete it on GitHub when you are
