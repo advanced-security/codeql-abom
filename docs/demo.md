@@ -48,14 +48,14 @@ codeql version --format=terse                   # prints 2.27.2
 Any patch release of the minor version in [`.codeql-version`](../.codeql-version) (`v2.27.x`, at
 least that file's) is accepted. The Demo runs the CLI behind the `codeql` stub directly, so `gh`
 needs no credential while it serves. On Linux arm64, which the extension does not download, unzip
-`codeql-linux-arm64.zip` from the
-[CodeQL CLI releases](https://github.com/github/codeql-cli-binaries/releases/tag/v2.27.2) and put
-its `codeql` directory on `PATH`.
+`codeql-linux-arm64.zip` from the [CodeQL CLI release](https://github.com/github/codeql-cli-binaries/releases)
+that `.codeql-version` names, and put its `codeql` directory on `PATH`.
 
-For Copilot authoring, install the Copilot CLI and the CodeQL Development MCP Server:
+For Copilot authoring, install the Copilot CLI and the CodeQL Development MCP Server release that
+matches `.codeql-version`, from the extracted directory:
 
 ```bash
-npm install --global @github/copilot@1.0.88 codeql-development-mcp-server@2.27.1
+npm install --global @github/copilot@1.0.88 "codeql-development-mcp-server@$(cut -c2- .codeql-version)"
 ```
 
 ### 2. Check, build and start
@@ -93,7 +93,7 @@ given only to the Copilot CLI.
 `make demo-reset` starts over with a new dataset (stop the Demo first). It also discards the saved
 credential and Tutorial progress. Settings: `ABOM_DEMO_DIR` (default `.abom/demo`), `ABOM_DEMO_ADDR`
 (default `127.0.0.1:8090`) and `ABOM_DEMO_CREDITS`, the AI credits one session may spend (default
-`0`, no limit).
+`0`, no limit; Copilot refuses a limit below 30).
 
 ### What reaches the network
 
@@ -108,35 +108,57 @@ credential and Tutorial progress. Settings: `ABOM_DEMO_DIR` (default `.abom/demo
 - On a workstation nothing stops another program from ignoring the proxy, so the server's own
   refusals and the empty environment are the boundary there. The Codespace adds a firewall.
 
-## In a Codespace (not yet qualified)
+## Run a Demo in a Codespace
 
-The `.devcontainer/demo` configuration builds a disposable Demo Codespace: create one from this
-repository with **that** dev container, and every start of it begins a new dataset under
-`/tmp/abom-demo`. Stopping the Codespace discards the exercise; a rebuild discards it too.
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/advanced-security/codeql-abom?quickstart=1)
 
-```text
-gh codespace create --repo advanced-security/codeql-abom --branch <branch> \
-  --devcontainer-path .devcontainer/demo/devcontainer.json --retention-period 0h
+The repository's dev container is the Demo, so **Code → Codespaces → Create codespace on main**
+or the link above starts one. Without a prebuild, creating it builds the image, installs CodeQL,
+the Copilot CLI and ql-mcp, then builds ABOM, which takes about ten minutes. Each start of the
+Codespace starts a Demo over a new dataset under `/tmp/abom-demo`. Open the forwarded **ABOM Demo**
+port (8099) from the Ports panel; it is private to you, and the simulated GitHub is never forwarded.
+
+If the Codespace opens in **recovery mode**, its setup stopped, and the recovery container has none
+of ABOM's tools. **View Creation Log** shows why: the last `on-create:` or `update-content:` line
+names the step, and a step that downloads has already been tried four times. **Codespaces: Rebuild
+Container**, from the Command Palette, runs the setup again.
+
+### Sign in for Copilot authoring
+
+Copilot authoring uses your own GitHub sign-in, never the Codespace's `GITHUB_TOKEN`, which belongs
+to this repository rather than to you. In the Codespace's terminal, run:
+
+```bash
+.devcontainer/copilot-login.sh
 ```
 
-The zero retention period deletes the Codespace once it stops. A Codespace created from the
-browser keeps its account's default retention unless an organization policy sets it.
+It signs the GitHub CLI in with a one-time code you enter in your browser, then gives that
+sign-in to the Demo. `gh` keeps the sign-in in your Codespace, so later starts give it to each new
+Demo without asking again. Deleting the Codespace deletes that copy, but does not revoke the
+sign-in. Each time you attach, the terminal says whether authoring is ready. For a credential you
+can revoke on its own, `.devcontainer/copilot-login.sh --token` takes a fine-grained token with only
+the **Copilot Requests** permission; delete it on GitHub when you are done. Classic `ghp_` tokens
+are refused.
 
-Open the forwarded **ABOM Demo** port (8099) from the Ports panel. It is private to you; the
-simulated GitHub is never forwarded.
+### Stopping, restarting and deleting
 
-To use Copilot authoring, supply a credential after the Codespace starts:
+Stopping the Codespace discards the exercise, and the next start begins a new dataset.
+`.devcontainer/start-demo.sh` restarts the Demo without discarding it, `--fresh` discards it, and
+`--stop` stops it; it reads `ABOM_DEMO_CREDITS` as `make demo` does. If the browser is refused,
+restart it from a terminal: the Demo admits only the forwarded address the start named.
+Logs are under `/tmp/abom-demo-logs`. To have the Codespace deleted as soon as it stops, create it
+with a zero retention period; one created from the browser keeps your account's default
+retention unless an organization policy sets one:
 
-```text
-.devcontainer/demo/copilot-login.sh
+```bash
+gh codespace create --repo advanced-security/codeql-abom --retention-period 0h
 ```
 
-It asks for a fine-grained personal access token with the **Copilot Requests** permission, keeps
-it only in the Demo's private directory, and hands it only to the Copilot CLI. The repository's
-automatic Codespaces token is not used. Revoke the token on GitHub when you are done.
-
-`.devcontainer/demo/start-demo.sh` restarts the Demo and keeps the current exercise;
-`start-demo.sh --fresh` discards it. Logs are under `/tmp/abom-demo-logs`.
+The same Codespace has what building ABOM needs, so contributors can use it too. `make start` will
+not run beside the Demo's server, so stop the Demo first with `.devcontainer/start-demo.sh --stop`.
+`make lint` needs golangci-lint, which the image leaves out: `go install` the version
+[`copilot-setup-steps.yml`](../.github/workflows/copilot-setup-steps.yml) names. There is no
+Docker, so `make test-postgres` runs in CI rather than there.
 
 ### What keeps a Demo away from GitHub
 
@@ -144,12 +166,36 @@ automatic Codespaces token is not used. Revoke the token on GitHub when you are 
   simulated GitHub. No GitHub reader, App, token lookup, discovery loop, webhook or relay is built.
 - Its environment holds no token, proxy or credential helper, and its own HTTP clients refuse
   anything but loopback.
-- In a Codespace it runs as its own user, and a firewall limits that user to loopback. The start
-  script proves it by trying to reach `api.github.com` and refusing to enable Copilot if it can.
+- In a Codespace it runs as its own user, and a firewall limits that user to loopback and refuses
+  its name lookups: a Codespace's container shares its VM's network, where loopback also holds the
+  VM's resolver. The start script proves both by trying them, and leaves Copilot off if either
+  works.
 - Copilot sessions reach the network only through `codeql-abom demo egress`, described above.
   Without that proxy, authoring is unavailable.
 - The server refuses every control a practice exercise does not need, including any added
   later, and every download.
+
+### Setting up prebuilds (repository administrators)
+
+A prebuild does that work ahead of time, so creating a Codespace does not wait for it. Prebuilds
+run as GitHub Actions workflows, so Actions must be enabled for the repository, and an organization
+needs a GitHub Team or Enterprise plan with a Codespaces payment method and spending limit.
+
+1. In the repository's **Settings → Codespaces**, under "Prebuild configuration", click **Set up
+   prebuild**.
+2. Choose the `main` branch and the `.devcontainer/devcontainer.json` configuration.
+3. Choose **Every push**. The prebuild builds ABOM from the branch, and **On configuration change**
+   would rebuild only when `devcontainer.json` or the `Dockerfile` changes, leaving the prebuilt
+   ABOM behind the code. **Scheduled** costs less and lags by up to its interval.
+4. Under **Reduce prebuild available to only specific regions**, choose the regions your users
+   create Codespaces in: each region's prebuild is billed for storage.
+5. Keep **Template history** at its default of 2, add whoever should hear about failed prebuilds,
+   and click **Create**. Follow the first prebuild in the repository's **Actions** tab.
+
+A prebuild contains the tools, ABOM and every query pack a Demo resolves, and never a user's
+credential or exercise. For Codespaces the organization pays for, set policies that restrict port
+visibility to private and set the maximum retention period. Organization policies do not cover
+Codespaces a user pays for, so they need the zero-retention command above.
 
 ## Leaving Demo
 

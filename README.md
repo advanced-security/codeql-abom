@@ -12,7 +12,10 @@ including findings about private code that cannot travel the public advisory rou
 downloads and Helm deployment are not available.
 
 To try ABOM without an organization, run a [Demo](docs/demo.md) from an archive of this
-repository: `make demo-check`, then `make demo`.
+repository: `make demo-check`, then `make demo`. Or
+[open one in a Codespace](https://codespaces.new/advanced-security/codeql-abom?quickstart=1), where
+every Codespace of this repository is a Demo; [the guide](docs/demo.md#run-a-demo-in-a-codespace)
+says how to sign in for Copilot authoring.
 
 1. Follow [source setup](docs/deployment/source.md) to install the prerequisites, CodeQL and its
    query packs, and to confirm GitHub and Git access to your organization.

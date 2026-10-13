@@ -1,6 +1,6 @@
 # Practice safely in a startup-only Demo instance
 
-**Status:** a marked, loopback-only Demo runs real CodeQL over fictional repositories with Copilot authoring behind an egress allowlist; its Codespaces profile is built and awaits qualification in a real Codespace, and comparisons, linked examples and scripted authoring are not built.
+**Status:** a marked, loopback-only Demo runs real CodeQL over fictional repositories with Copilot authoring behind an egress allowlist; its Codespaces profile is the repository's default dev container and awaits qualification in a real Codespace, and comparisons, linked examples and scripted authoring are not built.
 
 ## Why this exists
 
@@ -243,19 +243,26 @@ It never publishes, enables code scanning, creates alerts or implies offline dis
 
 ## Pending
 
-0. **Observe a Copilot session end to end.** The stall after the credential check was the egress
-   proxy relaying an HTTP/2 answer without a length on a kept-open connection, so the CLI waited
-   for an end that never came; it now relays such answers chunked. Confirm a full session in a
-   live Demo and read `.abom/demo/egress.log` for any host still refused.
+0. **Report a session its credit limit stopped, then observe one finish.** Copilot refuses a session
+   limit below 30 AI credits. With the default model a session spent about 2.4 credits a model
+   call, so a session capped at 30 stopped at 31.8 after reading the request, the catalog and the
+   library, before writing a query, and reported only *the agent ended without a last word*. An
+   exhausted budget is one of the states that must stay explicit: find what the SDK reports when
+   its limit ends a session and record that as the session's end. Then observe a session that
+   writes and tests a query, and read the egress log for any host refused.
 1. **Qualify the Codespaces profile in a real Codespace.** Needs the operator: merge, configure the
-   prebuild for `.devcontainer/demo/devcontainer.json`, and create Codespaces from it. Establish, by
-   observation: `capAdd: NET_ADMIN` and `xt_owner` work, so `start-demo.sh`'s `confine` proof passes;
-   the Copilot CLI honors `HTTPS_PROXY` with `NODE_USE_ENV_PROXY=1`; which hosts a session needs,
-   read from the egress log (`api.github.com` is not allowed, and if `/copilot_internal` is needed
-   the flow is unsupported until a path-checking proxy exists); which token types the SDK accepts;
-   whether the forwarded port arrives with the forwarded or a loopback `Host`; that zero retention
-   reads back on the created Codespace; and that two users' Codespaces share nothing. Pin the base
-   image by digest and verify the CodeQL archive's checksum.
+   prebuild for `.devcontainer/devcontainer.json`, and create Codespaces from it. A local dev
+   container of the same image already confines the Demo, refuses its lookups and runs the QLaaS
+   loop, also when run as a Codespace runs it (`--network host`, a DNS resolver on loopback, Dev
+   Containers CLI 0.83.3); a session in it needed only `api.github.com/copilot_internal/user` and
+   `*.githubcopilot.com`. What is left is what only a Codespace shows: the owner match works on the
+   VM's kernel, so `confine` passes; the environment `postStartCommand` gets names the forwarded
+   address (`start-demo.sh` says whether it did, and `status.sh` checks the Demo admits it); a
+   browser's requests through the forwarded port carry that address as their `Host`; what else
+   listens on the VM's loopback, which the firewall still admits, and whether any of it reaches
+   beyond the VM; the egress log names no other host; a fine-grained token with Copilot Requests
+   authors as gh's own sign-in does; zero retention reads back on the created Codespace; and two
+   users' Codespaces share nothing.
 2. **Comparison provenance, test-first.** Fictional repositories are never scanned, so Demo wires no
    comparer and review is unreachable. Add `demo-simulated` provenance through store, API, model and
    UI, admitted only in a marked store, before any simulated alert can satisfy a gate.
@@ -368,11 +375,15 @@ demo source through ABOM, not a guessed `github.com` URL naming a repository tha
 The provider's loopback address must not leak into a browser link that only works inside the
 Codespace; use a read-only source route behind the same private ABOM UI origin.
 
-### Dedicated configuration and prebuild contents
+### Configuration and prebuild contents
 
-Use a dedicated `.devcontainer/demo/devcontainer.json`, with narrowly scoped lifecycle scripts
-under `.devcontainer/demo/`. Do not replace the normal contributor environment or silently
-turn ordinary repository Codespaces into Demo instances.
+The Demo is the repository's default dev container, `.devcontainer/devcontainer.json`, and its
+only one. "Create codespace" and the `?quickstart=1` badge build only from that location: while the
+Demo lived in a subdirectory, the button gave everyone GitHub's generic image, and there was no
+contributor environment there to keep. Every Codespace of this repository is therefore a Demo, and
+it has no Docker, so a contributor who needs one works locally. A second configuration makes the
+Demo one choice among several and needs its own prebuild, so adding one is a decision;
+`scripts/test_devcontainer.py` stops it being made by accident.
 
 The prebuild contains:
 
@@ -397,6 +408,22 @@ and retained-version policies, and qualify the actual "Prebuild ready" creation 
 Use only trusted baseline commits for that configuration, not users' exercise branches or workspaces.
 Coordinate licensing and redistribution with [deployment](deployment.md)'s pre-release policy;
 do not silently change the repository license.
+
+### What the container shares with its VM
+
+A Codespace starts the dev container with `--network host`, so the container is on its VM's own
+network and the Demo's firewall rules land in the VM's tables, where they outlive the container: a
+rebuild finds them in place, so `confine` refills its own chain and adds its jump only once. Three
+rules follow, and `scripts/test_devcontainer.py` holds each one:
+
+- **The Demo's user ID is outside the system range.** The owner rule matches that ID across the VM,
+  and a system ID could belong to one of the VM's own services, such as its resolver.
+- **Name lookups are refused before loopback is admitted.** Loopback holds the VM's DNS resolver at
+  `127.0.0.53`, so admitting loopback alone lets the Demo's user look up any name, and the lookup
+  leaves the VM. The start script's proof tries a lookup as well as a connection.
+- **Every download during creation is retried, and every step names itself.** A blocking lifecycle
+  command (`onCreateCommand`, `updateContentCommand`) that fails leaves a recovery container holding
+  none of the tools, and the creation log is all its user has to read.
 
 ### Per-Codespace lifecycle
 
@@ -511,10 +538,12 @@ Codespace is not credential revocation. No user secret is permitted in prebuild 
 image layers or baseline artifacts.
 
 Do not assume a repository visitor receives development environment secrets: GitHub documents
-that they are not injected without write access to the repository. Qualify a post-creation
-Copilot credential setup for that user without asking them to commit, create a fork or gain
-repository-write access. Codespaces' automatic repository token may itself gain write access
-through platform forking behavior; its existence is never authority for ABOM to use real APIs.
+that they are not injected without write access to the repository. The post-creation credential
+is the user's own `gh` sign-in, handed to the Demo by `.devcontainer/copilot-login.sh`: a device
+flow with the Codespace's tokens unset, or a pasted fine-grained token, and never a classic one.
+Nobody commits, forks or gains repository-write access to author. Codespaces' automatic repository
+token may itself gain write access through platform forking behavior; its existence is never
+authority for ABOM to use real APIs, and it is never the Demo's Copilot credential.
 
 ### Private access, retention and administrative prerequisites
 
@@ -535,7 +564,7 @@ must be qualified by reading back zero retention on the actual created environme
 
 ```text
 gh codespace create --repo advanced-security/codeql-abom --branch <qualified-branch> \
-  --devcontainer-path .devcontainer/demo/devcontainer.json --retention-period 0h
+  --devcontainer-path .devcontainer/devcontainer.json --retention-period 0h
 ```
 
 Pin and test the CLI contract; do not combine this recipe with `--web`, which does not accept
@@ -579,7 +608,7 @@ publish their actual configured values, not an untested performance promise.
    user artifacts. Missing/incompatible prebuilds are reported honestly, not called prebuilt.
    Test both genuine Copilot success and unavailable-entitlement behavior after creation.
 
-Deliver the dedicated configuration/lifecycle scripts, simulator and provider contracts, real
+Deliver the default configuration/lifecycle scripts, simulator and provider contracts, real
 Copilot demo composition, private source-link routing, focused integration/browser tests and a
 repository entry point explaining creation and data loss. Record external administrator setup
 and effective settings separately from checked-in configuration. Do not enable prebuilds,

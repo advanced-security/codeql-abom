@@ -92,7 +92,8 @@ check() {
 	else
 		printf '  MISSING  %-34s %s\n' "copilot" "npm install --global @github/copilot@1.0.88"
 	fi
-	have codeql-development-mcp-server "npm install --global codeql-development-mcp-server@2.27.1" optional
+	# ql-mcp releases alongside the CodeQL CLI; ABOM names the release that matches .codeql-version.
+	have codeql-development-mcp-server "npm install --global codeql-development-mcp-server@$pin" optional
 	if [ -s "$dir/secrets/copilot-token" ]; then
 		printf '  ok       %-34s %s\n' "Copilot credential" "saved for this Demo"
 	else
@@ -126,6 +127,8 @@ setup() {
 		say "installing ql-mcp's Actions tool packs, which sessions use and cannot download later"
 		PATH="$(dirname "$cli"):$PATH" quietly codeql-development-mcp-server-setup-packs --language actions
 	fi
+	# ABOM's own PrintAST runs this pack; with Copilot on, the egress proxy refuses a later download.
+	quietly "$cli" pack download "advanced-security/ql-mcp-actions-tools-src@$pin"
 	say "creating the Demo at $dir"
 	"$bin" demo init --dir "$dir"
 	install_packs "$cli"

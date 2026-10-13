@@ -270,7 +270,7 @@ func newDemoServer(cfg demoServeConfig, ws demo.Workspace, provider string, stde
 		Token:   func(ctx context.Context) error { _, err := token(ctx); return err },
 		Fixed:   true,
 		Credential: toolchain.Credential{Name: "Copilot credential", Source: "Demo setup",
-			Remedy: "run make demo-login from the ABOM directory, or .devcontainer/demo/copilot-login.sh " +
+			Remedy: "run make demo-login from the ABOM directory, or .devcontainer/copilot-login.sh " +
 				"in a Codespace; the next session reads it"},
 	}
 	srv.Instance.Authoring, srv.Instance.AuthoringReason = "unavailable", "no Copilot CLI was named"

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/runner"
 	"github.com/advanced-security/codeql-abom/internal/serve"
 	"github.com/advanced-security/codeql-abom/internal/store"
+	"github.com/advanced-security/codeql-abom/internal/toolchain"
 )
 
 func demoWorkspace(t *testing.T) string {
@@ -242,5 +244,38 @@ func TestDemoChildrenTrustTheEgressAuthorityOnlyThroughTheProxy(t *testing.T) {
 	}
 	if env["NODE_EXTRA_CA_CERTS"] != ca || env["HTTPS_PROXY"] != "http://127.0.0.1:8091" {
 		t.Errorf("children were given %v", env)
+	}
+}
+
+// The readiness panel tells a Demo user which script supplies Copilot's credential; a script that
+// moved leaves them at a dead end the panel still points to.
+func TestDemoCredentialRemedyNamesScriptsThatExist(t *testing.T) {
+	root := demoWorkspace(t)
+	ws, err := demo.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+	cfg, err := parseDemoServeArgs([]string{"--dir", root}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := newDemoServer(cfg, ws, "http://127.0.0.1:1", &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chain, ok := srv.Toolchain.(*toolchain.Toolchain)
+	if !ok {
+		t.Fatalf("toolchain %T", srv.Toolchain)
+	}
+	remedy := chain.Credential.Remedy
+	scripts := regexp.MustCompile(`\.devcontainer/[\w./-]+\.sh`).FindAllString(remedy, -1)
+	if len(scripts) == 0 {
+		t.Fatalf("the remedy names no Codespace script: %q", remedy)
+	}
+	for _, script := range scripts {
+		if _, err := os.Stat(filepath.Join("..", "..", script)); err != nil {
+			t.Errorf("the remedy names %s, which does not exist", script)
+		}
 	}
 }
