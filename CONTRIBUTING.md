@@ -1,6 +1,16 @@
 # Contributing
 
+[fork]: https://github.com/advanced-security/codeql-abom/fork
+[pr]: https://github.com/advanced-security/codeql-abom/compare
+
 Thanks for taking the time to contribute.
+
+Contributions to this project are
+[released](https://docs.github.com/en/site-policy/github-terms/github-terms-of-service#6-contributions-under-repository-license)
+to the public under the [project's license](LICENSE).
+
+Please note that this project is released with a [Contributor Code of Conduct](CODE_OF_CONDUCT.md).
+By participating in this project you agree to abide by its terms.
 
 ## Before you start
 
@@ -9,8 +19,9 @@ make verify
 ```
 
 That is the same command CI runs, so if it passes locally it should pass on the pull request. It
-needs Go (version in `go.mod`), .NET 10, Node, the CodeQL CLI at the version in
-`.codeql-version`, and `golangci-lint`.
+needs everything the [README's requirements](README.md#requirements) list, plus Python 3, Node,
+Playwright's Chromium, `golangci-lint`, the `gh actions-lock` extension and a running Docker
+daemon.
 
 `.github/workflows/copilot-setup-steps.yml` installs all of it, and is a working reference if you
 would rather not read a list.
@@ -58,7 +69,8 @@ in `.github/instructions/go-tests.instructions.md`; do not weaken them without s
 
 **Unit tests are not enough on their own.** Several architectural bugs here passed every test.
 Where a change affects reported figures, snapshot a real database first and diff the headline
-numbers afterwards.
+numbers afterwards. Without an organization of your own, `make corpus` builds a populated database
+from the checked-in fixtures.
 
 ## Style
 
@@ -80,10 +92,20 @@ records the commit the runner executes. The tag is not the pin; the lock is, and
 a ref or the lock — `gh actions-lock` owns both, and `make pins` fails when they disagree.
 `make selfcheck` runs our own analysis over our own workflows and fails on any finding.
 
-## Submitting
+## Submitting a pull request
 
-Open a pull request against `main` with a description of what changed and why. Link an issue if
-one exists. Keep unrelated changes in separate pull requests.
+1. [Fork][fork] and clone the repository.
+1. Create a branch: `git checkout -b my-branch-name`.
+1. Write the test, watch it fail, then make your change.
+1. Run `make verify`, and `make selfcheck` if you changed a workflow.
+1. Push to your fork and [submit a pull request][pr] against `main`, saying what changed and why.
+   Link an issue if one exists.
 
-By contributing, you agree that your contributions will be licensed under the MIT license in
-[LICENSE](LICENSE).
+Keep unrelated changes in separate pull requests, and write a
+[good commit message](https://cbea.ms/git-commit/).
+
+## Resources
+
+- [How to Contribute to Open Source](https://opensource.guide/how-to-contribute/)
+- [About pull requests](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/about-pull-requests)
+- [GitHub Docs](https://docs.github.com)

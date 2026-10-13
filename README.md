@@ -108,8 +108,8 @@ ABOM runs on macOS or on Linux with glibc, and needs these on `PATH`:
 
 [Source setup](docs/deployment/source.md#prerequisites) says how to install each one.
 [Optional features](docs/deployment/configuration.md#optional-features), such as Copilot authoring,
-need more. Development also needs Python 3, Node, Playwright, golangci-lint and a running Docker
-daemon.
+need more. Development also needs Python 3, Node, Playwright, golangci-lint, the `gh actions-lock`
+extension and a running Docker daemon.
 
 ## Development
 
@@ -130,6 +130,11 @@ participating in it you agree to abide by its terms.
 
 ## Acknowledgements
 
+ABOM is built on GitHub's [CodeQL](https://github.com/github/codeql), whose Actions query tests are
+most of ABOM's fixture corpus. The [GitHub Advisory Database](https://github.com/advisories)
+supplies the advisories the corpus is tested against. [NOTICE](NOTICE) gives the licenses of
+everything ABOM includes from others.
+
 GitHub's [gh-actions-lock](https://github.com/github/gh-actions-lock) and
 [actions-lockfile](https://github.com/github/actions-lockfile) provide the native pinning tool and
 shared format that ABOM's lock-aware resolution reuses.
@@ -147,7 +152,8 @@ also informs the capability comparison before any expansion of ABOM's publisher.
 ## License
 
 This project is licensed under the terms of the GitHub CodeQL Terms and Conditions. Please refer to
-the [LICENSE](./LICENSE) file for the full terms.
+the [LICENSE](./LICENSE) file for the full terms. Material from others keeps its own license, which
+[NOTICE](NOTICE) lists.
 
 ## Maintainers
 
