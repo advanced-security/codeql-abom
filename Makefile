@@ -362,7 +362,7 @@ test-sqlite:
 	@TMPDIR="$(ABOM_TMP)/gotest" go test ./... -count=1 -race -timeout=20m
 
 ## test-postgres: replica routing against a Docker PostgreSQL physical standby, then the store suite
-## on that primary in ABOM_TEST_SHARDS concurrent processes (default 4).
+## on that primary in ABOM_TEST_SHARDS concurrent processes (default: one per CPU, at most 4).
 test-postgres:
 	@mkdir -p "$(ABOM_TMP)/gotest"
 	@TMPDIR="$(ABOM_TMP)/gotest" python3 scripts/with-postgres.py store

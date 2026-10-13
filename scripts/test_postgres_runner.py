@@ -355,12 +355,14 @@ class ShardCountTests(unittest.TestCase):
         with patch.dict(os.environ, {runner.SHARDS_ENV: value}):
             return runner.shard_count()
 
-    def test_unset_or_empty_is_four_on_every_machine(self):
-        # One split everywhere, so a failure between tests that share a shard reproduces anywhere.
-        with patch.object(runner.os, "cpu_count", return_value=2), patch.dict(os.environ):
-            os.environ.pop(runner.SHARDS_ENV, None)
-            self.assertEqual(runner.shard_count(), 4)
-            self.assertEqual(self.count(""), 4)
+    def test_unset_or_empty_is_one_per_cpu_up_to_four(self):
+        # On a 2-vCPU CI runner, 4 shards were slower than 2.
+        for cpus, shards in [(None, 1), (1, 1), (2, 2), (16, 4)]:
+            with self.subTest(cpus=cpus), patch.object(runner.os, "cpu_count", return_value=cpus), \
+                    patch.dict(os.environ):
+                os.environ.pop(runner.SHARDS_ENV, None)
+                self.assertEqual(runner.shard_count(), shards)
+                self.assertEqual(self.count(""), shards)
 
     def test_a_positive_integer_is_taken(self):
         self.assertEqual(self.count("1"), 1)

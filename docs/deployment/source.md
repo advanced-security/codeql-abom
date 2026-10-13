@@ -32,7 +32,7 @@ The complete development gate requires a running Docker daemon, not a host Postg
 `make test` runs both halves: `make test-sqlite` runs every package with the race detector and
 the store on SQLite, and needs no Docker; `make test-postgres` runs replica routing against a
 physical standby, then the store suite again on PostgreSQL, in `ABOM_TEST_SHARDS` concurrent
-processes (default 4) against one primary. CI runs the two halves as parallel jobs. The pinned PostgreSQL primary and physical
+processes (default: one per CPU, at most 4) against one primary. CI runs the two halves as parallel jobs. The pinned PostgreSQL primary and physical
 standby use disposable data and dynamically assigned loopback ports; the harness removes only its
 own containers afterward. Primary readiness requires TCP: the image's temporary, socket-only
 initialization server is stopped before the service starts, so it cannot authorize standby setup

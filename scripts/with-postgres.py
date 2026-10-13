@@ -23,8 +23,8 @@ BACKEND_ENV = "ABOM_TEST_STORE_BACKEND"
 # How many processes run the store suite at once; each test migrates its own schema, so they share
 # one primary without seeing each other.
 SHARDS_ENV = "ABOM_TEST_SHARDS"
-# The same split on every machine, so a failure between tests that share a shard reproduces anywhere.
-DEFAULT_SHARDS = 4
+# Never more shards than CPUs: on a 2-vCPU CI runner, 4 were slower than 2.
+MAX_SHARDS = 4
 PROBE = ["python3", "-c", """
 import os, socket, struct, urllib.parse
 url = urllib.parse.urlsplit(os.environ["ABOM_TEST_POSTGRES_DSN"])
@@ -36,10 +36,10 @@ print("PostgreSQL answered its wire protocol; storage compatibility was not test
 
 
 def shard_count():
-    """How many processes run the store suite: ABOM_TEST_SHARDS, or DEFAULT_SHARDS when unset."""
+    """How many processes run the store suite: ABOM_TEST_SHARDS, or one per CPU up to MAX_SHARDS."""
     value = os.environ.get(SHARDS_ENV, "").strip()
     if not value:
-        return DEFAULT_SHARDS
+        return min(MAX_SHARDS, os.cpu_count() or 1)
     try:
         shards = int(value)
     except ValueError:
