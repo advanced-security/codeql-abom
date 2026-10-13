@@ -56,7 +56,18 @@ export async function corpusSize(request, baseURL) {
  * behavior indistinguishable from a fault.
  */
 export const test = base.extend({
-    page: async ({ page }, use, testInfo) => {
+    tutorialFresh: [false, { option: true }],
+    page: async ({ page, tutorialFresh }, use, testInfo) => {
+        if (!tutorialFresh) {
+            await page.addInitScript(() => {
+                const key = 'abom.tutorial.v1:' + location.origin + '/';
+                if (localStorage.getItem(key) === null) {
+                    localStorage.setItem(key, JSON.stringify({
+                        Version: 1, Acknowledged: true, Enabled: false, Completed: {},
+                    }));
+                }
+            });
+        }
         const pageErrors = [];
         const serverFaults = [];
         const failedRequests = [];

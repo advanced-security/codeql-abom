@@ -53,6 +53,9 @@ type DatabaseSet struct {
 	// asking for a shape nothing has ever been built in is indistinguishable from a scope that
 	// genuinely matched nothing -- and the two call for opposite responses.
 	Unresolved string `json:"unresolved"`
+	// Outside names repositories the scope reached that this instance cannot fetch, such as an
+	// upstream Action in a Demo: left out of the run and said, never attempted and failed.
+	Outside []DatabaseGap `json:"outside"`
 }
 
 // BuiltBy re-reads a resolution against the CodeQL that would run it.
@@ -163,7 +166,7 @@ func noDatabases(mode string) DatabaseSet {
 	if mode == "" {
 		mode = AnalysisModeRegular
 	}
-	return DatabaseSet{Databases: []ScopedDatabase{}, Gaps: []DatabaseGap{}, Mode: mode}
+	return DatabaseSet{Databases: []ScopedDatabase{}, Gaps: []DatabaseGap{}, Outside: []DatabaseGap{}, Mode: mode}
 }
 
 // namedAmong keeps the listed repositories a name asks for, in any case it was typed.

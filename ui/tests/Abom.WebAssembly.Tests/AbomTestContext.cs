@@ -28,8 +28,13 @@ public abstract class AbomTestContext : BunitContext
         // MudPopoverProvider takes no child content, so it cannot wrap the component under test;
         // telling MudBlazor not to look for it is the supported way to render without a layout.
         Services.AddMudServices(options => options.PopoverOptions.CheckForPopoverProvider = false);
-        Services.AddSingleton(_ => new HttpClient(_handler) { BaseAddress = new Uri("http://localhost/") });
+        Services.AddSingleton<TutorialService>();
+        Services.AddSingleton(sp => new HttpClient(new TutorialRequestHandler(sp.GetRequiredService<TutorialService>())
+        {
+            InnerHandler = _handler,
+        }) { BaseAddress = new Uri("http://localhost/") });
         Services.AddSingleton<AbomApi>();
+        Services.AddSingleton<InstanceService>();
         Services.AddSingleton<ThemeService>();
         Services.AddSingleton<AccountService>();
         Services.AddSingleton<ScopeService>();

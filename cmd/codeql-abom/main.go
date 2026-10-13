@@ -30,6 +30,7 @@ var subcommands = []subcommand{
 	{"refresh", runRefresh, "Recompute the derived tables without crawling."},
 	{"report", runReport, "Print a summary of the collected ABOM."},
 	{"serve", runServe, "Serve the ABOM over HTTP for the user interface."},
+	{"demo", runDemo, "Create and serve a Demo instance over fictional, simulated repositories."},
 	{"accounts", runAccounts, "Show the accounts you are verified to belong to."},
 	{"own", runOwned, "Declare which accounts you own, which is what discovery is bounded by."},
 	{"prune", runPrune, "Remove what the declared scope does not reach."},

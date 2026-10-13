@@ -8,11 +8,13 @@ var builder = WebAssemblyHostBuilder.CreateDefault(args);
 builder.RootComponents.Add<App>("#app");
 builder.RootComponents.Add<HeadOutlet>("head::after");
 
-builder.Services.AddScoped(_ => new HttpClient
+builder.Services.AddScoped<TutorialService>();
+builder.Services.AddScoped(sp => new HttpClient(new TutorialRequestHandler(sp.GetRequiredService<TutorialService>())
 {
-    BaseAddress = new Uri(builder.HostEnvironment.BaseAddress),
-});
+    InnerHandler = new HttpClientHandler(),
+}) { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
 builder.Services.AddScoped<AbomApi>();
+builder.Services.AddScoped<InstanceService>();
 builder.Services.AddScoped<ThemeService>();
 builder.Services.AddScoped<AccountService>();
 // Shared so every surface reads and acts on the same scope.

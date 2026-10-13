@@ -1,0 +1,205 @@
+.abom-tutorial-checklist { margin-bottom: 1.25rem; max-width: 720px; }
+.abom-tutorial-checklist > summary { cursor: pointer; padding: 0.35rem 0; }
+.abom-tutorial-checklist > summary h2 { display: inline; margin-left: var(--abom-gap-xs); }
+.abom-tutorial-checklist ul {
+    list-style: none;
+    padding: 0;
+    margin: 0.25rem 0 0;
+}
+.abom-tutorial-checklist li {
+    display: grid;
+    grid-template-columns: var(--abom-icon-md) minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--abom-gap-md);
+    border-bottom: 1px solid var(--mud-palette-lines-default);
+    font-size: var(--abom-text-sm);
+    min-height: 34px;
+}
+.abom-tutorial-lesson-action {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--abom-gap-md);
+}
+.abom-tutorial-title-tip { min-width: 0; }
+.abom-tutorial-title {
+    border: 0;
+    padding: 0.3rem 0;
+    background: transparent;
+    color: var(--mud-palette-primary);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+.abom-tutorial-title:hover { text-decoration: underline; }
+.abom-tutorial-title:disabled { color: var(--mud-palette-text-disabled); cursor: not-allowed; }
+.abom-tutorial-lesson-action { flex-shrink: 0; }
+.abom-tutorial-completed { color: var(--mud-palette-success); font-size: var(--abom-text-xs); }
+.abom-tutorial-notice {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    max-width: 100%;
+    z-index: 1602;
+    padding: 0.5rem 1rem;
+    background: var(--mud-palette-surface);
+    color: var(--mud-palette-warning);
+    border: 1px solid var(--mud-palette-warning);
+    font-size: var(--abom-text-sm);
+}
+.abom-tutorial-welcome, .abom-tutorial-coach, .abom-tutorial-preview {
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: var(--abom-radius);
+    padding: 1rem;
+    font-size: var(--abom-text-md);
+    color: var(--mud-palette-text-primary);
+    background: var(--mud-palette-surface);
+    overflow: auto;
+    overscroll-behavior: contain;
+}
+.abom-tutorial-welcome {
+    position: fixed;
+    right: 1rem;
+    top: 76px;
+    width: min(420px, calc(100vw - 2rem));
+    max-height: calc(100dvh - 92px);
+    z-index: 1401;
+    box-shadow: var(--mud-elevation-8);
+}
+.abom-tutorial-welcome p, .abom-tutorial-coach p, .abom-tutorial-preview p { margin: 0.65rem 0; }
+.abom-tutorial-link { color: var(--mud-palette-primary); text-align: left; }
+.abom-tutorial-layer { position: fixed; inset: 0; z-index: 1600; pointer-events: none; }
+.abom-tutorial-scrim { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
+.abom-tutorial-coach {
+    position: fixed;
+    width: min(370px, calc(100vw - 16px));
+    max-height: calc(100dvh - 32px);
+    pointer-events: auto;
+    box-shadow: var(--mud-elevation-8);
+    z-index: 2;
+}
+.abom-tutorial-position, .abom-tutorial-preview-label {
+    font-size: var(--abom-text-xs);
+    color: var(--mud-palette-text-secondary);
+}
+.abom-tutorial-progress-row { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem; }
+.abom-tutorial-progress-row .abom-tutorial-position { display: flex; flex-direction: column; gap: 0.2rem; }
+.abom-tutorial-wheel { position: relative; width: 42px; height: 42px; flex-shrink: 0; }
+.abom-tutorial-wheel svg { width: 100%; height: 100%; }
+.abom-tutorial-wheel circle { fill: none; stroke-width: 3; }
+.abom-tutorial-wheel-track { stroke: var(--mud-palette-lines-default); }
+.abom-tutorial-wheel-value { stroke: var(--mud-palette-primary); }
+.abom-tutorial-wheel > span { position: absolute; inset: 0; display: grid; place-items: center; font-size: var(--abom-text-sm); }
+.abom-tutorial-related { border-top: 1px solid var(--mud-palette-lines-default); margin-top: 1rem; padding-top: 0.75rem; }
+.abom-tutorial-related .mud-tooltip-root { display: block; }
+.abom-tutorial-related .abom-tutorial-link { text-align: left; margin-top: 0.5rem; }
+.abom-tutorial-related p { font-size: var(--abom-text-xs); }
+.abom-home-scopes { margin-top: 1.75rem; padding-top: 1.25rem; border-top: 1px solid var(--mud-palette-lines-default); }
+.abom-home-scopes > h2 { margin-bottom: 1rem; }
+.abom-advisory-actions, .abom-finding-assets { display: flex; flex-wrap: wrap; gap: 0.35rem 0.75rem; margin-top: 0.4rem; }
+.abom-advisory-actions a, .abom-finding-assets a { overflow-wrap: anywhere; }
+.abom-tutorial-more { margin: 0.5rem 0; }
+.abom-tutorial-more summary { color: var(--mud-palette-primary); cursor: pointer; }
+.abom-tutorial-controls { display: flex; flex-wrap: wrap; gap: var(--abom-gap-md); margin-top: 1rem; }
+.abom-tutorial-coach button, .abom-tutorial-link {
+    background: var(--mud-palette-surface);
+    border: 1px solid var(--mud-palette-primary);
+    border-radius: var(--abom-radius);
+    color: var(--mud-palette-primary);
+    padding: 0.35rem 0.55rem;
+    font: inherit;
+    cursor: pointer;
+}
+.abom-tutorial-coach button:disabled, .abom-tutorial-link:disabled { opacity: var(--abom-dim); cursor: not-allowed; }
+.abom-tutorial-coach :focus-visible, .abom-tutorial-checklist :focus-visible {
+    outline: 2px solid var(--mud-palette-primary);
+    outline-offset: 2px;
+}
+.abom-tutorial-preview {
+    position: fixed;
+    top: 84px;
+    left: 16px;
+    width: calc(100vw - 430px);
+    max-height: calc(100dvh - 108px);
+    pointer-events: auto;
+    z-index: 0;
+}
+.abom-request-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+.abom-tutorial-states dt { display: flex; align-items: center; gap: var(--abom-gap-md); margin-top: 1rem; }
+.abom-tutorial-states dd { margin-left: 1.5rem; }
+@media (max-width: 1100px) {
+    .abom-appbar .mud-toolbar { height: auto; flex-wrap: wrap; padding: 8px 16px; row-gap: 4px; }
+    .abom-appbar .abom-nav { order: 2; flex-basis: 100%; margin-left: 0; justify-content: center; }
+    .abom-appbar .abom-brand-tagline { display: none; }
+    .abom-appbar .abom-nav-link { padding: 4px 12px; }
+    .mud-layout:has(.abom-appbar) .mud-main-content { padding-top: 112px; }
+    .abom-tutorial-welcome { top: 112px; max-height: calc(100dvh - 128px); }
+    .abom-tutorial-preview { top: 112px; max-height: calc(100dvh - 136px); }
+}
+@media (max-width: 720px) {
+    .abom-appbar .abom-crawl { order: 3; flex-basis: 100%; justify-content: flex-end; margin-right: 0; }
+    .mud-layout:has(.abom-appbar .abom-crawl) .mud-main-content { padding-top: 152px; }
+    body:has(.abom-appbar .abom-crawl) .abom-tutorial-welcome { top: 152px; max-height: calc(100dvh - 168px); }
+    .abom-tutorial-preview { top: 112px; width: calc(100vw - 32px); max-height: 30dvh; }
+    .abom-tutorial-coach { max-height: 48dvh; }
+}
+/* Demo is stated on every page: quiet enough to read past, never mistaken for page content. */
+/* The app bar grows at two widths; the banner sticks below it and the welcome clears both. */
+:root { --abom-bar: 64px; --abom-demo: 42px; }
+@media (max-width: 1100px) {
+    :root { --abom-bar: 104px; }
+}
+@media (max-width: 720px) {
+    :root:has(.abom-appbar .abom-crawl) { --abom-bar: 141px; }
+}
+body:has(.abom-demo-banner[data-abom-demo-banner]) .abom-tutorial-welcome {
+    top: calc(var(--abom-bar) + var(--abom-demo) + 24px);
+    max-height: calc(100dvh - var(--abom-bar) - var(--abom-demo) - 40px);
+}
+.abom-demo-banner {
+    position: sticky;
+    top: var(--abom-bar);
+    height: var(--abom-demo);
+    box-sizing: border-box;
+    z-index: 3;
+    display: flex;
+    flex-wrap: nowrap;
+    overflow: hidden;
+    align-items: center;
+    gap: 0.35rem 0.75rem;
+    padding: 0.4rem 1rem;
+    background: color-mix(in srgb, var(--mud-palette-info) 13%, var(--mud-palette-surface));
+    border-bottom: 1px solid color-mix(in srgb, var(--mud-palette-info) 55%, transparent);
+    color: var(--mud-palette-text-primary);
+    font-size: var(--abom-text-sm, 0.875rem);
+}
+.abom-demo-banner > .mud-icon-root { color: var(--mud-palette-info); }
+.abom-demo-title { white-space: nowrap; }
+.abom-demo-facts { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.abom-demo-facts [data-abom-demo-fact] {
+    display: inline-block;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: 999px;
+    padding: 0 0.55rem;
+    color: var(--mud-palette-text-secondary);
+    background: var(--mud-palette-surface);
+    white-space: nowrap;
+}
+.abom-demo-leave { display: inline-flex; align-items: center; gap: 0.25rem; color: var(--mud-palette-text-secondary); cursor: help; }
+.abom-demo-leave:focus-visible { outline: 2px solid var(--mud-palette-primary); outline-offset: 2px; }
+.abom-tutorial-practice {
+    border-top: 1px solid var(--mud-palette-lines-default);
+    margin-top: 1rem;
+    padding-top: 0.75rem;
+}
+.abom-tutorial-practice p { font-size: var(--abom-text-xs); margin: 0.25rem 0 0.5rem; }
+.abom-tutorial-coach .abom-tutorial-practice button {
+    background: var(--mud-palette-primary);
+    color: var(--mud-palette-primary-text);
+}
+/* Narrow screens keep the banner to one line; its tooltip carries the same facts. */
+@media (max-width: 1100px) {
+    .abom-demo-facts { display: none; }
+}
+@media (max-width: 520px) {
+    .abom-demo-title { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+}

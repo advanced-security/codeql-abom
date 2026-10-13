@@ -71,6 +71,13 @@ type Tool struct {
 	Source string
 }
 
+// Credential names a token source other than gh, and how a reader supplies it.
+type Credential struct {
+	Name   string
+	Source string
+	Remedy string
+}
+
 // Toolchain checks and changes what sessions run on.
 type Toolchain struct {
 	Store store.Backend
@@ -85,6 +92,10 @@ type Toolchain struct {
 	ApplyCopilot func(path string)
 	// Timeout bounds each version probe; zero takes DefaultTimeout.
 	Timeout time.Duration
+	// Fixed keeps the tools this server started with; no path is offered or saved.
+	Fixed bool
+	// Credential describes where Token reads from; zero is the operator's gh sign-in.
+	Credential Credential
 
 	mu       sync.Mutex
 	defaults map[string]Tool
@@ -176,7 +187,7 @@ func (t *Toolchain) packCheck() Check {
 }
 
 func (t *Toolchain) codeqlCheck(ctx context.Context, tool Tool, saved map[string]store.ToolPath, fresh bool) Check {
-	c := Check{Key: KeyCodeQL, Name: "CodeQL CLI", Path: tool.Path, Source: tool.Source, Settable: true}
+	c := Check{Key: KeyCodeQL, Name: "CodeQL CLI", Path: tool.Path, Source: tool.Source, Settable: !t.Fixed}
 	if p, ok := saved[store.ToolCodeQL]; ok && p.Path != tool.Path {
 		c.Saved = p.Path
 	}
@@ -199,7 +210,7 @@ func (t *Toolchain) codeqlCheck(ctx context.Context, tool Tool, saved map[string
 }
 
 func (t *Toolchain) copilotCheck(ctx context.Context, tool Tool, saved map[string]store.ToolPath, fresh bool) Check {
-	c := Check{Key: KeyCopilot, Name: "Copilot CLI", Path: tool.Path, Source: tool.Source, Settable: true}
+	c := Check{Key: KeyCopilot, Name: "Copilot CLI", Path: tool.Path, Source: tool.Source, Settable: !t.Fixed}
 	if p, ok := saved[store.ToolCopilot]; ok && p.Path != tool.Path {
 		c.Saved = p.Path
 	}
@@ -237,6 +248,16 @@ func (t *Toolchain) qlmcpCheck() Check {
 
 func (t *Toolchain) tokenCheck(ctx context.Context) Check {
 	c := Check{Key: KeyToken, Name: "GitHub sign-in", Source: "gh auth token"}
+	if cred := t.Credential; cred.Source != "" {
+		c.Name, c.Source = cred.Name, cred.Source
+		if t.Token == nil {
+			return c.problem("this server has no way to read its credential", cred.Remedy)
+		}
+		if err := t.Token(ctx); err != nil {
+			return c.problem(err.Error(), cred.Remedy)
+		}
+		return c.ready()
+	}
 	if t.Token == nil {
 		return c.problem("this server has no way to read a GitHub token", "run gh auth login")
 	}
@@ -252,6 +273,9 @@ func (t *Toolchain) tokenCheck(ctx context.Context) Check {
 func (t *Toolchain) SetTool(ctx context.Context, tool, path, by string) error {
 	if tool != store.ToolCodeQL && tool != store.ToolCopilot {
 		return fmt.Errorf("%w: no tool %q", ErrUnusable, tool)
+	}
+	if t.Fixed {
+		return fmt.Errorf("%w: this server keeps the tools it started with", ErrUnusable)
 	}
 	t.mu.Lock()
 	t.rememberDefaults()

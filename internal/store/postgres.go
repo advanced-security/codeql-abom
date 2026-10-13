@@ -30,5 +30,10 @@ func openPostgres(dsn string, opts Options) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("connecting to PostgreSQL: %w", err)
 	}
-	return &Store{db: &database{DB: db, postgres: true, readOnly: opts.ReadOnly}, bulkMode: opts.BulkLoad, dsn: dsn}, nil
+	s := &Store{db: &database{DB: db, postgres: true, readOnly: opts.ReadOnly}, bulkMode: opts.BulkLoad, dsn: dsn}
+	if err := s.refuseDemo(opts); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return s, nil
 }

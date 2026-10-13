@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/advanced-security/codeql-abom/internal/expand"
 	"github.com/advanced-security/codeql-abom/internal/ghauth"
 	"github.com/advanced-security/codeql-abom/internal/harness"
 	"github.com/advanced-security/codeql-abom/internal/runner"
 	"github.com/advanced-security/codeql-abom/internal/store"
-	"github.com/advanced-security/codeql-abom/internal/supervisor"
 	"github.com/advanced-security/codeql-abom/internal/toolchain"
 )
 
@@ -25,6 +25,8 @@ type authoringOptions struct {
 	qlmcp      string
 	limit      time.Duration
 	credits    float64
+	// token is the credential sessions authenticate with; nil asks gh for the operator's.
+	token func(context.Context) (string, error)
 }
 
 func (o *authoringOptions) register(fs *flag.FlagSet) {
@@ -44,7 +46,7 @@ func (o *authoringOptions) register(fs *flag.FlagSet) {
 // says how to build the agent for a Copilot CLI named later.
 //
 // Handed the runner the crawl holds, so a session takes the same lock a crawl and a run take.
-func newAuthoring(s store.Backend, o authoringOptions, sup *supervisor.Supervisor, stderr io.Writer,
+func newAuthoring(s store.Backend, o authoringOptions, x *expand.Expander, workDir string, stderr io.Writer,
 ) (*harness.Sessions, func(cli string) harness.Agent) {
 	dir := runner.CustomPackRoot()
 	if dir == "" {
@@ -52,20 +54,24 @@ func newAuthoring(s store.Backend, o authoringOptions, sup *supervisor.Superviso
 	}
 	lock, codeql := runner.SharedLock(), ""
 	tests := &runner.Runner{Lock: lock}
-	if r, ok := sup.Expander.Resolver.(*runner.Runner); ok {
+	if r, ok := x.Resolver.(*runner.Runner); ok {
 		lock, codeql, tests = r.Lock, r.CodeQLPath, r
 	}
 	sessions := &harness.Sessions{
 		Store:     s,
 		Workspace: dir,
 		Libraries: codeqlLibraries(),
-		WorkDir:   filepath.Join(sup.Options.WorkDir, "authoring"),
+		WorkDir:   filepath.Join(workDir, "authoring"),
 		Model:     o.model,
 		Lock:      lock,
 		Limit:     o.limit,
 		Version:   tests.Version,
 		RunTests:  tests.RunTestsHeld,
 		Prepare:   tests.InstallPackHeld,
+	}
+	token := o.token
+	if token == nil {
+		token = func(ctx context.Context) (string, error) { return ghauth.Token(ctx, ghauth.Exec) }
 	}
 	agentFor := func(cli string) harness.Agent {
 		if info, err := os.Stat(cli); cli == "" || err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
@@ -74,7 +80,7 @@ func newAuthoring(s store.Backend, o authoringOptions, sup *supervisor.Superviso
 		return &harness.Copilot{
 			CLI:     cli,
 			Model:   o.model,
-			Token:   func(ctx context.Context) (string, error) { return ghauth.Token(ctx, ghauth.Exec) },
+			Token:   token,
 			QLMCP:   strings.Fields(o.qlmcp),
 			CodeQL:  codeql,
 			Packs:   runner.PackSearchPath(),

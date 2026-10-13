@@ -11,6 +11,18 @@
 
     <div class="abom-documentation abom-review-message">@((MarkupString)MessageHtml)</div>
     <div class="abom-ref mb-2">@Details.Finding.Repository</div>
+    @if (Details.Assets.Count > 0)
+    {
+        <div class="abom-finding-assets">
+            <span>Related items:</span>
+            @foreach (var asset in Details.Assets)
+            {
+                <MudLink Href="@($"/node/{Uri.EscapeDataString(asset.Key)}")" Typo="Typo.caption"
+                         title="@($"Open the details of {asset.Key}.")"
+                         data-abom-finding-asset="@asset.Key">@asset.Key</MudLink>
+            }
+        </div>
+    }
     @foreach (var location in PrimaryLocations)
     {
         @LocationView(location)

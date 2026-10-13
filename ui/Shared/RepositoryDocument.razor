@@ -5,6 +5,7 @@
    nothing examined is not one found clean. *@
 
 @inject AbomApi Api
+@inject InstanceService Instance
 
 <MudPaper Class="pa-3 mb-3" Elevation="0" Outlined="true" data-abom-document="@Repository">
     <div class="d-flex align-center gap-2">
@@ -53,6 +54,14 @@
             </li>
         </ul>
         <div class="d-flex flex-wrap align-center gap-1">
+            @if (Instance.IsDemo)
+            {
+                <MudText Typo="Typo.caption" Class="mud-text-secondary" data-abom-demo-withheld>
+                    This Demo does not download practice data.
+                </MudText>
+            }
+            else
+            {
             @foreach (var (format, label) in Formats)
             {
                 <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Outlined"
@@ -65,6 +74,7 @@
             <MudText Typo="Typo.caption" Class="mud-text-secondary">
                 ABOM JSON alone carries run keys, pack digests and result hashes.
             </MudText>
+            }
         </div>
     }
 </MudPaper>

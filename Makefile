@@ -33,7 +33,8 @@ LDFLAGS := -X main.codeqlVersion=$(CODEQL_VERSION) $(if $(ABOM_VERSION),-X main.
 # What every platform's archive shares: the published interface, its notices and its SDK.
 ABOM_RELEASE ?= $(ABOM_TMP)/release
 
-.PHONY: backend-test bench build check-corrupt corpus check-release-version check-versions clean e2e e2e-corpus e2e-corpus-run e2e-run \
+.PHONY: backend-test bench build check-corrupt corpus check-release-version check-versions clean demo demo-check demo-login \
+	demo-reset e2e e2e-corpus e2e-corpus-run e2e-run \
 	fmt itest js lint logs package pins publish ql \
 	quality release-archive release-ui restart script-test security-test selfcheck serve start status stop style test ui \
 	ui-test verify vet
@@ -75,6 +76,23 @@ corpus:
 		echo "corpus: refusing to overwrite the configured working database."; exit 1; \
 	fi
 	@ABOM_DB="$(ABOM_CORPUS_DB)" go run ./cmd/abom-corpus --queries "$(ABOM_CORPUS_QL)"
+
+## demo: serve a Demo over fictional repositories, creating it first; Ctrl-C stops it. See docs/demo.md.
+ABOM_DEMO_DIR  ?= $(ABOM_TMP)/demo
+ABOM_DEMO_ADDR ?= 127.0.0.1:8090
+demo: build publish
+	@ABOM_DEMO_DIR="$(abspath $(ABOM_DEMO_DIR))" ABOM_DEMO_ADDR="$(ABOM_DEMO_ADDR)" ABOM_UI="$(abspath $(ABOM_UI))" \
+		scripts/demo.sh serve
+
+## demo-check: list what a Demo needs and what is missing; demo-login: save its Copilot credential.
+demo-check:
+	@ABOM_DEMO_DIR="$(abspath $(ABOM_DEMO_DIR))" scripts/demo.sh check
+demo-login:
+	@ABOM_DEMO_DIR="$(abspath $(ABOM_DEMO_DIR))" scripts/demo.sh login
+
+## demo-reset: start the Demo over with a new dataset, discarding what was practiced.
+demo-reset: build
+	@ABOM_DEMO_DIR="$(abspath $(ABOM_DEMO_DIR))" ABOM_DEMO_ADDR="$(ABOM_DEMO_ADDR)" scripts/demo.sh reset
 
 ## e2e: drive the published interface in a real browser.
 ABOM_E2E_DIR   ?= $(ABOM_TMP)/e2e

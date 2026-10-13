@@ -221,10 +221,10 @@
                     @foreach (var value in OfferableValues)
                     {
                         <MudMenuItem OnClick="@(() => Apply(_term.Name, value.Value))"
-                                     title="@($"Apply {value.Value} as a {_term.Label} filter value.")"
+                                     title="@($"Apply {DisplayValue(_term.Name, value.Value)} as a {_term.Label} filter value.")"
                                      data-abom-value="@value.Value">
                             <div class="abom-picker-value">
-                                <span class="abom-picker-term-label">@value.Value</span>
+                                <span class="abom-picker-term-label">@DisplayValue(_term.Name, value.Value)</span>
                                 @* Two rules are usually nine tenths of the findings, and an
                                    alphabetical list says every rule is equally likely. *@
                                 @if (value.Count > 0)
@@ -352,7 +352,10 @@
     /// What is set, paired with the term that describes it, in catalog order.
     private IEnumerable<(FilterTerm Term, string Value)> Applied =>
         _terms.Where(t => Current.ContainsKey(t.Name))
-              .Select(t => (t, string.Join(", ", Current[t.Name])));
+              .Select(t => (t, string.Join(", ", Current[t.Name].Select(v => DisplayValue(t.Name, v)))));
+
+    private static string DisplayValue(string term, string value) =>
+        term == "origins" && value == "seed" ? OriginText.Of(value, false) : value;
 
     /// <summary>The scope as term names, read through its own serializer.</summary>
     ///

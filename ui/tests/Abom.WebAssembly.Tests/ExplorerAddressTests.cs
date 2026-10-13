@@ -1,6 +1,7 @@
 using Abom.WebAssembly.Pages;
 using Abom.WebAssembly.Services;
 using Bunit;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Abom.WebAssembly.Tests;
@@ -11,6 +12,22 @@ namespace Abom.WebAssembly.Tests;
 /// </summary>
 public class ExplorerAddressTests : AbomTestContext
 {
+    [Fact]
+    public async Task CanonicalizingAGuidedAddressDoesNotEndTheTutorial()
+    {
+        StubGraphModule();
+        var tutorial = Services.GetRequiredService<TutorialService>();
+        await tutorial.InitializeAsync();
+        await tutorial.StartAsync("action-dependents");
+        tutorial.Navigate("/explore?selection=actions%2Fcheckout&scope=supply-chain");
+        var page = Render<Explorer>();
+
+        await page.InvokeAsync(page.Instance.SyncAddress);
+
+        Assert.NotNull(tutorial.Active);
+        Assert.Contains("selection=actions%2Fcheckout", CurrentQuery());
+    }
+
     public ExplorerAddressTests()
     {
         Answer("api/owned-scope", "[{\"owner\":\"octo-org\"}]");

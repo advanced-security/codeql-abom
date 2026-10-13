@@ -66,7 +66,45 @@ func (s *Server) runSet(ctx context.Context, spec viewspec.Spec) (store.Database
 		return set, fmt.Errorf("which CodeQL would run this cannot be read, so nothing held "+
 			"can be counted as usable: %w", err)
 	}
-	return set.BuiltBy(cli), nil
+	return s.servedOnly(set.BuiltBy(cli)), nil
+}
+
+// servedOnly moves what this instance cannot fetch out of the run, naming each.
+func (s *Server) servedOnly(set store.DatabaseSet) store.DatabaseSet {
+	if set.Outside == nil {
+		set.Outside = []store.DatabaseGap{}
+	}
+	if s.Served == nil {
+		return set
+	}
+	const why = "not a repository in this Demo's simulated GitHub: upstream repositories are " +
+		"listed, never served; run over the repositories that use it instead"
+	databases := make([]store.ScopedDatabase, 0, len(set.Databases))
+	for _, d := range set.Databases {
+		if s.Served(d.Repository) {
+			databases = append(databases, d)
+		} else {
+			set.Outside = append(set.Outside, store.DatabaseGap{Repository: d.Repository, Reason: why})
+		}
+	}
+	gaps := make([]store.DatabaseGap, 0, len(set.Gaps))
+	for _, g := range set.Gaps {
+		if s.Served(g.Repository) {
+			gaps = append(gaps, g)
+		} else {
+			set.Outside = append(set.Outside, store.DatabaseGap{Repository: g.Repository, Reason: why})
+		}
+	}
+	set.Databases, set.Gaps = databases, gaps
+	if len(databases)+len(gaps) == 0 && len(set.Outside) > 0 {
+		names := make([]string, 0, len(set.Outside))
+		for _, o := range set.Outside {
+			names = append(names, o.Repository)
+		}
+		set.Unresolved = strings.Join(names, ", ") + " is not in this Demo's simulated GitHub, so " +
+			"no run can build it; run over the repositories that use it instead"
+	}
+	return set
 }
 
 // repositoriesQuery is the repositories unit's population for a predicate, shared by the unit and

@@ -211,13 +211,35 @@ public class CrawlStatusTests : AbomTestContext
     }
 
     /// <summary>
-    /// A server with no discovery has no state to report, and a stopped-looking control there
-    /// would invite a reader to press something that cannot work.
+    /// A reader has recorded queue counts, not the coordinator's live state or controls.
     /// </summary>
     [Fact]
     public void AServerWithoutDiscoveryOffersNoCrawlControl()
     {
-        Assert.Empty(Bar(Unavailable).FindAll("[data-abom-crawl]"));
+        var bar = Bar(Unavailable);
+        Assert.Empty(bar.FindAll("[data-abom-crawl-toggle]"));
+        Assert.Equal("unavailable", bar.Find("[data-abom-crawl]").GetAttribute("data-abom-crawl-state"));
+        Assert.NotNull(bar.Find("[data-abom-crawl-unavailable]"));
+    }
+
+    [Fact]
+    public void AReaderStillShowsItsRecordedQueueWithoutClaimingLiveProgress()
+    {
+        var bar = Bar(Unavailable.Replace("\"frontier\":{}", "\"frontier\":{\"done\":120,\"queued\":30}"));
+        Assert.NotNull(bar.Find("[data-abom-crawl-queue]"));
+        var status = bar.Find("[data-abom-crawl-unavailable]").GetAttribute("aria-label")!;
+        Assert.Contains("recorded queue", status);
+        Assert.Contains("live", status);
+        Assert.Empty(bar.FindAll("[data-abom-crawl-toggle]"));
+    }
+
+    [Fact]
+    public void AFailedStatusReadIsUnknownRatherThanDiscoveryBeingUnavailable()
+    {
+        var bar = Bar("not json");
+        Assert.Equal("unknown", bar.Find("[data-abom-crawl]").GetAttribute("data-abom-crawl-state"));
+        Assert.Contains("could not be read", bar.Find("[data-abom-crawl-unavailable]").GetAttribute("aria-label"));
+        Assert.NotNull(bar.Find("[data-abom-crawl-unreachable]"));
     }
 
     /// <summary>

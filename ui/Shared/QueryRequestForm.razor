@@ -3,14 +3,17 @@
 @using Abom.WebAssembly.Models
 @using Abom.WebAssembly.Services
 @inject AbomApi Api
+@inject TutorialService Tutorial
+@implements IDisposable
 
 <MudPaper Outlined="true" Class="pa-4 mb-4" data-abom-request-form>
+    <fieldset disabled="@ReadOnly" class="abom-request-fields">
     <MudText Typo="Typo.h6" HtmlTag="h2" data-abom-request-heading>@Heading</MudText>
     <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3" data-abom-request-standfirst>
         A request asks for a new or improved CodeQL query that finds a pattern in GitHub Actions
         workflows and actions. Its examples become the query's tests.
     </MudText>
-    @if (Request.RowId == 0 && Request.Evidence.Count > 0)
+    @if (!ReadOnly && Request.RowId == 0 && Request.Evidence.Count > 0)
     {
         <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3" data-abom-request-evidence>
             @EvidenceText(Request), filed with the request when it is saved.
@@ -309,6 +312,8 @@
     {
         <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-3">@refused</MudAlert>
     }
+    @if (!ReadOnly)
+    {
     <div class="d-flex gap-2 mt-3">
         <Tip Text="File this request so an agent or a person can work it.">
             <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" DropShadow="false"
@@ -319,12 +324,15 @@
                        OnClick="OnDiscard" data-abom-request-discard>Discard</MudButton>
         </Tip>
     </div>
+    }
+    </fieldset>
 </MudPaper>
 
 @code {
     [Parameter, EditorRequired] public QueryRequest Request { get; set; } = new();
     [Parameter] public QueryRequestList? List { get; set; }
     [Parameter] public QueryCatalog? Catalog { get; set; }
+    [Parameter] public bool ReadOnly { get; set; }
 
     /// <summary>Who files a new request; an edit keeps who filed it.</summary>
     [Parameter] public string Login { get; set; } = string.Empty;
@@ -383,6 +391,9 @@
     private string _tag = "";
     private string? _refusal;
     private bool _saving;
+    private IDisposable? _editBlock;
+
+    public void Dispose() => _editBlock?.Dispose();
 
     protected override void OnParametersSet()
     {
@@ -391,6 +402,8 @@
             return;
         }
         _openFor = Request;
+        if (!ReadOnly) _editBlock ??= Tutorial.BlockStart("Finish or discard the open request before starting a tutorial.");
+        _metadataOpen = ReadOnly;
         _title = Request.Title;
         _slug = Request.Slug;
         _slugWritten = Request.Slug.Length > 0;
@@ -577,6 +590,11 @@
 
     private async Task ReadLink(ExampleDraft example)
     {
+        if (ReadOnly)
+        {
+            Tutorial.Report("Exit the tutorial before fetching an example.");
+            return;
+        }
         example.Reading = true;
         example.Refused = null;
         try
@@ -702,6 +720,11 @@
 
     private async Task Save()
     {
+        if (ReadOnly)
+        {
+            Tutorial.Report("Exit the tutorial before saving a request.");
+            return;
+        }
         if (!Complete)
         {
             return;

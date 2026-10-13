@@ -30,6 +30,8 @@ public sealed class ThemeService(IJSRuntime js)
     /// <summary>Whether dark is actually in effect, after resolving <see cref="Choice"/>.</summary>
     public bool IsDark { get; private set; }
 
+    public string TutorialScrim => IsDark ? "rgba(0, 0, 0, 0.82)" : "rgba(0, 0, 0, 0.42)";
+
     public event Action? Changed;
 
     /// <summary>Restores a saved choice, falling back to the system preference.</summary>

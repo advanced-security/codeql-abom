@@ -8,9 +8,13 @@
    read as the whole one. This surface hands over a scope and states nothing it is not the best
    place to state. *@
 <PageHeader Title="Actions Bill of Materials">
-    Where do you want to start? Each of these opens the Inventory already narrowed to it.
+    Learn how to use ABOM, or open the Inventory narrowed to one of the scopes below.
 </PageHeader>
 
+<TutorialChecklist />
+
+<section class="abom-home-scopes" data-abom-home-scopes aria-labelledby="abom-home-scopes-title">
+<h2 id="abom-home-scopes-title" class="mud-typography mud-typography-subtitle1">Explore your inventory</h2>
 <MudGrid Spacing="3">
     @foreach (var s in Entries)
     {
@@ -49,6 +53,7 @@
                title="Open the Inventory coverage unit showing what has and has not been analyzed."
                data-abom-entry="coverage">what has and has not been analyzed</MudButton>
 </div>
+</section>
 
 @code {
     private Summary _summary = new();

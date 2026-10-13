@@ -1257,6 +1257,7 @@ code {
    elsewhere are for toolbars full of them. */
 .abom-nav {
     gap: 8px;
+    margin-left: 32px;
 }
 
 .abom-nav-link {

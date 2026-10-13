@@ -11,6 +11,7 @@ on:
       # The populated run is only as good as what it runs against, and both of these decide that:
       # a recorded fixture is what the database is built from, and the builder is what reads it.
       - 'cmd/abom-corpus/**'
+      - 'internal/corpus/**'
       # What the builder reads the fixture with, and what every endpoint answers from. A change
       # to the store, the ingestion or the aggregates can empty a grid or break a delta while
       # only the Go tests run.
@@ -30,6 +31,7 @@ on:
       - '.node-version'
       - 'Makefile'
       - 'cmd/abom-corpus/**'
+      - 'internal/corpus/**'
       - 'internal/advisory/**'
       - 'internal/graph/**'
       - 'internal/ingest/**'

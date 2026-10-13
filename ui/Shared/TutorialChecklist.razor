@@ -1,0 +1,50 @@
+@implements IDisposable
+@inject TutorialService Tutorial
+
+<details class="abom-tutorial-checklist" open data-abom-tutorial-checklist>
+    <summary title="Show or hide ABOM tutorials.">
+        <h2 class="mud-typography mud-typography-subtitle1">ABOM Tutorials</h2>
+    </summary>
+    <ul>
+        @foreach (var lesson in TutorialLessons.All)
+        {
+            <li data-abom-tutorial-lesson="@lesson.Id">
+                <MudIcon Icon="@(Tutorial.Completed(lesson) ? Icons.Material.Outlined.CheckBox : Icons.Material.Outlined.CheckBoxOutlineBlank)"
+                         Color="@(Tutorial.Completed(lesson) ? Color.Success : Color.Default)" Size="Size.Small" />
+                <Tip Text="@lesson.Description" Class="abom-tutorial-title-tip">
+                    <button type="button" class="abom-tutorial-title"
+                            disabled="@(!Tutorial.Initialized || Tutorial.StartRefusal.Length > 0)"
+                            @onclick="@(() => Tutorial.StartAsync(lesson.Id))"
+                            data-abom-tutorial-title="@lesson.Id">@lesson.Title</button>
+                </Tip>
+                <span class="abom-tutorial-lesson-action">
+                    @if (Tutorial.Completed(lesson))
+                    {
+                        <span class="abom-tutorial-completed">Completed</span>
+                    }
+                    <Tip Text="@(Tutorial.StartRefusal.Length > 0 ? Tutorial.StartRefusal : $"{Action(lesson)} this tutorial.")">
+                        <MudIconButton Size="Size.Small" Color="Color.Primary"
+                                       Icon="@(Tutorial.Completed(lesson) ? Icons.Material.Outlined.RestartAlt : Icons.Material.Outlined.PlayArrow)"
+                                       Disabled="@(!Tutorial.Initialized || Tutorial.StartRefusal.Length > 0)"
+                                       aria-label="@($"{Action(lesson)}: {lesson.Title}")"
+                                       OnClick="@(() => Tutorial.StartAsync(lesson.Id, restart: Tutorial.Completed(lesson)))"
+                                       data-abom-tutorial-start="@lesson.Id" />
+                    </Tip>
+                </span>
+            </li>
+        }
+    </ul>
+    @if (Tutorial.StartRefusal.Length > 0)
+    {
+        <p role="status">@Tutorial.StartRefusal</p>
+    }
+</details>
+
+@code {
+    private string Action(TutorialLesson lesson) => Tutorial.Completed(lesson) ? "Restart"
+        : Tutorial.CanResume(lesson.Id) ? "Resume" : "Start";
+
+    protected override void OnInitialized() => Tutorial.Changed += Refresh;
+    private void Refresh() => InvokeAsync(StateHasChanged);
+    public void Dispose() => Tutorial.Changed -= Refresh;
+}
