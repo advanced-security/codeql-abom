@@ -4,11 +4,14 @@
     notices.py go <executable>   modules linked into the executable
     notices.py nuget             packages the published interface was restored from
     notices.py nuget-cyclonedx   the same packages as CycloneDX, which the release SBOM reads
+    notices.py web               scripts vendored into the interface, under ui/wwwroot/js
 
 Go modules are read from the executable itself, so a module that is only a test dependency is not
 listed and one that is linked in cannot be missed. A component whose license text cannot be found
 fails the run: shipping without it is the one outcome this file exists to prevent. The interface
 needs a CycloneDX list as well because it ships as WebAssembly, in which Syft finds no packages.
+No package manager restored the vendored scripts, so their notices are kept beside them, and each
+`*.min.js` there must have a section with its license text.
 """
 
 import json
@@ -22,6 +25,11 @@ LICENSE_FILE = re.compile(
 
 # Where `dotnet publish` of the interface leaves its restore, fixed rather than passed in.
 ASSETS = Path(__file__).resolve().parents[2] / "ui" / "obj" / "project.assets.json"
+
+# Fixed for the same reason; tests point it elsewhere.
+VENDORED = Path(__file__).resolve().parents[2] / "ui" / "wwwroot" / "js"
+VENDORED_NOTICES = "THIRD_PARTY_NOTICES.txt"
+SECTION = re.compile(r"^={78}\n([^\n]+)\n-{78}\n(.*?)(?=^={78}$|\Z)", re.MULTILINE | re.DOTALL)
 
 
 def license_texts(folder: Path) -> list[tuple[str, str]]:
@@ -127,11 +135,24 @@ def nuget_cyclonedx() -> str:
     return json.dumps(bom, indent=2) + "\n"
 
 
+def web_notices(folder: Path) -> tuple[str, list[str]]:
+    """The kept notices, and each vendored script that no section with license text covers."""
+    notices = folder / VENDORED_NOTICES
+    text = notices.read_text(encoding="utf-8") if notices.is_file() else ""
+    # A section is headed "<script>: <package> <version>"; one with nothing under it names a license
+    # without the text that license requires.
+    covered = {heading.split(": ", 1)[0] for heading, body in SECTION.findall(text) if body.strip()}
+    missing = [script.name for script in sorted(folder.glob("*.min.js")) if script.name not in covered]
+    return text, missing
+
+
 def main(argv: list[str]) -> int:
     if argv[1:2] == ["go"] and len(argv) == 3:
         text, missing = go_notices(argv[2])
     elif argv[1:] == ["nuget"]:
         text, missing = nuget_notices()
+    elif argv[1:] == ["web"]:
+        text, missing = web_notices(VENDORED)
     elif argv[1:] == ["nuget-cyclonedx"]:
         sys.stdout.write(nuget_cyclonedx())
         return 0
