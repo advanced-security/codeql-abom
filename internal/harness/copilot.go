@@ -20,6 +20,9 @@ import (
 
 // Setup is everything one session starts with.
 type Setup struct {
+	Timeout       time.Duration
+	TimeoutSource string
+	Runtime       map[string]string
 	// Home is where the CLI keeps the session's state; Scratch is where ql-mcp writes what CodeQL
 	// printed. Both are scrubbed when the session ends.
 	Home      string
@@ -97,19 +100,34 @@ func (c *Copilot) Run(ctx context.Context, s Setup) (string, error) {
 	}
 	defer func() { _ = client.Stop() }()
 
-	session, err := client.CreateSession(ctx, c.config(s))
-	if err != nil {
-		return "", fmt.Errorf("creating the session: %w", err)
+	if status, err := client.GetStatus(ctx); err == nil {
+		if s.Runtime == nil {
+			s.Runtime = map[string]string{}
+		}
+		s.Runtime["copilot-cli"] = status.Version
 	}
-	defer func() { _ = session.Disconnect() }()
-	defer session.On(s.Gate.Observe)()
+	cfg := c.config(s)
+	if err := s.Gate.startPolicy(ctx, s, cfg, c); err != nil {
+		return "", err
+	}
+	var session *copilot.Session
+	ready := make(chan struct{})
 	limit := &creditLimit{answer: func(r rpc.UIHandlePendingSessionLimitsExhaustedRequest) {
+		<-ready
+		if session == nil {
+			return
+		}
 		answer, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_, _ = session.RPC.UI.HandlePendingSessionLimitsExhausted(answer, &r)
 	}}
-	defer session.On(limit.observe)()
-
+	cfg.OnEvent = func(e copilot.SessionEvent) { s.Gate.Observe(e); limit.observe(e) }
+	session, err = client.CreateSession(ctx, cfg)
+	close(ready)
+	if err != nil {
+		return "", fmt.Errorf("creating the session: %w", err)
+	}
+	defer func() { _ = session.Disconnect() }()
 	var last string
 	for send := s.Prompt; send != ""; {
 		reply, err := session.SendAndWait(ctx, copilot.MessageOptions{Prompt: send})
@@ -118,6 +136,9 @@ func (c *Copilot) Run(ctx context.Context, s Setup) (string, error) {
 			abort, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			_ = session.Abort(abort)
+			if err := s.Gate.Err(); err != nil {
+				return "", err
+			}
 			return "", ctx.Err()
 		}
 		// Anything more sent past the limit is refused in turn, so the session ends here.
@@ -190,6 +211,7 @@ func (c *Copilot) config(s Setup) *copilot.SessionConfig {
 		},
 		OnPermissionRequest:                s.Gate.Permission,
 		Hooks:                              s.Gate.Hooks(),
+		OnEvent:                            s.Gate.Observe,
 		EnableConfigDiscovery:              copilot.Bool(false),
 		SkipCustomInstructions:             copilot.Bool(true),
 		EnableSkills:                       copilot.Bool(false),
@@ -207,6 +229,7 @@ func (c *Copilot) config(s Setup) *copilot.SessionConfig {
 	if s.Sealed {
 		cfg.MCPServers = nil
 	}
+	cfg.Tools = s.Gate.guardedTools(cfg.Tools)
 	return cfg
 }
 

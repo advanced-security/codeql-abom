@@ -91,12 +91,13 @@ func (s *Sessions) draft(run int64, queryID string, picked []Picked, by string) 
 	})
 	limit := s.limit()
 	ctx, cancel := context.WithTimeout(context.Background(), limit)
+	gate.cancel = cancel
 	l := &live{session: id, gate: gate, cancel: cancel}
 	s.recordDraft(run, l)
 
 	d := drafter{store: s.Store, workspace: s.Workspace, session: id, run: run, query: queryID,
 		picked: picked, databases: databases}
-	setup := Setup{Home: home, Workspace: bounds.Workspace(), Prompt: d.prompt(), Rules: d.rules(),
+	setup := Setup{Timeout: limit, TimeoutSource: s.timeoutSource(), Home: home, Workspace: bounds.Workspace(), Prompt: d.prompt(), Rules: d.rules(),
 		Gate: gate, Tools: d.tools(), Sealed: true}
 	done := s.launchDraft(draftRun{
 		run: run, id: id, dir: dir, limit: limit, ctx: ctx, cancel: cancel, live: l, setup: setup,
@@ -159,12 +160,18 @@ func (s *Sessions) launchDraft(run draftRun) <-chan struct{} {
 		defer close(done)
 		final, err := s.run(run.ctx, run.setup)
 		state, detail := s.outcome(run.ctx, run.live, run.limit, final, err)
+		s.finishAudit(run.live, state, detail)
+		if err := run.live.gate.Err(); err != nil {
+			state, detail = store.SessionFailed, err.Error()
+		}
 		run.cancel()
 		s.mu.Lock()
 		delete(s.drafting, run.run)
 		s.mu.Unlock()
 		_ = os.RemoveAll(run.dir)
-		_ = s.Store.EndAuthoringSession(run.id, state, detail)
+		if err := s.Store.EndAuthoringSession(run.id, state, detail); err != nil {
+			_ = run.live.gate.fail(err)
+		}
 	}()
 	return done
 }

@@ -23,7 +23,6 @@ builder.Services.AddSingleton<ScopeService>();
 builder.Services.AddSingleton<FollowService>();
 builder.Services.AddSingleton<RunDraft>();
 builder.Services.AddSingleton<RequestDraft>();
-builder.Services.AddSingleton<PromptMemory>();
 builder.Services.AddMudServices();
 
 await builder.Build().RunAsync();

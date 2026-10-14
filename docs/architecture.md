@@ -342,7 +342,8 @@ for the same query does not repaint it.
 
 **An agent can write the query a request asks for, inside bounds ABOM sets.** A person starts a
 session from the request. ABOM drives the Copilot CLI through the Copilot SDK, with ql-mcp as the
-only tool server. Every tool call passes through ABOM's own callbacks before and after it runs.
+only tool server. ABOM registers the pinned SDK's lifecycle hooks and separate permission callback;
+the audit distinguishes their observations from runtime calls identified by an exact call ID.
 
 - Writes are confined to the target's source, help and test fixtures.
 - There is no shell.
@@ -353,6 +354,56 @@ The session holds the machine-wide CodeQL lock for its lifetime, and is refused 
 crawls. Its timeline, what it spent and every tree `PrintAST` printed are kept, append-only, and
 shown on the request. What the agent says it did is never a mark. Every step is re-derived from the
 files and from ABOM's own records.
+
+**The CodeQL Audit log is an evidence trail, not a transcript or an authorship verdict.** Requests
+and Runs link to the same paged event reader. All ten pinned SDK hooks are registered, and the
+SDK observer is installed before session creation. Registered hooks, observed hooks, permissions,
+runtime events and ABOM-measured evidence remain distinct. Ordinary pre/post hooks supply no
+call ID: matching a tool name and a nearby timestamp never establishes a pair or a duration.
+SDK redelivery with the same event identity is idempotent. Agent idle/stop observations are not
+the terminal ABOM session state.
+
+Before model work, the trail records an immutable effective-policy snapshot from the configuration
+actually used: default/configured timeout and actual context deadline, the optional runtime AI
+credit limit, model/tools, MCP timeout, measured/configured toolchain identities, and the same bounds
+definitions that enforce editable files and YAML fixtures. A changed target or TDD hold produces
+a new snapshot before the next permitted operation. Sealed drafting has no filesystem or CodeQL
+lane. Historical policies are **not recorded**, not today's defaults and not an unlimited budget.
+A policy is recorded before session creation; its presence does not prove the runtime accepted
+the configuration. An unsupported credit cap can still prevent startup, with the failure recorded.
+A recording failure cancels the session and refuses future work; it is a failure with incomplete
+evidence, never a silently successful activity.
+
+`GET /api/authoring-events` combines request/run/session, explicit query/version, purpose, hook,
+tool, decision, TDD step, actor, time and literal sanitized-text filters. Pages default to 100 and
+are capped at 500. Counts cover all matches; filter-bound keyset cursors preserve the row-ID cutoff
+while events append. Structured scopes use indexed SQL. Text, sanitized tool/actor and timestamp
+filters scan the safe projection in bounded memory; a small page is not evidence of enterprise
+search throughput. Session summaries at `/api/authoring-sessions/{id}` expose policy history,
+observed coverage and explicit relations. A version evaluated by a run is not proof that an
+agent authored it; broader same-query searches are labeled separately. A filed draft has an
+explicit validated draft identity, rather than a time-based guess.
+
+New event details are sanitized structured JSON, bounded to 16 KiB with omission markers.
+Credentials, environment, source/patch/prompt bodies and opaque successful tool bodies are
+redacted or omitted; public messages are not hidden reasoning. Historical raw rows remain intact
+in storage, but their old detail bodies are not republished. Free-text sanitization is conservative,
+not a guarantee that arbitrary prose cannot contain a secret. No new source or patch archive exists.
+
+The append-only trail keeps every ABOM-measured test iteration, separately from the mutable latest
+test result used by existing progress marks. A RESULT failure on marked expectations, compilation
+failure, unavailable result and a model's claim remain different evidence. Safe input digests and
+existing printed-tree IDs are collected before scratch cleanup; escaping paths are not followed.
+Per-file observations after an operation are labeled separately from the measured test's input
+digests. Missing inputs and bounded-manifest omissions are explicit.
+
+`/api/authoring-events/export` streams the **entire** filtered cutoff as JSONL, not just its first
+page. `/api/authoring-sessions/{id}/reproduction?download=1` streams a Markdown evidence manifest.
+Both have completion markers; an interrupted download is incomplete. Events, policies and coverage
+use the same cutoff; current session status/non-event relations are labeled as such. Demo permits
+reading but forbids these exports. A digest cannot recover source: obtain matching files and the
+recorded toolchain independently before attempting manual reproduction. Nothing replays a session
+automatically or changes deterministic analysis runs or security verdicts.
 
 **Nothing makes the query's own output its expected result.** `codeql test accept` is refused at
 both hooks, and no person accepts a report either. The agent writes, in order, the help, a marked
@@ -552,6 +603,17 @@ to take out of view — it is never removed inside an enumeration, which runs on
 listing can under-report without failing: one read without a token found 91 of 181 repositories
 and said nothing. A directly recorded repository no declared account covers is treated the same way: it is
 outside the closure, kept until somebody accepts the prune that says what removing it takes.
+
+The prune is asked for, never offered by itself. Settings reads what it would remove when somebody
+opens the review, and applying it names that review: the server reads the scope again and, if
+anything the review kept would now go, removes nothing and answers 409 with the removal as it now
+stands. The scope can shrink between the two — a listing that under-reports, or a `gh` check that
+cannot see an organization's membership, stops a repository counting as owned — and a removal read
+against one scope and applied against a smaller one took out what had been shown as kept. A removal
+of at least half of what is in view is applied only when said outright, because a scope that could
+not be confirmed reads exactly like one that owns little. The closure is walked without regard to
+case, as GitHub names it: a `uses:` spelled unlike the repository it resolves to stopped the walk,
+and everything past it read as outside.
 
 ## The data model
 
@@ -962,7 +1024,7 @@ flowchart LR
 | `abom_query_request_example`, `abom_query_request_reference`, `abom_query_request_tag` | A request's examples in order, each pasted or linked — a link keeps the commit, lines and text read at save — its references (CVE, CWE, GHSA, URL), and the `@tags` it asks for |
 | `abom_query_request_evidence` | The run results a request was asked from: a false alarm names a finding or a result a held run kept, a missed detection a repository |
 | `abom_authoring_session` | An agent session somebody started on a request, or on a run's picked results to draft one. Whether it finished, was stopped, failed or was interrupted by a restart, and what it spent as the CLI reported it |
-| `abom_authoring_event` | Every tool call a session made or was refused, recorded before it ran, with the decision and the reason. Append-only |
+| `abom_authoring_event` | Append-only lifecycle, permission, runtime, policy and measured-test events, with safe structured capture, explicit identities and observed coverage. Events are not necessarily correlated tool calls |
 | `abom_authoring_ast` | What `PrintAST` printed over a query's test database, by a session or by ABOM at somebody's asking, with a digest of the fixtures it was printed from and the CodeQL that printed it. Append-only |
 | `abom_authoring_review` | An operator's approval or rejection of what a query reported, recorded while a person accepted reports; the server no longer writes it. Append-only |
 | `abom_query_run_rule_tag` | The tags each rule declared in one evaluation, so a finding matches the tags of the run that reported it |

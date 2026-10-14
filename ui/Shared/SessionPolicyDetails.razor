@@ -1,0 +1,81 @@
+@using System.Text.Json
+
+<div class="abom-policy-details">
+    <div class="abom-policy-columns">
+        <section>
+            <h4>Limits</h4>
+            <dl class="abom-audit-facts">
+                <dt>Time limit</dt><dd>@AuditText.Timeout(Policy) (@AuditText.Value(Policy.TimeoutSource))</dd>
+                <dt>Deadline</dt><dd>@(DateTimeOffset.TryParse(Policy.Deadline, out var deadline) ? $"{AuditText.Date(Policy.Deadline)} {deadline.ToLocalTime():HH:mm:ss}" : AuditText.Value(Policy.Deadline))</dd>
+                <dt>AI credit cap</dt><dd>@AuditText.Credits(Policy)</dd>
+                <dt>CodeQL tool call timeout</dt><dd>@(Policy.McpTimeoutMs > 0 ? AuditText.Span(TimeSpan.FromMilliseconds(Policy.McpTimeoutMs)) : "Not configured in this policy")</dd>
+            </dl>
+            <p class="abom-audit-note">
+                The session ends at its deadline. A cap on AI credits, when set, is enforced by Copilot@(Policy.CreditsKnown && Policy.MaxAiCredits is null ? $"; with none set, {AuditText.NoCapNote}" : ".")
+                Each CodeQL tool call has its own timeout.
+            </p>
+        </section>
+        <section>
+            <h4>Editable files and fixtures</h4>
+            @if (Policy.Bounds.Writable.Count == 0) { <p>No editable files in this policy.</p> }
+            <dl class="abom-audit-facts">
+                @foreach (var path in Policy.Bounds.Writable)
+                {
+                    <dt>@(path.Value.Length > 0 ? AuditText.Words(path.Value) : "Query")</dt><dd><code>@path.Key</code></dd>
+                }
+                <dt>Fixture root</dt><dd><code>@(Policy.Bounds.FixtureRoot.Length > 0 ? Policy.Bounds.FixtureRoot : "No fixture editing lane recorded")</code></dd>
+                @if (Policy.Bounds.FixtureExtensions.Count > 0)
+                {
+                    <dt>Fixture extensions</dt><dd>@string.Join(", ", Policy.Bounds.FixtureExtensions)</dd>
+                }
+            </dl>
+            <h4>Conditions</h4>
+            <p class="abom-policy-condition">@(Policy.Bounds.QueryHeld.Length > 0 ? Policy.Bounds.QueryHeld : "No query hold recorded in this policy.")</p>
+        </section>
+    </div>
+    <section>
+        <h4>Available tools</h4>
+        <p class="abom-audit-note">Every call is still checked against the editable files and the tool's own argument rules.</p>
+        <ul class="abom-audit-tools">
+            @foreach (var tool in Policy.Tools) { <li><code>@tool</code></li> }
+        </ul>
+        <details>
+            <summary>Tool argument restrictions</summary>
+            @foreach (var tool in Policy.Bounds.ToolArguments)
+            {
+                <div class="abom-audit-tool-rule"><code>@tool.Key</code><ul>@foreach (var arg in tool.Value) { <li>@arg</li> }</ul></div>
+            }
+            @if (Policy.Bounds.ToolArguments.Count == 0) { <p>No argument restrictions recorded in this field.</p> }
+        </details>
+    </section>
+    <div class="abom-policy-columns">
+        <section>
+            <h4>Read-only and denied scope</h4>
+            <dl class="abom-audit-facts">
+                <dt>Read-only</dt><dd>@List(Policy.Bounds.ReadOnly)</dd>
+                <dt>Denied</dt><dd>@List(Policy.Bounds.Denied)</dd>
+                <dt>Excluded from edits</dt><dd>@List(Policy.Bounds.ExcludedNames)</dd>
+            </dl>
+        </section>
+        <section>
+            <h4>Runtime identities</h4>
+            <dl class="abom-audit-facts">
+                <dt>Model</dt><dd>@AuditText.Value(Policy.Model)</dd>
+                @foreach (var entry in Policy.Runtime)
+                {
+                    <dt>@entry.Key</dt><dd><code>@entry.Value</code></dd>
+                }
+            </dl>
+            <p class="abom-audit-note">Other runtime versions were not recorded.</p>
+        </section>
+    </div>
+    <details>
+        <summary>Recorded policy JSON</summary>
+        <pre class="abom-session-detail">@JsonSerializer.Serialize(Policy, new JsonSerializerOptions { WriteIndented = true })</pre>
+    </details>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public SessionPolicyRecord Policy { get; set; } = new();
+    private static string List(IReadOnlyList<string> values) => values.Count > 0 ? string.Join("; ", values) : "No entries recorded";
+}

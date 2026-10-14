@@ -199,7 +199,14 @@ evidence. Neither a lock context nor a query's source substitutes for this datab
 | **Selected by you** / **decided by the agent** | Who chose a request's target. Empty means the agent decides |
 | **False alarm** / **missed detection** | Evidence on a request: a finding that should not have fired, or a repository where nothing fired that should have |
 | **Session** | An agent writing the query a request asks for, started by a person. Running, finished, stopped, failed or interrupted |
-| **What it did** | A session's timeline: every tool call, allowed or refused, and why |
+| **Audit log** | The shared, paged record of observed agent lifecycle events, permissions, decisions and measured evidence, opened from the Audit log icon on any request or run |
+| **AI credit cap** | The most AI credits Copilot lets one session spend, when one is set. With none set, Copilot's own plan limits still apply |
+| **Time limit** | How long a session may run before it ends; shown beside how long it took, or has taken so far |
+| **Event / call** | A recorded observation / a runtime invocation with an exact supplied identity. Ordinary SDK pre/post hooks cannot be paired just by name or time; event totals are not call totals |
+| **Effective policy** | The immutable limits, tools and file/fixture restrictions captured from the configuration and bounds actually used. Later settings do not repaint an older session |
+| **Not recorded** | The historical value or observation was not captured. Distinct from zero, a recorded absence of an AI credit cap, or proof no activity happened |
+| **Reproduction evidence** | Ordered policy, input identities, decisions and measured test iterations. Digests and links are not source archives, and missing/changed inputs prevent exact reproduction |
+| **What it did** | A request's entry into the same complete audit event reader, including uncorrelated observations and refusals |
 | **Refused** | A tool call that ABOM's bounds did not let run, or a run that could not start. Either says why |
 | **Tree** | What `PrintAST` printed over a test database, in a session or by ABOM when somebody asked. It is the evidence for the AST step while the fixtures are unchanged |
 | **Expected results** | The `.expected` a query's test compares against, written by the agent from the help and the fixtures' marks before the query. Never the query's own output |

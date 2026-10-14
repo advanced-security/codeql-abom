@@ -116,3 +116,62 @@ func declareOwned(t *testing.T, s *store.Store, owners ...string) {
 		t.Fatalf("SetOwnedScope: %v", err)
 	}
 }
+
+// GitHub names are case-insensitive, and a `uses:` can spell a repository differently from the
+// row it resolves to. The walk keyed both by their exact spelling, so it stopped at the first
+// difference, and everything beyond it read as outside the closure — where a prune takes it.
+func TestADependencySpelledInAnotherCaseIsStillReachedAndKept(t *testing.T) {
+	s := closureFixture(t)
+	declareOwned(t, s, "octo-org")
+	app, err := s.UpsertRepository("octo-org/app", "")
+	if err != nil {
+		t.Fatalf("UpsertRepository: %v", err)
+	}
+	upstream, err := s.UpsertRepository("Up-Stream/Lib", "")
+	if err != nil {
+		t.Fatalf("UpsertRepository: %v", err)
+	}
+	w := store.NewWriter(s, 0)
+	for _, n := range []store.Node{
+		{Key: "octo-org/app/.github/workflows/spelled.yml", Kind: "workflow", RepositoryID: app},
+		{Key: "up-stream/lib", Kind: "action", Owner: "up-stream", Repo: "lib", IsExternal: true},
+		{Key: "Up-Stream/Lib/.github/workflows/ci.yml", Kind: "workflow", RepositoryID: upstream},
+		{Key: "deep/dep", Kind: "action", Owner: "deep", Repo: "dep", IsExternal: true},
+	} {
+		if err := w.AddNode(n); err != nil {
+			t.Fatalf("AddNode(%s): %v", n.Key, err)
+		}
+	}
+	for _, e := range []store.Edge{
+		{Key: "spelled-1", SrcKey: "octo-org/app/.github/workflows/spelled.yml", DstKey: "up-stream/lib",
+			Kind: "step-uses-action", RepositoryID: app, FilePath: ".github/workflows/spelled.yml", StartLine: 1},
+		{Key: "spelled-2", SrcKey: "Up-Stream/Lib/.github/workflows/ci.yml", DstKey: "deep/dep",
+			Kind: "step-uses-action", RepositoryID: upstream, FilePath: ".github/workflows/ci.yml", StartLine: 1},
+	} {
+		if err := w.AddEdge(e); err != nil {
+			t.Fatalf("AddEdge(%s): %v", e.Key, err)
+		}
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	c := closureOf(t, s)
+	if !c.Contains("Up-Stream/Lib") {
+		t.Error("the repository a dependency names in another case is outside the closure")
+	}
+	if !c.Contains("deep/dep") {
+		t.Error("the walk stopped at a repository spelled in another case")
+	}
+	keep, _, err := (&Builder{Store: s}).KeepList()
+	if err != nil {
+		t.Fatalf("KeepList: %v", err)
+	}
+	found := false
+	for _, name := range keep {
+		found = found || name == "Up-Stream/Lib"
+	}
+	if !found {
+		t.Errorf("the kept list %v drops Up-Stream/Lib, so a prune would take what it holds", keep)
+	}
+}

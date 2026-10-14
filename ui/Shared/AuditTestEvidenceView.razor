@@ -1,0 +1,25 @@
+<section class="abom-audit-evidence" data-abom-test-evidence>
+    <h4>Measured test iteration <span class="mud-text-secondary">· @AuditText.TestOutcome(Test)</span></h4>
+    <p>@AuditText.TestCounts(Test)</p>
+    <dl class="abom-audit-facts">
+        <dt>Failure stage</dt><dd>@(Test.Passed == true ? "None — passed" : AuditText.Value(Test.FailureStage))</dd>
+        <dt>Missing results</dt><dd>@(Test.Missing?.ToString() ?? "Not recorded")</dd>
+        <dt>Unexpected results</dt><dd>@(Test.Unexpected?.ToString() ?? "Not recorded")</dd>
+        <dt>Query</dt><dd><code>@AuditText.Value(Test.QueryId)</code></dd>
+        <dt>Query version</dt><dd><code>@AuditText.Value(Test.QueryVersion)</code></dd>
+        <dt>CodeQL CLI</dt><dd>@AuditText.Value(Test.CliVersion)</dd>
+        <dt>Test input digest</dt><dd><code>@AuditText.Value(Test.TestDigest)</code></dd>
+        <dt>Fixture digest</dt><dd><code>@AuditText.Value(Test.FixturesDigest)</code></dd>
+        @foreach (var input in Inputs)
+        {
+            <dt>@AuditText.Words(input.Key)</dt><dd><code>@input.Value</code></dd>
+        }
+    </dl>
+    @if (Test.Detail.Length > 0) { <p class="abom-audit-wrap">@Test.Detail</p> }
+    <p class="abom-audit-note">Recorded test evidence, not a model claim. A result mismatch differs from a compile or extraction failure. Obtain matching inputs before repeating the test; a digest does not contain the source.</p>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public AuditTestEvidence Test { get; set; } = new();
+    [Parameter] public Dictionary<string, string> Inputs { get; set; } = [];
+}

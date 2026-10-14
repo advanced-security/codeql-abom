@@ -31,7 +31,7 @@
     {
         <MudDataGrid T="AnalysisRun" Items="_runs" Dense="true" Hover="true" Bordered="false"
                      SortMode="SortMode.None" Filterable="false" ShowColumnOptions="false"
-                     FixedHeader="true" RowsPerPage="20" Class="abom-grid abom-grid-windowed"
+                     FixedHeader="true" RowsPerPage="20" Class="abom-grid abom-grid-windowed abom-grid-pinned-open"
                      data-abom-runs-table>
             <Columns>
                 <HierarchyColumn T="AnalysisRun" InitiallyExpandedFunc="@(r => r.RowId == FocusRun)">
@@ -91,6 +91,12 @@
                                     </Tip>
                                     break;
                             }
+                            <Tip Text="Open the Audit log of the agent sessions related to this run.">
+                                <MudIconButton Icon="@Icons.Material.Outlined.HistoryEdu" Size="Size.Small"
+                                               Href="@AuditSpec.ForRun(context.Item.RowId)"
+                                               aria-label="@($"Audit log for run #{context.Item.RowId}")"
+                                               data-abom-run-audit />
+                            </Tip>
                         </div>
                     </CellTemplate>
                 </TemplateColumn>
@@ -170,6 +176,17 @@
             </Columns>
             <ChildRowContent>
                 <div class="abom-row-detail">
+                    <AuditSessions RunId="@context.Item.RowId">
+                        @foreach (var query in context.Item.Queries.Select(q => q.QueryId).Distinct())
+                        {
+                            <Tip Text="Search the Audit log for every session about this query, including those with no recorded relation to this run.">
+                                <MudLink Href="@(new AuditSpec().With("query", query).Href)" Typo="Typo.body2" Class="abom-related-link"
+                                         data-abom-run-query-audit="@query">
+                                    <MudIcon Icon="@Icons.Material.Outlined.HistoryEdu" Size="Size.Small" />Every session about <code>@query</code>
+                                </MudLink>
+                            </Tip>
+                        }
+                    </AuditSessions>
                     <RunResults RunId="@context.Item.RowId" />
                 </div>
             </ChildRowContent>

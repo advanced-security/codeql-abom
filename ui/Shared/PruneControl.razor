@@ -4,7 +4,8 @@
 
 @* Deliberately quiet: removal is rare, and the two halves are separated because only one of them
    is reversible. It sits with the declaration because that is what defines the closure it prunes
-   against. *@
+   against. Nothing here opens by itself: a removal is asked for, reviewed as the server reads it
+   at that moment, and applied only as reviewed. *@
 <MudText Typo="Typo.subtitle2" Class="mt-8 mb-1">Removing what you no longer own</MudText>
 @if (_readError is { Length: > 0 } failed)
 {
@@ -40,55 +41,39 @@ else if (_prune.Unavailable.Length > 0)
         @_prune.Unavailable
     </MudText>
 }
-else if (_prune.RemovesNothing)
-{
-    <MudText Typo="Typo.body2" Class="mud-text-secondary" data-abom-prune-clean>
-        Everything here is reachable from what you declared. Nothing to remove.
-        @if (_pruneOutcome is not null)
-        {
-            <span data-abom-prune-outcome> @_pruneOutcome</span>
-        }
-    </MudText>
-    @if (_prune.Tombstoned > 0)
-    {
-        <div class="d-flex flex-wrap align-center gap-3 mb-8 mt-2">
-            <MudTooltip Text="Delete what is already removed, permanently. Only re-analysis can rebuild it, and every open page reloads.">
-                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error"
-                           Disabled="_pruning" OnClick="@(() => Prune(true))" data-abom-prune-compact>
-                    Delete @_prune.Tombstoned.ToString("N0") permanently
-                </MudButton>
-            </MudTooltip>
-        </div>
-    }
-}
 else
 {
-    <MudText Typo="Typo.body2" Class="mb-2" data-abom-prune-summary>
-        @_prune.Declared declared @(_prune.Declared == 1 ? "repository reaches" : "repositories reach")
-        @_prune.Reachable. Outside that: <b>@CountText.Of(_prune.Removed.Nodes, "node", "nodes")</b> and
-        <b>@CountText.Of(_prune.Removed.Edges, "edge", "edges")</b> across
-        <b>@CountText.Of(_prune.Removed.Repositories, "repository", "repositories")</b>@(_prune.Removed.Queued > 0
-            ? $", and {CountText.Of(_prune.Removed.Queued, "queued dependency", "queued dependencies")} that would otherwise be analyzed and come back"
-            : "").
-    </MudText>
+    @if (_prune.RemovesNothing)
+    {
+        <MudText Typo="Typo.body2" Class="mud-text-secondary" data-abom-prune-clean>
+            Everything here is reachable from what you declared. Nothing to remove.
+        </MudText>
+    }
+    else
+    {
+        <MudText Typo="Typo.body2" Class="mb-2" data-abom-prune-summary>
+            @Reach(_prune). Outside that: @Removal(_prune).
+        </MudText>
+    }
     <div class="d-flex flex-wrap align-center gap-3 mb-8">
-        <MudTooltip Text="Take these out of every view. Nothing is deleted yet, and anything a later analysis finds again comes back.">
-            <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="_pruning"
-                       OnClick="@(() => Prune(false))" data-abom-prune-mark>
-                @(_pruning ? "Working…" : "Remove from view")
-            </MudButton>
-        </MudTooltip>
+        @if (!_prune.RemovesNothing)
+        {
+            <Tip Text="Read exactly what would be removed, as it stands now, before anything is.">
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="_pruning"
+                           OnClick="Review" data-abom-prune-review>Review removal&hellip;</MudButton>
+            </Tip>
+        }
         @* Offered only when there is something tombstoned for it to delete. Shown regardless, it
            answers "Deleted 0 nodes and 0 edges", which reads as a graph that turned out clean
            rather than as a button that could never have done anything. *@
         @if (_prune.Tombstoned > 0)
         {
-            <MudTooltip Text="Delete what is already removed, permanently. Only re-analysis can rebuild it, and every open page reloads.">
+            <Tip Text="Delete what is already removed from view, permanently. You are asked first.">
                 <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error"
-                           Disabled="_pruning" OnClick="@(() => Prune(true))" data-abom-prune-compact>
-                    Delete @_prune.Tombstoned.ToString("N0") permanently
+                           Disabled="_pruning" OnClick="@(() => _compacting = true)" data-abom-prune-compact>
+                    Delete @_prune.Tombstoned.ToString("N0") permanently&hellip;
                 </MudButton>
-            </MudTooltip>
+            </Tip>
         }
         @if (_pruneOutcome is not null)
         {
@@ -97,11 +82,104 @@ else
     </div>
 }
 
+@* Rendered only while open. A MudDialog that is merely invisible still renders its focus trap,
+   whose four sentinels are focusable and have no accessible name. *@
+@if (_reviewing && _review is not null)
+{
+    <MudDialog @ref="_reviewDialog" @bind-Visible="_reviewing" Options="@(new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true })">
+        <TitleContent>
+            <MudText Typo="Typo.h6">Remove what you no longer own</MudText>
+        </TitleContent>
+        <DialogContent>
+            @if (_changed is not null)
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3" data-abom-prune-changed>@_changed</MudAlert>
+            }
+            @if (_review.RemovesNothing)
+            {
+                <MudText Typo="Typo.body2" data-abom-prune-review-summary>
+                    Read now: everything here is reachable from what you declared. Nothing to remove.
+                </MudText>
+            }
+            else
+            {
+                <MudText Typo="Typo.body2" Class="mb-2" data-abom-prune-review-summary>
+                    Read now: @Reach(_review). Removing takes out @Removal(_review, share: true).
+                </MudText>
+                @if (_review.Checkouts.Count > 0)
+                {
+                    <MudText Typo="Typo.body2" Class="mb-2" data-abom-prune-review-checkouts>
+                        It also deletes @CountText.Of(_review.Checkouts.Count, "working copy", "working copies") from disk:
+                        @string.Join(", ", _review.Checkouts.Take(5))@(_review.Checkouts.Count > 5 ? $" and {_review.Checkouts.Count - 5} more" : "").
+                    </MudText>
+                }
+                <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                    No analysis is deleted: anything a later analysis finds again comes back, and deleting
+                    permanently is a separate step.
+                </MudText>
+                @if (_review.Majority)
+                {
+                    <MudAlert Severity="Severity.Error" Dense="true" Class="mt-3" data-abom-prune-majority>
+                        This removes most of what ABOM holds. That usually means what you own changed or
+                        could not be confirmed (see Accounts you own), not that this much is orphaned.
+                    </MudAlert>
+                    <Tip Text="Say that you mean to remove most of what ABOM holds; nothing is removed until you do.">
+                        <MudCheckBox T="bool" @bind-Value="_majority" Color="Color.Error" Size="Size.Small"
+                                     data-abom-prune-majority-ack>Remove it anyway</MudCheckBox>
+                    </Tip>
+                }
+            }
+        </DialogContent>
+        <DialogActions>
+            <Tip Text="Close this without removing anything.">
+                <MudButton OnClick="CloseReview" data-abom-prune-cancel>Cancel</MudButton>
+            </Tip>
+            @if (!_review.RemovesNothing)
+            {
+                <Tip Text="Take exactly what this review shows out of every view and the queue, and nothing it keeps.">
+                    <MudButton Color="@(_review.Majority ? Color.Error : Color.Primary)" Variant="Variant.Filled"
+                               Disabled="@(_pruning || (_review.Majority && !_majority))" OnClick="Apply"
+                               data-abom-prune-mark>@(_pruning ? "Working\u2026" : "Remove from view")</MudButton>
+                </Tip>
+            }
+        </DialogActions>
+    </MudDialog>
+}
+
+@if (_compacting && _prune is not null)
+{
+    <MudDialog @ref="_compactDialog" @bind-Visible="_compacting" Options="@(new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true })">
+        <TitleContent>
+            <MudText Typo="Typo.h6">Delete permanently</MudText>
+        </TitleContent>
+        <DialogContent>
+            <MudText Typo="Typo.body2" data-abom-prune-compact-summary>
+                This deletes the @CountText.Of(_prune.Tombstoned, "node", "nodes") already removed from view,
+                and the edges between them. Only re-analysis can rebuild them, and every open page reloads.
+            </MudText>
+        </DialogContent>
+        <DialogActions>
+            <Tip Text="Keep what is removed from view on disk.">
+                <MudButton OnClick="CloseCompact" data-abom-prune-compact-cancel>Cancel</MudButton>
+            </Tip>
+            <Tip Text="Delete what is removed from view. This cannot be undone.">
+                <MudButton Color="Color.Error" Variant="Variant.Filled" Disabled="_pruning" OnClick="Compact"
+                           data-abom-prune-compact-confirm>Delete permanently</MudButton>
+            </Tip>
+        </DialogActions>
+    </MudDialog>
+}
+
 @code {
     private IReadOnlyList<DeclaredAccount>? _declared;
     private PruneView? _prune;
+    private PruneView? _review;
     private string? _readError;
-    private bool _pruning;
+    private string? _changed;
+    private bool _pruning, _reviewing, _compacting, _majority;
+    // Closed through the dialog before it leaves the page: removed while open, the provider keeps
+    // drawing it.
+    private MudDialog? _reviewDialog, _compactDialog;
     private string? _pruneOutcome;
 
     protected override async Task OnInitializedAsync() => await Load();
@@ -118,30 +196,157 @@ else
             : null;
     }
 
-    private async Task Prune(bool compact)
+    private static string Reach(PruneView v) =>
+        $"{v.Declared} declared {(v.Declared == 1 ? "repository reaches" : "repositories reach")} {v.Reachable}";
+
+    // Only what it removes: a summary reading "0 nodes and 0 edges" left the 4 it did remove unsaid.
+    // The share belongs to the graph it measures, not to the queued work after it.
+    private static string Removal(PruneView v, bool share = false)
     {
-        _pruning = true;
+        var r = v.Removed;
+        var graph = new List<string>();
+        if (r.Nodes > 0) graph.Add(CountText.Of(r.Nodes, "node", "nodes"));
+        if (r.Edges > 0) graph.Add(CountText.Of(r.Edges, "edge", "edges"));
+        var parts = new List<string>();
+        if (graph.Count > 0)
+        {
+            parts.Add(string.Join(" and ", graph) + (r.Repositories > 0
+                ? $" across {CountText.Of(r.Repositories, "repository", "repositories")}" : "")
+                + (share ? ShareText(v) : ""));
+        }
+        if (r.Queued > 0)
+        {
+            parts.Add($"{CountText.Of(r.Queued, "queued dependency", "queued dependencies")} that would otherwise be analyzed and come back");
+        }
+        return string.Join(", and ", parts);
+    }
+
+    // A share only of what is drawn: queued work is not in view, and a removal of a few nodes in a
+    // large graph is less than 1%, not none.
+    private static string ShareText(PruneView v) =>
+        (v.Removed.Nodes == 0 && v.Removed.Edges == 0) || (v.Live.Nodes == 0 && v.Live.Edges == 0) ? ""
+        : v.Share == 0 ? " (less than 1% of what ABOM holds in view)"
+        : $" ({v.Share}% of what ABOM holds in view)";
+
+    // Read when it is opened, not when the page loaded: the scope can change in between, and the
+    // review is what the removal will be held to.
+    private async Task Review()
+    {
         _pruneOutcome = null;
+        _changed = null;
+        _majority = false;
+        var fresh = await Api.GetPruneAsync();
+        if (fresh is null)
+        {
+            _pruneOutcome = "Nothing was removed: " + (Api.LastError ?? "what would be removed could not be read");
+            return;
+        }
+        if (fresh.Unavailable.Length > 0)
+        {
+            _prune = fresh;
+            return;
+        }
+        _review = fresh;
+        _reviewing = true;
+    }
+
+    private async Task CloseReview()
+    {
+        if (_reviewDialog is not null) await _reviewDialog.CloseAsync();
+        _reviewing = false;
+        _review = null;
+        _changed = null;
+    }
+
+    private async Task CloseCompact()
+    {
+        if (_compactDialog is not null) await _compactDialog.CloseAsync();
+        _compacting = false;
+    }
+
+    private async Task Apply()
+    {
+        if (_review is not { } review) return;
+        _pruning = true;
         try
         {
-            var done = await Api.PruneAsync(compact);
+            var outcome = await Api.ApplyPruneAsync(review.Proof, review.Majority && _majority);
+            if (outcome.Changed is { } changed)
+            {
+                // Nothing moved. What would go now is reviewed afresh, and a majority asked again.
+                _review = changed.View;
+                _changed = changed.Error;
+                _majority = false;
+                return;
+            }
+            var done = outcome.Applied;
             _pruneOutcome = done is null
                 ? "Nothing came back."
-                : compact
-                    ? $"Deleted {done.Removed.Nodes:N0} nodes and {done.Removed.Edges:N0} edges."
-                    : $"Removed {done.Removed.Nodes:N0} nodes and {done.Removed.Edges:N0} edges from view"
-                      + (done.Removed.Queued > 0 ? $", and {done.Removed.Queued:N0} queued dependencies." : ".");
+                : $"Removed {done.Removed.Nodes:N0} nodes and {done.Removed.Edges:N0} edges from view"
+                  + (done.Removed.Queued > 0 ? $", and {done.Removed.Queued:N0} queued dependencies." : ".");
+            await CloseReview();
             // Re-read rather than trusting the response: what is left is the question the next
             // decision turns on, and the answer to "what did that cost" is a different one.
             await Load();
         }
-        catch (HttpRequestException e)
+        catch (HttpRequestException e) when (e.StatusCode is { } status)
         {
-            _pruneOutcome = "Nothing was removed: " + e.Message;
+            // In the server's words. A 4xx refused before anything changed; a 5xx can come part way
+            // through, so it is not reported as nothing having happened, and what is left is read again.
+            _pruneOutcome = (int)status < 500
+                ? "The removal was refused: " + Said(e.Message)
+                : $"The removal did not finish cleanly: {Said(e.Message)} What is outside your scope now is read again.";
+            await CloseReview();
+            await Load();
+        }
+        catch (Exception e) when (e is HttpRequestException or OperationCanceledException or System.Text.Json.JsonException)
+        {
+            // No answer, or none that could be read: it may have removed and lost the reply.
+            _pruneOutcome = $"Whether anything was removed is not known: {Said(e.Message)} What is outside your scope now is read again.";
+            await CloseReview();
+            await Load();
         }
         finally
         {
             _pruning = false;
         }
+    }
+
+    private async Task Compact()
+    {
+        _pruning = true;
+        try
+        {
+            var done = await Api.CompactPruneAsync();
+            _pruneOutcome = done is null
+                ? "Nothing came back."
+                : $"Deleted {done.Removed.Nodes:N0} nodes and {done.Removed.Edges:N0} edges.";
+            await CloseCompact();
+            await Load();
+        }
+        catch (HttpRequestException e) when (e.StatusCode is { } status)
+        {
+            _pruneOutcome = (int)status < 500
+                ? "Deleting was refused: " + Said(e.Message)
+                : $"Deleting did not finish cleanly: {Said(e.Message)} What is left is read again.";
+            await CloseCompact();
+            await Load();
+        }
+        catch (Exception e) when (e is HttpRequestException or OperationCanceledException or System.Text.Json.JsonException)
+        {
+            _pruneOutcome = $"Whether anything was deleted is not known: {Said(e.Message)} What is left is read again.";
+            await CloseCompact();
+            await Load();
+        }
+        finally
+        {
+            _pruning = false;
+        }
+    }
+
+    private static string Said(string message)
+    {
+        var text = message.TrimEnd();
+        return text.EndsWith('.') || text.EndsWith('?') || text.EndsWith('!') ? text : text + ".";
     }
 }

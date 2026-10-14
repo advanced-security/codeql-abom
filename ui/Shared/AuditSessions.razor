@@ -1,0 +1,72 @@
+@inject AbomApi Api
+@implements IDisposable
+
+@* The sessions explicitly related to a run or a request, each saying why it is listed here: a
+   session about the same query is not thereby about this run. *@
+<div class="abom-related-sessions" data-abom-related-sessions>
+    <MudText Typo="Typo.subtitle2">Related Agent Sessions</MudText>
+    @if (_error is not null)
+    {
+        <MudAlert Severity="Severity.Error" Dense="true">@_error</MudAlert>
+    }
+    else if (_sessions is null)
+    {
+        <MudProgressLinear Indeterminate="true" />
+    }
+    else if (_sessions.Items.Count == 0)
+    {
+        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">
+            No agent session is recorded as related to this @(RunId > 0 ? "run" : "request"). This is not proof that no agent worked on its query.
+        </MudText>
+    }
+    else
+    {
+        <div class="abom-session-cards">
+            @foreach (var session in _sessions.Items)
+            {
+                <SessionCard @key="session.RowId" SessionId="@session.RowId" Metadata="@session" Compact="true"
+                             Relation="@Why(session)" />
+            }
+        </div>
+    }
+    @if (ChildContent is not null)
+    {
+        <div class="abom-related-more">@ChildContent</div>
+    }
+</div>
+
+@code {
+    [Parameter] public long RequestId { get; set; }
+    [Parameter] public long RunId { get; set; }
+
+    /// <summary>Wider searches, under the sessions they widen.</summary>
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    private AuditSessionList? _sessions;
+    private string? _error;
+    private CancellationTokenSource? _load;
+    protected override async Task OnParametersSetAsync()
+    {
+        _load?.Cancel();
+        _load?.Dispose();
+        _load = new();
+        var token = _load.Token;
+        _error = null;
+        try
+        {
+            var spec = new AuditSpec();
+            if (RequestId > 0) spec = spec.With("request", RequestId.ToString());
+            if (RunId > 0) spec = spec.With("run", RunId.ToString());
+            var sessions = await Api.GetAuditSessionsAsync(spec.Query, token);
+            if (!token.IsCancellationRequested) _sessions = sessions;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException or OperationCanceledException)
+        {
+            if (!token.IsCancellationRequested) _error = "Cannot load related sessions. This is not evidence that no agent worked here.";
+        }
+    }
+    private string Why(AuditSession session) => string.Join("; ", session.Relations
+        .Where(r => RunId > 0 ? r.RunId == RunId : r.RequestId == RequestId)
+        .Select(AuditText.Relation).Distinct()) is { Length: > 0 } why ? why + "." : "";
+
+    public void Dispose() { _load?.Cancel(); _load?.Dispose(); }
+}

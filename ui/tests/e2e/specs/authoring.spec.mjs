@@ -82,10 +82,16 @@ test.describe('authoring', () => {
         await expect(open).toBeVisible();
         await expect(open.locator('[data-abom-request-step]')).toHaveCount(worked.steps.length);
         await expect(open.locator('[data-abom-session]')).toHaveCount(1);
+        await expect(open.locator('[data-abom-session-duration]')).toBeVisible();
+        await expect(open.locator('[data-abom-session-credits]')).not.toContainText('ABOM');
 
-        await open.locator('[data-abom-session-timeline]').click();
+        // One detail at a time, inside the card: a running session opens on its events already.
+        const events = open.locator('[data-abom-session-timeline]');
+        if (await events.getAttribute('aria-selected') !== 'true') await events.click();
         await expect(open.locator('[data-abom-event]').filter({ hasText: 'not part of the authoring loop' }))
             .toHaveCount(1);
+        await open.locator('[data-abom-session-tab="trees"]').click();
+        await expect(open.locator('[data-abom-session-panel="trees"]')).toBeVisible();
         await open.locator('[data-abom-ast-show]').first().click();
         await expect(open.locator('[data-abom-ast-body]')).toContainText('WorkflowImpl');
 

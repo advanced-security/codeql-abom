@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -55,6 +56,29 @@ func TestPruneRefusesWhenNothingIsDeclared(t *testing.T) {
 	}
 	if after := liveNodeCount(t, db); after != before {
 		t.Errorf("the refused prune removed rows anyway: %d became %d", before, after)
+	}
+}
+
+// A removal of most of what is in view is what a scope that could not be confirmed produces — a
+// listing that under-reported, an organization a `gh` check could not see — as readily as one that
+// owns little. It is applied only when that is said outright.
+func TestPruneRefusesToRemoveMostOfTheGraphUnlessToldTo(t *testing.T) {
+	db := prunableDB(t)
+	addOutside(t, db, 4)
+	before := liveNodeCount(t, db)
+
+	var out bytes.Buffer
+	err := runPrune(context.Background(), []string{"--db", db, "--apply"}, &out, &out)
+	if err == nil || !strings.Contains(err.Error(), "--most") {
+		t.Fatalf("a removal of most of the graph was not refused with the way to say it: %v\n%s", err, out.String())
+	}
+	if after := liveNodeCount(t, db); after != before {
+		t.Fatalf("the refused removal removed rows anyway: %d became %d", before, after)
+	}
+
+	runPruneOK(t, "--db", db, "--apply", "--most")
+	if after := liveNodeCount(t, db); after >= before {
+		t.Errorf("live nodes %d -> %d; --apply --most should have marked what is outside", before, after)
 	}
 }
 
@@ -111,6 +135,7 @@ func seedPrunable(t *testing.T, s *store.Store) {
 	w := store.NewWriter(s, 0)
 	for _, n := range []store.Node{
 		{Key: "octo-org/app/.github/workflows/ci.yml", Kind: "workflow", RepositoryID: mine},
+		{Key: "octo-org/app/.github/workflows/release.yml", Kind: "workflow", RepositoryID: mine},
 		{Key: "stranger/repo/.github/workflows/ci.yml", Kind: "workflow", RepositoryID: theirs},
 		{Key: "actions/checkout", Kind: "action", Owner: "actions", Repo: "checkout", IsExternal: true},
 		{Key: "stranger/thing", Kind: "action", Owner: "stranger", Repo: "thing", IsExternal: true},
@@ -123,12 +148,41 @@ func seedPrunable(t *testing.T, s *store.Store) {
 		{Key: "in", SrcKey: "octo-org/app/.github/workflows/ci.yml", DstKey: "actions/checkout",
 			Kind: "step-uses-action", RepositoryID: mine,
 			FilePath: ".github/workflows/ci.yml", StartLine: 1},
+		{Key: "in-release", SrcKey: "octo-org/app/.github/workflows/release.yml", DstKey: "actions/checkout",
+			Kind: "step-uses-action", RepositoryID: mine,
+			FilePath: ".github/workflows/release.yml", StartLine: 1},
 		{Key: "out", SrcKey: "stranger/repo/.github/workflows/ci.yml", DstKey: "stranger/thing",
 			Kind: "step-uses-action", RepositoryID: theirs,
 			FilePath: ".github/workflows/ci.yml", StartLine: 1},
 	} {
 		if err := w.AddEdge(e); err != nil {
 			t.Fatalf("AddEdge(%s): %v", e.Key, err)
+		}
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+}
+
+// addOutside puts n more workflows in the repository nothing owned reaches.
+func addOutside(t *testing.T, db string, n int) {
+	t.Helper()
+	s, err := store.Open(db, store.Options{})
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer s.Close()
+	theirs, err := s.UpsertRepository("stranger/repo", "")
+	if err != nil {
+		t.Fatalf("UpsertRepository: %v", err)
+	}
+	w := store.NewWriter(s, 0)
+	for i := 0; i < n; i++ {
+		if err := w.AddNode(store.Node{
+			Key:  fmt.Sprintf("stranger/repo/.github/workflows/extra-%d.yml", i),
+			Kind: "workflow", RepositoryID: theirs,
+		}); err != nil {
+			t.Fatalf("AddNode: %v", err)
 		}
 	}
 	if err := w.Flush(); err != nil {

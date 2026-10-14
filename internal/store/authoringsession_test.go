@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -101,6 +102,51 @@ func TestASessionAddsUpWhatItSpentAsTheCLIReportsIt(t *testing.T) {
 	}
 	if err := s.AddAuthoringSpend(session+100, AuthoringSpend{InputTokens: &in}); err == nil {
 		t.Error("spend was added to a session that does not exist")
+	}
+}
+
+// The audit and the request read one session; the audit's account said Copilot never reported
+// what a session spent that the request's account showed.
+func TestTheAuditSaysWhatASessionSpentAsTheRequestDoes(t *testing.T) {
+	s := newTestStore(t)
+	request, session := aSessionOn(t, s)
+	audited := func() AuditSession {
+		t.Helper()
+		got, err := s.AuditSessions(request, 0)
+		if err != nil || len(got) != 1 {
+			t.Fatalf("audit sessions %v %v", got, err)
+		}
+		one, err := s.AuditSession(session)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(got[0].AuthoringSession, one.AuthoringSession) {
+			t.Fatalf("the list and the session disagree:\n%+v\n%+v", got[0].AuthoringSession, one.AuthoringSession)
+		}
+		return one
+	}
+	if a := audited(); a.ModelCalls != nil || a.InputTokens != nil || a.OutputTokens != nil || a.NanoAIU != nil {
+		t.Fatalf("a session the CLI reported nothing for says it spent %+v", a.AuthoringSession)
+	}
+
+	in, out, nano := int64(1200), int64(80), int64(250_000_000)
+	if err := s.AddAuthoringSpend(session, AuthoringSpend{InputTokens: &in, OutputTokens: &out, NanoAIU: &nano}); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := s.AuthoringSessions(request)
+	if err != nil || len(listed) != 1 {
+		t.Fatalf("sessions %v %v", listed, err)
+	}
+	a := audited()
+	for name, pair := range map[string][2]*int64{
+		"model calls":   {a.ModelCalls, listed[0].ModelCalls},
+		"input tokens":  {a.InputTokens, listed[0].InputTokens},
+		"output tokens": {a.OutputTokens, listed[0].OutputTokens},
+		"nano-AIU":      {a.NanoAIU, listed[0].NanoAIU},
+	} {
+		if pair[0] == nil || pair[1] == nil || *pair[0] != *pair[1] {
+			t.Errorf("%s: the audit reads %v, the request %v", name, pair[0], pair[1])
+		}
 	}
 }
 

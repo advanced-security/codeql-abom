@@ -224,6 +224,11 @@ func (s *Store) Migrate() error {
 }
 
 func (s *Store) finishMigration() error {
+	// Identity enforcement belongs to both backends, even during a bulk load.
+	if _, err := s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS authoring_event_source_identity
+		ON abom_authoring_event(session_id,source_id) WHERE source_id<>''`); err != nil {
+		return err
+	}
 	if err := s.reviveWhatLiveEdgesName(); err != nil {
 		return err
 	}

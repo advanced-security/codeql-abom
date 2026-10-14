@@ -323,6 +323,31 @@ func (s *Store) Tombstoned() (int, error) {
 	return n, nil
 }
 
+// LiveSize is how much of the graph is in view.
+type LiveSize struct {
+	Nodes int `json:"nodes"`
+	Edges int `json:"edges"`
+}
+
+// TakesMostOf reports a removal of at least half of what is in view, by nodes or by edges. Applied
+// only when said outright: a scope that could not be confirmed — a listing that under-reported, an
+// organization a `gh` check could not see — reads exactly like one that owns little, and both put
+// most of the graph outside it.
+func (r PruneReport) TakesMostOf(live LiveSize) bool {
+	return (live.Nodes > 0 && r.Nodes*2 >= live.Nodes) || (live.Edges > 0 && r.Edges*2 >= live.Edges)
+}
+
+// LiveGraph counts what is in view, so a removal can be read as a share of it.
+func (s *Store) LiveGraph() (LiveSize, error) {
+	var out LiveSize
+	err := s.db.QueryRow(`SELECT (SELECT COUNT(*) FROM abom_node_live), (SELECT COUNT(*) FROM abom_edge_live)`).
+		Scan(&out.Nodes, &out.Edges)
+	if err != nil {
+		return LiveSize{}, fmt.Errorf("counting the live graph: %w", err)
+	}
+	return out, nil
+}
+
 // Compact deletes what has been tombstoned and ends the meaning of every row-id cursor.
 //
 // Separate from marking so a prune stays reversible right up until somebody decides it is not,

@@ -39,6 +39,12 @@
         <a class="dismiss">🗙</a>
     </div>
 
+    <!-- Shown by js/build.js when the server now serves a newer build than this page is running. -->
+    <div id="abom-stale-build" role="status" hidden>
+        <span>This page is running an earlier build of ABOM than the server now serves, so what the server added since is not here yet.</span>
+        <button type="button" title="Reload this page to run the build the server serves now.">Reload</button>
+    </div>
+
     <!-- Vendored rather than fetched from a CDN so the interface works offline and its supply
          chain is a file we can point at. Recorded here because a tool that builds bills of
          materials should be able to answer this question about itself:
@@ -54,6 +60,9 @@
     <script src="js/3d-force-graph.min.js"></script>
     <script src="js/theme.js"></script>
     <script src="js/tutorial.js"></script>
+    <script src="js/tipfit.js"></script>
+    <!-- After every first-party script, which it watches for change by the tags parsed so far. -->
+    <script src="js/build.js"></script>
     <script src="_content/MudBlazor/MudBlazor.min.js"></script>
     <script src="_framework/blazor.webassembly#[.{fingerprint}].js"></script>
 </body>

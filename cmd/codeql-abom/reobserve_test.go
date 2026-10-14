@@ -19,7 +19,9 @@ func TestAServerStartPutsNothingBackToReobserve(t *testing.T) {
 	var out, errs bytes.Buffer
 
 	prepareQueue(s, queue, &out, &errs)
-	reclaimAbandonedWork(s, queue, &out, &errs)
+	if err := reclaimAbandonedWork(s, queue, &out, &errs); err != nil {
+		t.Fatal(err)
+	}
 
 	var moved int
 	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM abom_frontier

@@ -20,12 +20,19 @@ var ErrTestsDidNotRun = errors.New("the tests could not be run")
 // Tests runs a query's own tests.
 type Tests func(ctx context.Context, tests []string) (runner.TestResult, error)
 
+type testEvidenceKey struct{}
+
+// WithTestEvidence keeps measured iterations independently of the latest-test projection.
+func WithTestEvidence(ctx context.Context, keep func(store.QueryTest) error) context.Context {
+	return context.WithValue(ctx, testEvidenceKey{}, keep)
+}
+
 // RecordTests runs a query version's own tests and records what the CLI said against the version,
 // its tests, its fixtures and the CodeQL that ran them.
 //
 // ABOM never forms the opinion itself: `codeql test run` compiles the query, runs it against a
 // database built from the fixture tree and compares the output to the checked-in `.expected`.
-func RecordTests(ctx context.Context, st store.Backend, run Tests, root string, q Query, cli string) (runner.TestResult, error) {
+func RecordTests(ctx context.Context, st store.Backend, run Tests, root string, q Query, cli string) (answer runner.TestResult, answerErr error) {
 	digest, err := DigestTests(root, q.Tests)
 	if err != nil {
 		return runner.TestResult{}, err
@@ -39,6 +46,24 @@ func RecordTests(ctx context.Context, st store.Backend, run Tests, root string, 
 	result := runner.TestResult{
 		Detail: fmt.Sprintf("no test names %s, so nothing was shown to work", q.Rel),
 	}
+	defer func() {
+		keep, _ := ctx.Value(testEvidenceKey{}).(func(store.QueryTest) error)
+		if keep == nil {
+			return
+		}
+		test := store.QueryTest{QueryID: q.ID, QueryVersion: q.Version, CLIVersion: cli,
+			Passed: result.Passed, Total: result.Total, Failed: result.Failed, Detail: result.Detail,
+			FailureStage: result.FailureStage, TestDigest: digest, FixturesDigest: fixtures,
+			Missing: result.Missing, Unexpected: result.Unexpected}
+		if answerErr != nil {
+			test.Passed = false
+			test.FailureStage = "UNAVAILABLE"
+			test.Detail = answerErr.Error()
+		}
+		if err := keep(test); err != nil {
+			answerErr = err
+		}
+	}()
 	if len(q.Tests) > 0 {
 		if result, err = run(ctx, q.Tests); err != nil {
 			return runner.TestResult{}, fmt.Errorf("%w: %w", ErrTestsDidNotRun, err)

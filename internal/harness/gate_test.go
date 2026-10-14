@@ -112,7 +112,7 @@ func TestTheTimelineKeepsWhatWasTouchedNotTheText(t *testing.T) {
 	}
 }
 
-func TestAnApprovedCodeQLCallIsUnderWayUntilItsResultArrives(t *testing.T) {
+func TestOnlyReportedCallIdentitiesMeasureAnExecution(t *testing.T) {
 	g, j, p := newGate(t)
 	clock := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 	g.Now = func() time.Time { return clock }
@@ -123,6 +123,11 @@ func TestAnApprovedCodeQLCallIsUnderWayUntilItsResultArrives(t *testing.T) {
 	if _, ok := d.(*rpc.PermissionDecisionApproveOnce); !ok || err != nil {
 		t.Fatalf("test run: %T %v, want approved", d, err)
 	}
+	if len(g.InFlight()) != 0 {
+		t.Fatal("permission without an ID became an exact call")
+	}
+	g.Observe(copilot.SessionEvent{ID: "start", Data: &copilot.ToolExecutionStartData{
+		ToolName: Server + "-codeql_test_run", ToolCallID: "call-1", Arguments: args}})
 	flights := g.InFlight()
 	if len(flights) != 1 || flights[0].Tool != Server+"-codeql_test_run" ||
 		flights[0].Subject != "test/CheckoutTagPin" || !flights[0].Since.Equal(clock) {
@@ -135,11 +140,16 @@ func TestAnApprovedCodeQLCallIsUnderWayUntilItsResultArrives(t *testing.T) {
 		copilot.HookInvocation{}); err != nil {
 		t.Fatal(err)
 	}
+	hook := j.all()[len(j.all())-1]
+	if hook.Took != 0 {
+		t.Fatal("ordinary post hook was paired by guessing")
+	}
+	g.Observe(copilot.SessionEvent{ID: "complete", Data: &copilot.ToolExecutionCompleteData{ToolCallID: "call-1", Success: true}})
 	if left := g.InFlight(); len(left) != 0 {
 		t.Errorf("still under way after its result: %+v", left)
 	}
 	last := j.all()[len(j.all())-1]
-	if last.Decision != DecisionSucceeded || last.Took != 8*time.Second || last.Step != StepTests {
+	if last.Decision != DecisionSucceeded || last.Took != 8*time.Second || last.Capture.CallID != "call-1" {
 		t.Errorf("result recorded as %+v", last)
 	}
 }
@@ -198,7 +208,7 @@ func TestACallTheTimelineCannotRecordIsRefused(t *testing.T) {
 	out, err := g.PreToolUse(copilot.PreToolUseHookInput{ToolName: "view",
 		ToolArgs: map[string]any{"path": p.ws}}, copilot.HookInvocation{})
 	if err != nil || out == nil || out.PermissionDecision != "deny" ||
-		!strings.Contains(out.PermissionDecisionReason, "disk full") {
+		!strings.Contains(out.PermissionDecisionReason, "evidence is incomplete") {
 		t.Errorf("unrecordable read: %+v %v, want a denial naming why", out, err)
 	}
 	d, err := g.Permission(&rpc.PermissionRequestRead{Path: p.ws}, copilot.PermissionInvocation{})
@@ -299,14 +309,14 @@ func TestTheAgentsWordsAndItsServersReachTheTimeline(t *testing.T) {
 	}
 
 	events := j.all()
-	if len(events) != 2 {
+	if len(events) != 3 {
 		t.Fatalf("recorded %d events, want the server's failure and the agent's words: %+v", len(events), events)
 	}
 	if e := events[0]; e.Hook != HookServer || e.Tool != Server || e.Subject != "failed" ||
-		e.Detail != failure || e.Decision != DecisionNoted {
+		!strings.Contains(e.Detail, failure) || e.Decision != DecisionNoted {
 		t.Errorf("server event %+v", e)
 	}
-	if e := events[1]; e.Hook != HookMessage || e.Detail != "Extracting the test database first." ||
+	if e := events[1]; e.Hook != HookMessage || !strings.Contains(e.Detail, "Extracting the test database first.") ||
 		e.Decision != DecisionNoted {
 		t.Errorf("message event %+v", e)
 	}
@@ -343,9 +353,8 @@ func TestWhatEachModelCallCostIsKeptAsItArrives(t *testing.T) {
 
 	g.KeepSpend(func(Spend) error { return errors.New("the store is closed") })
 	g.Observe(copilot.SessionEvent{Data: &copilot.AssistantUsageData{Model: "claude-opus-5", InputTokens: &in}})
-	if events := j.all(); len(events) != 1 || events[0].Hook != HookSpend ||
-		!strings.Contains(events[0].Detail, "the store is closed") {
-		t.Errorf("a cost that could not be kept left %+v, want it said on the timeline", events)
+	if g.Err() == nil {
+		t.Error("a cost that could not be kept did not fail the session")
 	}
 }
 

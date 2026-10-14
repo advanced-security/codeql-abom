@@ -231,12 +231,7 @@ func TestStoppingASessionNobodyIsRunningIsAConflict(t *testing.T) {
 	}
 }
 
-type eventsAnswer struct {
-	Events []store.AuthoringEvent `json:"events"`
-	Next   int64                  `json:"next"`
-}
-
-// A reader following a live session asks only for what came after the last event it holds.
+// Paging stays on one complete snapshot even when the reader visits a session route.
 func TestATimelineIsReadOnFromWhereTheReaderLeftOff(t *testing.T) {
 	s, st, _, id := authoringServer(t)
 	session, err := st.StartAuthoringSession(id, "operator", "claude-opus-5")
@@ -252,20 +247,15 @@ func TestATimelineIsReadOnFromWhereTheReaderLeftOff(t *testing.T) {
 		}
 		ids = append(ids, rowID)
 	}
-	var all eventsAnswer
-	if code := sessionGet(t, s, fmt.Sprintf("/api/authoring-sessions/%d/events", session), &all); code != http.StatusOK ||
-		len(all.Events) != 3 || all.Next != ids[2] {
+	var all store.AuditPage
+	if code := sessionGet(t, s, fmt.Sprintf("/api/authoring-sessions/%d/events?limit=1", session), &all); code != http.StatusOK ||
+		len(all.Items) != 1 || all.Through != ids[2] || all.Total != 3 {
 		t.Fatalf("answered %d %+v", code, all)
 	}
-	var later eventsAnswer
-	sessionGet(t, s, fmt.Sprintf("/api/authoring-sessions/%d/events?after=%d", session, ids[0]), &later)
-	if len(later.Events) != 2 || later.Events[0].RowID != ids[1] || later.Next != ids[2] {
+	var later store.AuditPage
+	sessionGet(t, s, fmt.Sprintf("/api/authoring-sessions/%d/events?cursor=%s", session, all.NextCursor), &later)
+	if len(later.Items) != 2 || later.Items[0].RowID != ids[1] || later.Through != ids[2] {
 		t.Errorf("after %d: %+v", ids[0], later)
-	}
-	var none eventsAnswer
-	sessionGet(t, s, fmt.Sprintf("/api/authoring-sessions/%d/events?after=%d", session, ids[2]), &none)
-	if none.Events == nil || len(none.Events) != 0 || none.Next != ids[2] {
-		t.Errorf("nothing new: %+v, want an empty page that keeps the cursor", none)
 	}
 	if code := sessionGet(t, s, fmt.Sprintf("/api/authoring-sessions/%d/events?since=1", session), nil); code != http.StatusBadRequest {
 		t.Errorf("an undeclared term answered %d", code)

@@ -70,6 +70,42 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
 #blazor-error-ui .reload { color: #fff; text-decoration: underline; }
 /* style-check: on */
 
+/* A page running an earlier build than the server serves says so wherever the reader is, above the
+   tutorial's layers, until it is reloaded. It is only shown once the theme is running. */
+#abom-stale-build {
+    position: fixed;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1700;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: max-content;
+    max-width: calc(100vw - 32px);
+    padding: 8px 8px 8px 14px;
+    font-size: var(--abom-text-md);
+    color: var(--mud-palette-text-primary);
+    background: var(--mud-palette-surface);
+    border: 1px solid var(--mud-palette-lines-default);
+    border-left: 4px solid var(--mud-palette-primary);
+    border-radius: 6px;
+    box-shadow: var(--mud-elevation-8);
+}
+#abom-stale-build[hidden] { display: none; }
+#abom-stale-build button {
+    flex: none;
+    font: inherit;
+    font-weight: 600;
+    padding: 4px 14px;
+    color: var(--mud-palette-primary-text);
+    background: var(--mud-palette-primary);
+    border: 0;
+    border-radius: 4px;
+    cursor: pointer;
+}
+#abom-stale-build button:focus-visible { outline: 2px solid var(--mud-palette-primary); outline-offset: 2px; }
+
 /* The coverage strip states unknowns and uses fixed column counts that divide six evenly. */
 .abom-coverage {
     display: grid;
@@ -168,9 +204,16 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
     margin-right: 0.5rem;
 }
 
-/* Left unconstrained a tooltip stretches to the viewport, covering the controls it describes. */
+/* Left unconstrained a tooltip stretches to the viewport, covering the controls it describes.
+   MudBlazor writes `max-width: none` on the tip itself, so the cap has to outrank it. A tip is as
+   wide as its words up to that cap, not as the room left where it was first laid out: against the
+   right edge that was a word to a line. `js/tipfit.js` keeps it inside the window. It is read,
+   never pressed, so the pointer passes through it: one that opened over its own control took the
+   click meant for that control. */
 .mud-tooltip {
-    max-width: 320px;
+    width: max-content;
+    max-width: min(320px, calc(100vw - 16px)) !important;
+    pointer-events: none;
     font-size: var(--abom-text-sm);
     line-height: 1.35;
 }
@@ -428,10 +471,11 @@ html[data-theme="light"] body { background: #FFFFFF; color: #212529; }
     vertical-align: top;
 }
 
-/* Capped below the bar (64), pager (52) and captions; the second selector outranks MudBlazor's 100%. */
+/* Capped below the bar, pager (52) and captions; the second selector outranks MudBlazor's 100%. The
+   bar is 64px until it wraps, and tutorial.css says how tall it is then. */
 .abom-grid-windowed .mud-table-container,
 .mud-simple-table.abom-grid-windowed .mud-table-container {
-    max-height: calc(100vh - 64px - 52px - var(--abom-under-grid, 20px));
+    max-height: calc(100vh - var(--abom-bar, 64px) - 52px - var(--abom-under-grid, 20px));
 }
 
 /* A fractional box top rounds the clip and each pinned cell apart; this covers the rows between. */
@@ -1426,6 +1470,90 @@ code {
     border-top: 1px solid var(--mud-palette-lines-default);
 }
 .abom-plain-button { text-transform: none; }
+
+/* One card per agent session: who and when, what it was held to beside what it used, and its
+   details opening inside it, under its own tabs, so a panel cannot read as the section around it. */
+.abom-request-sessions-head { display: flex; align-items: center; gap: 8px; }
+.abom-session-cards { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.abom-session-card {
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: 6px;
+    background: var(--mud-palette-surface);
+    padding: 8px 12px 10px;
+}
+.abom-session-head { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; }
+.abom-session-name { font-weight: 600; font-size: var(--abom-text-md); }
+.abom-session-purpose { color: var(--mud-palette-text-secondary); font-size: var(--abom-text-sm); }
+.abom-session-who { color: var(--mud-palette-text-secondary); font-size: var(--abom-text-xs); margin: 2px 0 8px; }
+.abom-session-metrics {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    align-items: center;
+    gap: 6px 16px;
+    margin: 0;
+    font-size: var(--abom-text-sm);
+}
+.abom-session-metrics dt { color: var(--mud-palette-text-secondary); font-size: var(--abom-text-xs); }
+.abom-session-metrics dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.abom-session-metrics [data-abom-session-duration] { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; }
+.abom-session-gauge { flex: 0 0 min(16rem, 40%); }
+.abom-session-relation { margin: 8px 0 0; font-size: var(--abom-text-sm); }
+.abom-session-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    margin-top: 10px;
+    border-bottom: 1px solid var(--mud-palette-lines-default);
+}
+.abom-session-tab {
+    font: inherit;
+    font-size: var(--abom-text-sm);
+    font-weight: 500;
+    color: var(--mud-palette-text-secondary);
+    background: none;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    padding: 6px 10px;
+    cursor: pointer;
+}
+.abom-session-tab:hover { color: var(--mud-palette-text-primary); background: var(--mud-palette-action-default-hover); }
+.abom-session-tab[aria-selected="true"] { color: var(--mud-palette-primary); border-bottom-color: var(--mud-palette-primary); }
+.abom-session-tab:focus-visible { outline: 2px solid var(--mud-palette-primary); outline-offset: -2px; }
+.abom-session-panel { padding: 10px 2px 2px; }
+.abom-related-sessions { margin: 4px 0 10px; }
+.abom-related-more { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px; }
+.abom-related-link { display: inline-flex; align-items: center; gap: 4px; }
+.abom-related-link code { font-family: var(--abom-mono); font-size: var(--abom-text-xs); }
+
+/* One row of filters, each applied as it is chosen, every control the same height, so the row
+   reads as one instrument rather than a form with a submit button. */
+.abom-audit-filterbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+.abom-audit-search-tip { flex: 1 1 22rem; min-width: 0; }
+.abom-audit-search-tip > .abom-tip, .abom-audit-search { display: block; width: 100%; }
+.abom-audit-search .abom-search { width: 100%; max-width: none; }
+.abom-audit-choice { width: 11.5rem; }
+.abom-audit-more {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+    gap: 8px;
+    margin-bottom: 8px;
+}
+.abom-audit-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.abom-audit-scope { margin-bottom: 8px; }
+/* Held to the right however the row wraps, like the actions they sit beside. */
+.abom-audit-filter-actions, .abom-audit-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.abom-audit-filter-actions { gap: 2px; }
+.abom-audit-newer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+    padding: 2px 8px;
+    font-size: var(--abom-text-sm);
+    border-left: 3px solid var(--mud-palette-info);
+    background: color-mix(in srgb, var(--mud-palette-info) 8%, var(--mud-palette-surface));
+}
 /* One entry per evaluation that reported a result, under the result it traces. */
 .abom-trace { list-style: none; padding-left: 0; margin: 2px 0 6px; }
 .abom-trace li + li { margin-top: 4px; }
@@ -1448,7 +1576,109 @@ code {
     overflow-y: auto;
     font-size: var(--abom-text-sm);
 }
-.abom-session { margin-top: 6px; }
+.abom-audit-toolbar, .abom-audit-pager, .abom-audit-legend {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+}
+.abom-audit-toolbar { margin-top: 8px; font-size: var(--abom-text-sm); }
+.abom-audit-toolbar > [data-abom-audit-count] { margin-right: auto; }
+.abom-audit-pager { gap: 2px; }
+.abom-audit-legend { color: var(--mud-palette-text-secondary); font-size: var(--abom-text-xs); margin: 4px 0 8px; }
+.abom-audit-legend details > p { max-width: 70ch; padding: 8px; }
+.abom-audit-list {
+    max-height: min(32rem, 50vh);
+    overflow: auto;
+    border-block: 1px solid var(--mud-palette-lines-default);
+    scrollbar-gutter: stable;
+}
+.abom-audit-event { border-bottom: 1px solid var(--mud-palette-lines-default); overflow-wrap: anywhere; }
+.abom-audit-event > summary, .abom-audit-columns {
+    display: grid;
+    grid-template-columns: 14px 7rem 8rem minmax(10rem, .8fr) minmax(10rem, 1fr) 7.5rem 4.5rem;
+    align-items: center;
+    column-gap: 10px;
+    padding: 8px 10px;
+    font-size: var(--abom-text-sm);
+}
+.abom-audit-event > summary { cursor: pointer; list-style: none; }
+.abom-audit-event > summary::-webkit-details-marker { display: none; }
+.abom-audit-event > summary::before { content: "▸"; color: var(--mud-palette-text-secondary); }
+.abom-audit-event[open] > summary::before { content: "▾"; color: var(--mud-palette-primary); }
+.abom-audit-event > summary:hover { background: var(--mud-palette-action-default-hover); }
+.abom-audit-event > summary:focus-visible { outline: 2px solid var(--mud-palette-primary); outline-offset: -2px; }
+.abom-audit-event[open] > summary { background: color-mix(in srgb, var(--mud-palette-primary) 8%, var(--mud-palette-background)); }
+.abom-audit-event[open] > summary { position: sticky; top: 2rem; z-index: 1; }
+.abom-audit-event-body { margin: 0 10px 12px 24px; padding: 12px 16px; border-left: 3px solid var(--mud-palette-primary); background: var(--mud-palette-background); }
+.abom-audit-event-body > * + * { margin-top: 8px; }
+.abom-audit-columns { position: sticky; top: 0; z-index: 1; background: var(--mud-palette-surface); color: var(--mud-palette-text-secondary); font-size: var(--abom-text-xs); border-bottom: 1px solid var(--mud-palette-lines-default); }
+.abom-audit-columns { height: 2rem; padding-block: 6px; z-index: 2; }
+.abom-audit-secondary { display: block; color: var(--mud-palette-text-secondary); font-size: var(--abom-text-xs); font-weight: normal; }
+/* Two whole lines of each, never a sliver of a third: the reason is smaller type than the subject. */
+.abom-audit-subject { min-width: 0; }
+.abom-audit-subject > .abom-audit-clamp {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+}
+.abom-audit-subject > .abom-audit-clamp:empty { display: none; }
+/* Inside one session every row is that session's; the column would say so on every line. */
+.abom-audit-in-session .abom-audit-event > summary,
+.abom-audit-in-session .abom-audit-columns {
+    grid-template-columns: 14px 7rem minmax(10rem, .8fr) minmax(10rem, 1fr) 7.5rem 4.5rem;
+}
+.abom-audit-in-session .abom-audit-event > summary > span:nth-of-type(1),
+.abom-audit-in-session .abom-audit-columns > span:nth-child(3) { display: none; }
+.abom-audit-follow .mud-typography, .abom-audit-switch .mud-typography { font-size: var(--abom-text-sm); }
+.abom-audit-outcome { display: inline-flex; align-items: center; gap: 5px; font-size: var(--abom-text-xs); font-weight: 500; }
+.abom-audit-event[data-abom-decision="refused"] .abom-audit-outcome,
+.abom-audit-event[data-abom-decision="denied"] .abom-audit-outcome { color: var(--mud-palette-warning); }
+.abom-audit-event[data-abom-decision="failed"] .abom-audit-outcome { color: var(--mud-palette-error); }
+.abom-audit-event[data-abom-decision="succeeded"] .abom-audit-outcome,
+.abom-audit-event[data-abom-decision="finished"] .abom-audit-outcome { color: var(--mud-palette-success); }
+.abom-audit-duration { color: var(--mud-palette-text-secondary); text-align: right; font-variant-numeric: tabular-nums; }
+.abom-audit-footer { justify-content: space-between; }
+.abom-audit-note { color: var(--mud-palette-text-secondary); font-size: var(--abom-text-xs); }
+.abom-policy-window { max-height: 34rem; overflow: auto; padding: 12px 8px 12px 0; }
+.abom-policy-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 32px; }
+.abom-policy-details section { min-width: 0; margin: 8px 0 16px; }
+.abom-policy-details h4, .abom-audit-evidence h4, .abom-policy-window > h4 { font-size: var(--abom-text-sm); font-weight: 600; margin-bottom: 6px; }
+/* Recorded as a clause; read as a sentence. */
+.abom-policy-condition::first-letter { text-transform: uppercase; }
+.abom-audit-facts { display: grid; grid-template-columns: minmax(7rem, 11rem) minmax(0, 1fr); gap: 5px 12px; margin: 8px 0; font-size: var(--abom-text-sm); }
+.abom-audit-facts dt { color: var(--mud-palette-text-secondary); }
+.abom-audit-facts dd { margin: 0; overflow-wrap: anywhere; }
+.abom-audit-tools { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 5px 18px; margin: 8px 0 12px; }
+.abom-audit-tools code, .abom-policy-details code, .abom-audit-facts code, .abom-audit-relations code { font-family: var(--abom-mono); font-size: var(--abom-text-xs); overflow-wrap: anywhere; }
+.abom-audit-tool-rule { padding: 8px 0; }
+.abom-audit-tool-rule ul, .abom-audit-reproduction ol { padding-left: 20px; }
+.abom-audit-relations { list-style: none; padding: 0; margin: 10px 0 0; }
+.abom-audit-relations li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin: 6px 0; }
+.abom-audit-version { flex-basis: 100%; padding-left: 8px; }
+.abom-audit-reproduction { font-size: var(--abom-text-sm); border-left: 3px solid var(--mud-palette-primary); padding: 8px 12px; margin: 8px 0; }
+.abom-audit-evidence { font-size: var(--abom-text-sm); }
+.abom-audit-events summary, .abom-session-policy summary { cursor: pointer; }
+.abom-audit-event pre,
+.abom-session-policy pre { max-height: 24rem; overflow: auto; overflow-wrap: anywhere; }
+.abom-audit-wrap { overflow-wrap: anywhere; }
+@media (max-width: 1000px) {
+    .abom-audit-columns { display: none; }
+    .abom-audit-event[open] > summary { top: 0; }
+    .abom-audit-event > summary { grid-template-columns: 14px 7rem minmax(0, 1fr) 7.5rem; row-gap: 5px; }
+    .abom-audit-event > summary::before { grid-column: 1; grid-row: 1 / 4; }
+    .abom-audit-event > summary > time { grid-column: 2; grid-row: 1; }
+    .abom-audit-event > summary > span:nth-of-type(1) { grid-column: 3; grid-row: 1; }
+    .abom-audit-event > summary > span:nth-of-type(2) { grid-column: 3; grid-row: 2; }
+    .abom-audit-event > summary > .abom-audit-subject { grid-column: 2 / 5; grid-row: 3; }
+    .abom-audit-event > summary > .abom-audit-outcome { grid-column: 4; grid-row: 1 / 3; }
+    .abom-audit-event > summary > .abom-audit-duration { grid-column: 2; grid-row: 2; text-align: left; }
+    .abom-audit-in-session .abom-audit-event > summary { grid-template-columns: 14px 7rem minmax(0, 1fr) 7.5rem; }
+    .abom-audit-in-session .abom-audit-event > summary > span:nth-of-type(2) { grid-row: 1 / 3; }
+    .abom-policy-columns { grid-template-columns: minmax(0, 1fr); gap: 0; }
+}
 .abom-session-detail {
     margin: 2px 0 0;
     font-size: var(--abom-text-sm);
@@ -1755,6 +1985,60 @@ code {
 .abom-grid .mud-table-root td.mud-table-cell.mud-table-child-content {
     padding: 0 16px 16px 40px;
     background: var(--mud-palette-background);
+}
+/* A pinned header names the columns of the rows under it. A card can be taller than its box, and
+   while it fills the box no row is under the header, so the card is drawn over it; the header is
+   back the moment a row is in view. The inset is at least a header's height, so the card cannot
+   rise over the header before the row it opened from is under it. Without scroll-driven animation
+   the header stays pinned throughout, as it always did. */
+.abom-grid.mud-table-sticky-header .mud-table-root td.mud-table-child-content {
+    position: relative;
+    animation: abom-card-over-header linear;
+    animation-timeline: view(block 3.5rem 0px);
+    animation-range: contain;
+}
+/* MudBlazor pins header cells at 2. */
+@keyframes abom-card-over-header {
+    from, to { z-index: 3; }
+}
+/* Where an opened row's body runs to pages, the header names columns whose values sit just under it:
+   the opened row is pinned there while its body is read, and the header stays. A sticky cell is
+   held to its table rather than to its body, so the rows after the body are drawn over it as they
+   come up, opaque, and the header over everything. The header's height is fixed by one line of
+   label in 6px padding over a 1px rule. */
+.abom-grid-pinned-open { --abom-grid-head: 37px; }
+/* Each rule here is the outer grid's alone: what opens can hold a grid of its own (a run opens
+   onto its results), whose rows are neither pinned nor layered with the row that opened it. */
+.abom-grid-pinned-open.mud-table-sticky-header .mud-table-root .mud-table-head .mud-table-cell:not(.mud-table-child-content *) { z-index: 4; }
+.abom-grid-pinned-open .mud-table-body tr:not(.mud-table-child-content *):has(+ tr > td.mud-table-child-content) > td {
+    position: sticky;
+    top: calc(var(--abom-grid-head) - 1px);
+    z-index: 2;
+    box-shadow: 0 1px 0 var(--mud-palette-lines-default);
+}
+.abom-grid-pinned-open .mud-table-root td.mud-table-cell.mud-table-child-content:not(.mud-table-child-content *) {
+    animation: none;
+    z-index: 1;
+}
+.abom-grid-pinned-open .mud-table-body tr:not(.mud-table-child-content *):has(> td.mud-table-child-content)
+    ~ tr:not(:has(> td.mud-table-child-content)):not(:has(+ tr > td.mud-table-child-content)) > td {
+    position: relative;
+    z-index: 3;
+    background: var(--mud-palette-surface);
+}
+.abom-grid-pinned-open.mud-table-hover .mud-table-body tr:not(.mud-table-child-content *):has(> td.mud-table-child-content)
+    ~ tr:not(:has(> td.mud-table-child-content)):not(:has(+ tr > td.mud-table-child-content)):hover > td {
+    background: linear-gradient(var(--mud-palette-table-hover), var(--mud-palette-table-hover)), var(--mud-palette-surface);
+}
+/* A grid wider than its box scrolls sideways, and what opened under a row was as wide as the grid:
+   its actions and the ends of its lines sat out of view. It is held to the box and kept in view as
+   the grid scrolls, inside the cell's own 40px and 16px insets. */
+.abom-grid-pinned-open > .mud-table-container { container-type: inline-size; }
+.abom-grid-pinned-open td.mud-table-child-content:not(.mud-table-child-content *) > * {
+    position: sticky;
+    left: 40px;
+    max-width: calc(100cqw - 56px);
+    box-sizing: border-box;
 }
 .abom-action-panel,
 .abom-row-detail,

@@ -1,0 +1,103 @@
+@using System.Text.Json
+@inject AbomApi Api
+@implements IDisposable
+
+<div class="abom-session-policy" data-abom-session-policy="@SessionId">
+    @if (_error is not null)
+    {
+        <MudAlert Severity="Severity.Error" Dense="true">@_error</MudAlert>
+    }
+    else if (_meta is null)
+    {
+        <MudText Typo="Typo.caption">Loading recorded session limits and permissions…</MudText>
+    }
+    else
+    {
+        var latest = _meta.Policies.OrderByDescending(e => e.RowId).FirstOrDefault(e => e.Capture.Policy is not null);
+        @if (latest is null)
+        {
+            <MudText Typo="Typo.body2">Limits and permissions were not recorded for this historical session. Current settings do not describe it.</MudText>
+        }
+        else
+        {
+            <div class="abom-policy-window" data-abom-policy-latest data-abom-policy-event="@latest.RowId">
+                <h4>Latest recorded policy <span class="mud-text-secondary">· event #@latest.RowId</span></h4>
+                <SessionPolicyDetails Policy="@(latest.Capture.Policy!)" />
+            </div>
+            @if (_meta.Policies.Count > 1)
+            {
+                <details data-abom-policy-history>
+                    <summary>Earlier policy snapshots (@(_meta.Policies.Count - 1))</summary>
+                    @foreach (var e in _meta.Policies.Where(e => e.RowId != latest.RowId && e.Capture.Policy is not null))
+                    {
+                        <div class="abom-policy-window" data-abom-policy-event="@e.RowId">
+                            <h4>Policy event #@e.RowId</h4>
+                            <SessionPolicyDetails Policy="@(e.Capture.Policy!)" />
+                        </div>
+                    }
+                </details>
+            }
+        }
+        <details>
+            <summary>Capture coverage</summary>
+            <p class="abom-audit-note">@_meta.Coverage</p>
+            <dl class="abom-audit-facts">
+                @foreach (var observed in _meta.Observed) { <dt>@AuditText.Kind(observed.Key)</dt><dd>@observed.Value observations</dd> }
+            </dl>
+            <p class="abom-audit-note">Registered callbacks: @(latest?.Capture.Policy is { } captured ? string.Join(", ", captured.Hooks.Select(AuditText.Kind)) : "not recorded"). Registration does not prove an observation occurred.</p>
+        </details>
+        @if (_meta.Relations.Count > 0)
+        {
+            <ul class="abom-audit-relations">
+            @foreach (var relation in _meta.Relations)
+            {
+                <li>
+                    <span>@AuditText.Words(relation.Kind): </span>
+                    @if (relation.RequestId > 0)
+                    {
+                        <Tip Text="Open the request explicitly related to this session.">
+                            <MudLink Href="@($"/codeql?tab=requests&request={relation.RequestId}")">request #@relation.RequestId</MudLink>
+                        </Tip>
+                    }
+                    @if (relation.RunId > 0)
+                    {
+                        <Tip Text="Open the run explicitly related to this session.">
+                            <MudLink Href="@($"/codeql?tab=runs&run={relation.RunId}")">run #@relation.RunId</MudLink>
+                        </Tip>
+                    }
+                    @if (relation.QueryId.Length > 0) { <code>@relation.QueryId</code> }
+                    @if (relation.Version.Length > 0) { <code class="abom-audit-version">@relation.Version</code> }
+                </li>
+            }
+            </ul>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public long SessionId { get; set; }
+    [Parameter] public AuditSession? Metadata { get; set; }
+    private AuditSession? _meta;
+    private string? _error;
+    private CancellationTokenSource? _load;
+    protected override async Task OnParametersSetAsync()
+    {
+        _load?.Cancel();
+        _load?.Dispose();
+        _load = new();
+        var token = _load.Token;
+        _meta = Metadata;
+        _error = null;
+        if (_meta is not null) return;
+        try
+        {
+            var meta = await Api.GetAuditSessionAsync(SessionId, token);
+            if (!token.IsCancellationRequested) _meta = meta;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or OperationCanceledException)
+        {
+            if (!token.IsCancellationRequested) _error = "Cannot load recorded session limits and permissions. This is not evidence that no session ran.";
+        }
+    }
+    public void Dispose() { _load?.Cancel(); _load?.Dispose(); }
+}

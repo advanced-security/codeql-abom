@@ -60,6 +60,7 @@ public sealed class ApiControlTests
     [InlineData("requeue", "/api/discovery/requeue/owned", "POST")]
     [InlineData("retry", "/api/discovery/retry-unavailable", "POST")]
     [InlineData("prune", "/api/prune/apply", "POST")]
+    [InlineData("compact", "/api/prune/compact", "POST")]
     [InlineData("enumerate", "/api/owned-scope/enumerate", "POST")]
     [InlineData("refresh", "/api/accounts/refresh", "POST")]
     public async Task ThrowingControlsNeverTurnARefusalIntoSuccess(string action, string path, string method)
@@ -82,7 +83,8 @@ public sealed class ApiControlTests
             "suites" => api.SetTierSuitesAsync("owned", ["suite"], ct),
             "requeue" => api.RequeueTierAsync("owned", ct),
             "retry" => api.RetryUnavailableAsync(ct),
-            "prune" => api.PruneAsync(false, ct),
+            "prune" => api.ApplyPruneAsync("P1", false, ct),
+            "compact" => api.CompactPruneAsync(ct),
             "enumerate" => api.EnumerateOwnedScopeAsync(ct),
             "refresh" => api.RefreshAccountsAsync(ct),
             _ => throw new InvalidOperationException(action),
