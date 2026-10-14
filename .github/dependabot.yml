@@ -36,3 +36,22 @@ updates:
       all-nuget-dependencies:
         patterns:
           - '*'
+
+  # The Codespace's base image is pinned by digest, and its features by devcontainer-lock.json.
+  - package-ecosystem: 'docker'
+    directory: '/.devcontainer'
+    schedule:
+      interval: 'weekly'
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: 'devcontainers'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+    cooldown:
+      default-days: 7
+    groups:
+      all-devcontainer-features:
+        patterns:
+          - '*'

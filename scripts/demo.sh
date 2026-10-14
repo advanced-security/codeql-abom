@@ -15,6 +15,8 @@ dir=${ABOM_DEMO_DIR:-$PWD/.abom/demo}
 addr=${ABOM_DEMO_ADDR:-127.0.0.1:8090}
 egress=${ABOM_DEMO_EGRESS:-127.0.0.1:8091}
 credits=${ABOM_DEMO_CREDITS:-0}
+# Empty runs ABOM's default model, which not every Copilot plan offers.
+model=${ABOM_DEMO_MODEL:-}
 ui=${ABOM_UI:-$PWD/.abom/ui}/wwwroot
 bin=$PWD/bin/codeql-abom
 pin=$(tr -d '[:space:]' <.codeql-version)
@@ -55,6 +57,24 @@ copilot_cli() {
 	printf '%s\n' "$cli"
 }
 
+# qlmcp_release prints the release of the ql-mcp at $1, which says it only in the first line it logs.
+# A CodeQL it cannot find stops it there, before it starts CodeQL's language and query servers.
+qlmcp_release() {
+	local out
+	out=$(CODEQL_PATH=/nonexistent/codeql "$1" </dev/null 2>&1) || true
+	[[ $out =~ McpServer\ v([0-9]+\.[0-9]+\.[0-9]+) ]] || return 1
+	printf '%s\n' "${BASH_REMATCH[1]}"
+}
+
+# qlmcp_cli prints a ql-mcp from the CodeQL release this Demo pins. One from another release starts,
+# then fails inside a session: 2.25.2's PrintAST names a predicate its own query pack lacks.
+qlmcp_cli() {
+	local cli release
+	cli=$(command -v codeql-development-mcp-server) || return 1
+	release=$(qlmcp_release "$cli") && usable "$release" || return 1
+	printf '%s\n' "$cli"
+}
+
 check() {
 	local missing=0 cli version
 	have() {
@@ -92,7 +112,15 @@ check() {
 	else
 		printf '  MISSING  %-34s %s\n' "copilot" "npm install --global @github/copilot@1.0.88"
 	fi
-	have codeql-development-mcp-server "npm install --global codeql-development-mcp-server@2.27.1" optional
+	# ql-mcp releases alongside the CodeQL CLI; ABOM names the release that matches .codeql-version.
+	if cli=$(qlmcp_cli); then
+		printf '  ok       %-34s %s\n' "codeql-development-mcp-server" "$cli"
+	elif cli=$(command -v codeql-development-mcp-server); then
+		printf '  MISSING  %-34s %s\n' "codeql-development-mcp-server" \
+			"found $(qlmcp_release "$cli" || echo "an unnamed release") at $cli; npm install --global codeql-development-mcp-server@$pin"
+	else
+		printf '  MISSING  %-34s %s\n' "codeql-development-mcp-server" "npm install --global codeql-development-mcp-server@$pin"
+	fi
 	if [ -s "$dir/secrets/copilot-token" ]; then
 		printf '  ok       %-34s %s\n' "Copilot credential" "saved for this Demo"
 	else
@@ -126,6 +154,8 @@ setup() {
 		say "installing ql-mcp's Actions tool packs, which sessions use and cannot download later"
 		PATH="$(dirname "$cli"):$PATH" quietly codeql-development-mcp-server-setup-packs --language actions
 	fi
+	# ABOM's own PrintAST runs this pack; with Copilot on, the egress proxy refuses a later download.
+	quietly "$cli" pack download "advanced-security/ql-mcp-actions-tools-src@$pin"
 	say "creating the Demo at $dir"
 	"$bin" demo init --dir "$dir"
 	install_packs "$cli"
@@ -140,7 +170,7 @@ serve() {
 	cli=$(codeql_cli) || die "CodeQL ${pin%.*}.x is not installed; run make demo-check"
 	args=(demo serve --dir "$dir" --addr "$addr" --ui-dir "$ui" --codeql "$cli")
 	copilot=$(copilot_cli || true)
-	qlmcp=$(command -v codeql-development-mcp-server || true)
+	qlmcp=$(qlmcp_cli || true)
 	if [ -n "$copilot" ] && [ -n "$qlmcp" ]; then
 		# Copilot is the one real service a Demo reaches, through a proxy that admits its hosts alone.
 		rm -f "$dir/egress-ca.pem"
@@ -154,6 +184,7 @@ serve() {
 		[ -s "$dir/egress-ca.pem" ] || die "the egress proxy did not start; see $dir/egress.log"
 		args+=(--copilot-cli "$copilot" --ql-mcp "$qlmcp" --egress-proxy "http://$egress"
 			--egress-ca "$dir/egress-ca.pem" --authoring-credits "$credits")
+		[ -z "$model" ] || args+=(--authoring-model "$model")
 		if [ ! -s "$dir/secrets/copilot-token" ] && token=$(gh auth token 2>/dev/null) && [ -n "$token" ]; then
 			(umask 077 && printf '%s\n' "$token" >"$dir/secrets/copilot-token")
 			say "Copilot uses your gh sign-in; make demo-login replaces it"
@@ -161,7 +192,7 @@ serve() {
 		[ -s "$dir/secrets/copilot-token" ] ||
 			say "Copilot authoring needs a credential: run gh auth login, or make demo-login"
 	else
-		say "Copilot authoring is off: install the Copilot CLI and ql-mcp (make demo-check says how)"
+		say "Copilot authoring is off: it needs the Copilot CLI and ql-mcp $pin (make demo-check says how)"
 	fi
 	say "open http://$addr — Ctrl-C stops the Demo"
 	"$bin" "${args[@]}"

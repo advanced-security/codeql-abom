@@ -34,7 +34,7 @@ LDFLAGS := -X main.codeqlVersion=$(CODEQL_VERSION) $(if $(ABOM_VERSION),-X main.
 ABOM_RELEASE ?= $(ABOM_TMP)/release
 
 .PHONY: backend-test bench build check-corrupt corpus check-release-version check-versions clean demo demo-check demo-login \
-	demo-reset e2e e2e-corpus e2e-corpus-run e2e-run test-postgres test-sqlite \
+	demo-reset download e2e e2e-corpus e2e-corpus-run e2e-run test-postgres test-sqlite \
 	fmt itest js lint logs package pins publish ql \
 	quality release-archive release-ui restart script-test security-test selfcheck serve start status stop style test ui \
 	ui-test verify vet
@@ -53,6 +53,10 @@ bench:
 
 build:
 	@go build -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/codeql-abom
+
+## download: fetch the pinned Go toolchain and every module, so a build reaches no network.
+download:
+	@go mod download
 
 ## check-corrupt: catch a duplicated package clause.
 check-corrupt:
@@ -186,10 +190,14 @@ package: build publish
 	@echo "package: dist/codeql-abom + dist/ui"
 
 ## release-ui: the interface every platform's archive shares, into $(ABOM_RELEASE).
+# The notices move into place only whole, and ui-tools.json comes last: release-archive refuses a
+# directory without it, so one this stopped part-way is never archived.
 release-ui: publish
 	@rm -rf "$(ABOM_RELEASE)" && mkdir -p "$(ABOM_RELEASE)"
 	@cp -R "$(ABOM_UI)/wwwroot" "$(ABOM_RELEASE)/wwwroot"
-	@python3 scripts/release/notices.py nuget >"$(ABOM_RELEASE)/ui-notices.txt"
+	@{ python3 scripts/release/notices.py nuget && python3 scripts/release/notices.py web; } \
+		>"$(ABOM_RELEASE)/ui-notices.partial"
+	@mv "$(ABOM_RELEASE)/ui-notices.partial" "$(ABOM_RELEASE)/ui-notices.txt"
 	@python3 scripts/release/notices.py nuget-cyclonedx >"$(ABOM_RELEASE)/ui.cdx.json"
 	@printf '{"dotnet": "%s"}\n' "$$(dotnet --version)" >"$(ABOM_RELEASE)/ui-tools.json"
 	@echo "release-ui: $(ABOM_RELEASE)"

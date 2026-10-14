@@ -497,6 +497,19 @@ func TestASessionPastItsTimeLimitIsStoppedAndSaysSo(t *testing.T) {
 	}
 }
 
+// The runtime ends a session at its credit limit by refusing the next model call, so the agent has
+// no last word. Recorded as finished, that read as an agent with nothing left to do.
+func TestASessionItsCreditLimitStoppedIsStoppedAndSaysWhatItSpent(t *testing.T) {
+	b := newBench(t, stand(func(context.Context, Setup) (string, error) {
+		return "", &CreditLimitError{Limit: 30, Spent: 31.810175}
+	}))
+	got := b.finish(t, b.request(t, ""), "operator")
+	if got.State != store.SessionStopped || !strings.Contains(got.Detail, "limit of 30 AI credits") ||
+		!strings.Contains(got.Detail, "spent 31.8") {
+		t.Errorf("session %+v", got)
+	}
+}
+
 func TestAnAgentThatFailsEndsTheSessionFailedWithWhy(t *testing.T) {
 	b := newBench(t, stand(func(context.Context, Setup) (string, error) {
 		return "", errors.New("the Copilot CLI exited with status 1")
