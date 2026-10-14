@@ -4,11 +4,14 @@ import json
 import os
 from pathlib import Path
 import re
+import select
 import shlex
 import shutil
+import signal
 import stat
 import subprocess
 import tempfile
+import time
 import unittest
 
 
@@ -38,6 +41,37 @@ def commands(path):
 def tool(path, body):
     path.write_text(body)
     path.chmod(0o755)
+
+
+def running(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def eventually(condition, seconds=10):
+    deadline = time.monotonic() + seconds
+    while not condition():
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.05)
+    return True
+
+
+def read_until(stream, text, seconds=20):
+    """What a process has written to stream by the time it writes text, or the time runs out."""
+    seen = b""
+    deadline = time.monotonic() + seconds
+    while text not in seen and time.monotonic() < deadline:
+        ready, _, _ = select.select([stream], [], [], 0.1)
+        if ready:
+            chunk = os.read(stream.fileno(), 4096)
+            if not chunk:
+                break
+            seen += chunk
+    return seen.decode(errors="replace")
 
 
 class ConfigurationTests(unittest.TestCase):
@@ -264,6 +298,12 @@ class CopilotLoginTests(unittest.TestCase):
         self.stored = base / "gh-stored-login"
         self.unauthorized = base / "gh-unauthorized"
         self.opened = base / "browser-opened.txt"
+        # Held, gh waits for the code to be entered, as it does until someone does or it expires.
+        self.hold = base / "gh-hold"
+        self.gh_pid = base / "gh.pid"
+        self.tmp = base / "tmp"
+        self.tmp.mkdir()
+        self.tmp_at_save = base / "tmp-at-save.txt"
         tools = base / "bin"
         tools.mkdir()
         # gh as it behaves: an exported token answers before a stored login, and login refuses
@@ -287,6 +327,7 @@ case "$1 $2" in
     esac
     echo '! First copy your one-time code: C649-B33F' >&2
     echo 'Open this URL to continue in your web browser: https://github.com/login/device' >&2
+    if [ -f '{self.hold}' ]; then trap '' INT; echo $$ > '{self.gh_pid}'; exec sleep 60; fi
     sleep 0.3
     if [ -f '{self.unauthorized}' ]; then echo 'error: the one-time code expired' >&2; exit 1; fi
     echo gho_signedin > '{self.stored}'
@@ -301,8 +342,10 @@ exit 2
         self.tool(self.browser, f"""#!/bin/sh
 printf '%s\\n' "$*" >> '{self.opened}'
 """)
-        # sudo as this user: the test cannot switch to the Demo's.
-        self.tool(tools / "sudo", """#!/bin/sh
+        # sudo as this user: the test cannot switch to the Demo's. It notes what is left in TMPDIR
+        # when it saves the credential.
+        self.tool(tools / "sudo", f"""#!/bin/sh
+ls -A "$TMPDIR" > '{self.tmp_at_save}'
 while [ "$#" -gt 0 ]; do
     case "$1" in
     -u) shift 2 ;;
@@ -313,7 +356,8 @@ done
 exec "$@"
 """)
         self.environment = dict(os.environ, PATH=f"{tools}{os.pathsep}{os.environ['PATH']}",
-                                ABOM_DEMO_ROOT=str(self.root), GITHUB_TOKEN="ghu_codespace")
+                                ABOM_DEMO_ROOT=str(self.root), GITHUB_TOKEN="ghu_codespace",
+                                TMPDIR=str(self.tmp))
         self.environment.pop("GH_TOKEN", None)
         # Run from a VS Code terminal, the tests would open real pages.
         self.environment.pop("BROWSER", None)
@@ -369,6 +413,44 @@ exec "$@"
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("expired", result.stderr)
         self.assertIsNone(self.saved())
+        self.assertEqual(os.listdir(self.tmp), [])
+
+    # What a sign-in starts and writes ends with the sign-in, not with whatever the script does next.
+    def test_what_a_sign_in_wrote_is_gone_before_its_credential_is_saved(self):
+        result = self.login()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.saved(), "gho_signedin")
+        self.assertEqual(self.tmp_at_save.read_text().split(), [])
+
+    # Ctrl-C and a closed terminal reach every process in the terminal's group, but a script's
+    # background command ignores Ctrl-C, so only the sign-in can stop gh, which would otherwise wait
+    # until its code expires.
+    def test_an_interrupted_sign_in_stops_gh_and_leaves_nothing_behind(self):
+        self.hold.touch()
+        for interruption in (signal.SIGINT, signal.SIGHUP, signal.SIGTERM):
+            with self.subTest(signal=interruption.name):
+                self.gh_pid.unlink(missing_ok=True)
+                self.interrupt_sign_in(interruption)
+                self.assertTrue(eventually(lambda: os.listdir(self.tmp) == []), os.listdir(self.tmp))
+
+    def interrupt_sign_in(self, interruption):
+        login = subprocess.Popen(["bash", str(LOGIN)], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT, env=self.environment, start_new_session=True)
+        gh = None
+        try:
+            shown = read_until(login.stdout, b"Waiting for you")
+            self.assertIn("Waiting for you", shown)
+            gh = int(self.gh_pid.read_text())
+            os.killpg(login.pid, interruption)
+            login.wait(timeout=20)
+            self.assertTrue(eventually(lambda: not running(gh)), "gh still waits for its code")
+        finally:
+            login.stdout.close()
+            if login.poll() is None:
+                os.killpg(login.pid, signal.SIGKILL)
+                login.wait(timeout=20)
+            if gh is not None and running(gh):
+                os.kill(gh, signal.SIGKILL)
 
     def test_an_existing_sign_in_is_saved_and_the_codespace_token_is_not(self):
         self.stored.write_text("gho_user\n")

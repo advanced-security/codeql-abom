@@ -3,8 +3,10 @@
 import contextlib
 import importlib.util
 import io
+import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -69,12 +71,55 @@ class WebNoticesTests(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertIn("three.min.js", err)
 
+
+class ReleaseInterfaceTests(unittest.TestCase):
+    """make release-ui, which writes what every platform's release archive takes from the interface."""
+
+    def release_ui(self, web_fails=False):
+        """make release-ui over an empty interface, with notices.py and dotnet answering as told."""
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        base = Path(scratch.name)
+        (base / "ui" / "wwwroot").mkdir(parents=True)
+        tools = base / "bin"
+        tools.mkdir()
+        web = 'echo "web notices, cut short"; exit 1' if web_fails else 'echo "web notices"'
+        tool(tools / "python3", f"""#!/bin/sh
+case "$2" in
+nuget) echo "nuget notices" ;;
+web) {web} ;;
+nuget-cyclonedx) echo '{{}}' ;;
+*) exec {shlex.quote(sys.executable)} "$@" ;;
+esac
+""")
+        tool(tools / "dotnet", "#!/bin/sh\necho 10.0.100\n")
+        environment = {name: value for name, value in os.environ.items() if not name.startswith(("MAKE", "MFLAGS"))}
+        environment["PATH"] = f"{tools}{os.pathsep}{os.environ['PATH']}"
+        release = base / "release"
+        # -o publish takes the interface as built, so the recipe copies the empty one above.
+        result = subprocess.run(["make", "--no-print-directory", "-o", "publish", "release-ui",
+                                 f"ABOM_RELEASE={release}", f"ABOM_UI={base / 'ui'}"], cwd=ROOT,
+                                env=environment, capture_output=True, text=True, timeout=120, check=False)
+        return result, release
+
     def test_a_release_carries_the_notices_for_its_vendored_scripts(self):
-        recipe = re.search(r"(?ms)^release-ui:.*?(?=^\S)", (ROOT / "Makefile").read_text())
-        self.assertIsNotNone(recipe, "the Makefile has no release-ui target")
-        writes = [line for line in recipe.group(0).replace("\\\n", " ").splitlines()
-                  if "ui-notices.txt" in line]
-        self.assertTrue(any("notices.py web" in line for line in writes), writes)
+        result, release = self.release_ui()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((release / "ui-notices.txt").read_text(), "nuget notices\nweb notices\n")
+        self.assertEqual(sorted(os.listdir(release)), ["ui-notices.txt", "ui-tools.json", "ui.cdx.json", "wwwroot"])
+
+    # Notices cut short are a release that names some of what it redistributes, and looks complete.
+    def test_notices_that_fail_part_way_leave_no_notices_file(self):
+        result, release = self.release_ui(web_fails=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("ui-notices.txt", os.listdir(release))
+        # release-archive refuses a directory without it.
+        self.assertNotIn("ui-tools.json", os.listdir(release))
+
+
+def tool(path, body):
+    path.write_text(body)
+    path.chmod(0o755)
 
 
 if __name__ == "__main__":
