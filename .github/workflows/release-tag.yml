@@ -78,6 +78,11 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: scripts/release-version.sh "$VERSION"
 
+      # Graphviz is a requirement: serve refuses to start without it, and the layout and figure
+      # tests fail rather than skip.
+      - name: Test - Install Graphviz
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends graphviz
+
       - name: Test - Run the Go checks
         run: make check-corrupt check-release-version fmt vet test
 
