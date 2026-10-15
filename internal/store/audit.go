@@ -16,6 +16,16 @@ import (
 // which one, and unwraps to this.
 var ErrNoAuditSession = errors.New("not recorded")
 
+// ErrBadAuditFilter marks a filter, page size, order or cursor the store refuses: the reader's to
+// correct, not a failure of the store.
+var ErrBadAuditFilter = errors.New("refused audit filter")
+
+type refusedFilter string
+
+func (e refusedFilter) Error() string { return string(e) }
+
+func (e refusedFilter) Unwrap() error { return ErrBadAuditFilter }
+
 type notRecorded struct {
 	kind string
 	id   int64
@@ -138,7 +148,7 @@ func (s *Store) auditCutoff(f AuditFilter) (AuditFilter, auditCursor, error) {
 		f.Limit = 100
 	}
 	if f.Limit < 1 || f.Limit > 500 {
-		return f, auditCursor{}, errors.New("limit must be between 1 and 500")
+		return f, auditCursor{}, refusedFilter("limit must be between 1 and 500")
 	}
 	if f.Order == "" {
 		f.Order = "desc"
@@ -163,7 +173,7 @@ func (s *Store) auditCutoff(f AuditFilter) (AuditFilter, auditCursor, error) {
 		}
 	}
 	if f.Order != "asc" && f.Order != "desc" {
-		return f, auditCursor{}, errors.New("order must be asc or desc")
+		return f, auditCursor{}, refusedFilter("order must be asc or desc")
 	}
 	if f.Session > 0 {
 		var exists int
@@ -176,7 +186,7 @@ func (s *Store) auditCutoff(f AuditFilter) (AuditFilter, auditCursor, error) {
 	}
 	c := auditCursor{Filter: f.fingerprint(), Through: f.Through}
 	if f.Cursor != "" {
-		refused := errors.New("cursor does not match these filters, order and cutoff")
+		refused := refusedFilter("cursor does not match these filters, order and cutoff")
 		raw, err := base64.RawURLEncoding.DecodeString(f.Cursor)
 		if err != nil || json.Unmarshal(raw, &c) != nil || c.Filter != f.fingerprint() || c.Through < 0 || c.After <= 0 {
 			return f, c, refused

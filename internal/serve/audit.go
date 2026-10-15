@@ -84,10 +84,10 @@ func scopeToSession(f *store.AuditFilter, id int64) error {
 
 func auditError(w http.ResponseWriter, err error) {
 	code := http.StatusInternalServerError
-	if errors.Is(err, store.ErrNoAuditSession) {
+	switch {
+	case errors.Is(err, store.ErrNoAuditSession):
 		code = http.StatusNotFound
-	}
-	if strings.Contains(err.Error(), "cursor") || strings.Contains(err.Error(), "limit must") || strings.Contains(err.Error(), "order must") {
+	case errors.Is(err, store.ErrBadAuditFilter):
 		code = http.StatusBadRequest
 	}
 	writeError(w, code, err.Error())

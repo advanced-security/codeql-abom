@@ -110,6 +110,24 @@ func TestAnOldestFirstCursorExtendsToALaterCutoff(t *testing.T) {
 	}
 }
 
+// A filter the store refuses is marked as one, so a caller can say it was the reader's to correct
+// without reading the wording; a store failure is not marked, whatever it says.
+func TestARefusedAuditFilterIsMarkedAsOne(t *testing.T) {
+	s := newTestStore(t)
+	for name, f := range map[string]AuditFilter{
+		"limit":  {Limit: 501},
+		"order":  {Order: "sideways"},
+		"cursor": {Cursor: "not-a-cursor"},
+	} {
+		if _, err := s.AuditEvents(f); !errors.Is(err, ErrBadAuditFilter) {
+			t.Errorf("%s: %v is not marked as a refused filter", name, err)
+		}
+	}
+	if _, err := s.AuditEvents(AuditFilter{Request: 999}); errors.Is(err, ErrBadAuditFilter) {
+		t.Errorf("an unrecorded request is marked as a refused filter: %v", err)
+	}
+}
+
 // A request, run or session that is not recorded is named in the refusal: "no recorded session"
 // answered a filter on a request that did not exist, and named nothing a reader could correct.
 func TestAnUnrecordedOwnerIsNamedInTheRefusal(t *testing.T) {

@@ -3,6 +3,7 @@ package serve
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -187,6 +188,25 @@ func TestASessionRouteRefusesTermsThatWouldNarrowItsSession(t *testing.T) {
 		s.Handler().ServeHTTP(w, localRequest("GET", fmt.Sprintf("/api/authoring-sessions/%d/%s?session=%d", session, route, session), nil))
 		if w.Code != http.StatusOK {
 			t.Errorf("%s naming its own session: %d %s", route, w.Code, w.Body)
+		}
+	}
+}
+
+// The status comes from what the store says the error is, not from its wording: a failure that
+// mentions a cursor is still the server's, and a refused filter is the reader's however it is worded.
+func TestAuditErrorsAreClassifiedByKindNotWording(t *testing.T) {
+	for _, c := range []struct {
+		err  error
+		want int
+	}{
+		{fmt.Errorf("reading the cursor table: %w", errors.New("disk I/O error")), http.StatusInternalServerError},
+		{fmt.Errorf("%w: page size out of range", store.ErrBadAuditFilter), http.StatusBadRequest},
+		{fmt.Errorf("looking up: %w", store.ErrNoAuditSession), http.StatusNotFound},
+	} {
+		w := httptest.NewRecorder()
+		auditError(w, c.err)
+		if w.Code != c.want {
+			t.Errorf("%v: %d, want %d", c.err, w.Code, c.want)
 		}
 	}
 }
