@@ -20,7 +20,7 @@ jobs:
   # here, for the suites that pin upstream, and for the lock files.
   detect:
     name: Detect CodeQL CLI Update
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     outputs:
       current: ${{ steps.check.outputs.current }}
@@ -91,7 +91,7 @@ jobs:
     name: Check for an Existing Upgrade Branch
     needs: detect
     if: needs.detect.outputs.needed == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     outputs:
       exists: ${{ steps.look.outputs.exists }}
@@ -135,7 +135,7 @@ jobs:
     name: Upgrade and Open a Pull Request
     needs: [detect, existing-branch]
     if: needs.detect.outputs.needed == 'true' && needs.existing-branch.outputs.exists != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     permissions:
       contents: write
@@ -207,8 +207,8 @@ jobs:
 
       # Graphviz is a requirement: serve refuses to start without it, and the layout and figure
       # tests fail rather than skip.
-      - name: Upgrade - Install Graphviz
-        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends graphviz
+      - name: Upgrade - Setup Graphviz
+        run: scripts/setup-graphviz.sh
 
       - name: Upgrade - Verify
         run: make verify

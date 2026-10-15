@@ -13,7 +13,7 @@ permissions:
 jobs:
   lint-go:
     name: Lint - Go
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Lint - Checkout repository

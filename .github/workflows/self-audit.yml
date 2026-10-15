@@ -52,7 +52,7 @@ permissions:
 jobs:
   self-audit:
     name: Self Audit - ${{ matrix.name }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     strategy:
       # Every language is reported, not just the first to fail. A cancelled sibling would hide
@@ -169,7 +169,7 @@ jobs:
   # starts, under the repository's `require_lockfile` Actions policy. So this gates.
   action-pins:
     name: Self Audit - Action pins
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Action pins - Checkout repository

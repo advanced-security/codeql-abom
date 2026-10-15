@@ -23,6 +23,7 @@ on:
       - 'go.mod'
       - 'go.sum'
       - 'Makefile'
+      - 'scripts/setup-graphviz.sh'
       # Pins the PostgreSQL image the setup pulls.
       - 'scripts/with-postgres.py'
       - '**/codeql-pack.yml'
@@ -42,6 +43,7 @@ on:
       - 'go.mod'
       - 'go.sum'
       - 'Makefile'
+      - 'scripts/setup-graphviz.sh'
       - 'scripts/with-postgres.py'
       - '**/codeql-pack.yml'
       - '**/codeql-pack.lock.yml'
@@ -56,7 +58,7 @@ jobs:
   copilot-setup-steps:
     permissions:
       contents: read
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Copilot Setup - Checkout code
@@ -139,8 +141,8 @@ jobs:
 
       # Graphviz is a requirement: serve refuses to start without it, and the layout and figure
       # tests fail rather than skip.
-      - name: Copilot Setup - Install Graphviz
-        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends graphviz
+      - name: Copilot Setup - Setup Graphviz
+        run: scripts/setup-graphviz.sh
 
       # `make test-postgres` runs the store suite in the PostgreSQL image the harness pins, and pulls it on
       # first use. The probe starts that image and removes its container; the image stays cached.
