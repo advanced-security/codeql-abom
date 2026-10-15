@@ -198,6 +198,16 @@ jobs:
           unzip -q "$RUNNER_TEMP/$asset" -d "$RUNNER_TEMP/codeql-cli"
           echo "$RUNNER_TEMP/codeql-cli/codeql" >> "$GITHUB_PATH"
 
+      # Graphviz is a requirement the release notes name: serve refuses to start without `dot`, so
+      # the archive is proven on a machine that has it, installed the way a user would.
+      - name: Smoke - Install Graphviz
+        run: |
+          case "$RUNNER_OS" in
+            Linux) sudo apt-get update && sudo apt-get install --yes --no-install-recommends graphviz ;;
+            macOS) brew install graphviz ;;
+            *) echo "::error::no Graphviz install for $RUNNER_OS"; exit 1 ;;
+          esac
+
       - name: Smoke - Run
         run: |
           codeql version --format=terse

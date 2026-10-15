@@ -4,10 +4,15 @@
 #
 #   smoke.sh <archive.tar.gz>
 #
-# Needs the CodeQL CLI the release pins on PATH, and network access for `codeql pack install`.
-# The server runs from the extracted directory: running an installation from any other working
-# directory is not implemented yet, and this does not claim it.
+# Needs the CodeQL CLI the release pins and Graphviz's `dot` on PATH, and network access for
+# `codeql pack install`. The server runs from the extracted directory: running an installation from
+# any other working directory is not implemented yet, and this does not claim it.
 set -euo pipefail
+
+if ! command -v dot >/dev/null 2>&1; then
+	echo "smoke: Graphviz's dot is not on PATH, and serve refuses to start without it" >&2
+	exit 1
+fi
 
 here=$(cd "$(dirname "$0")" && pwd)
 archive="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
