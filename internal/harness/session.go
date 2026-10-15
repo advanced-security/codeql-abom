@@ -12,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/advanced-security/codeql-abom/internal/audit"
 	copilot "github.com/github/copilot-sdk/go"
 
 	"github.com/advanced-security/codeql-abom/internal/authoring"
@@ -233,7 +232,7 @@ func (s *Sessions) launchAuthoring(run startedAuthoring) <-chan struct{} {
 		delete(s.live, run.request)
 		s.mu.Unlock()
 		_ = os.RemoveAll(run.dir)
-		if err := s.Store.EndAuthoringSession(run.id, state, audit.Text(detail)); err != nil {
+		if err := s.Store.EndAuthoringSession(run.id, state, detail); err != nil {
 			_ = run.live.gate.fail(err)
 		}
 	}()

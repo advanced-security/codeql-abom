@@ -69,6 +69,19 @@ func auditFilter(r *http.Request) (store.AuditFilter, error) {
 	return f, nil
 }
 
+// scopeToSession narrows a filter to the session its route names. A request, run or other session
+// in the query could only narrow that session further, to nothing, so it is refused.
+func scopeToSession(f *store.AuditFilter, id int64) error {
+	switch {
+	case f.Session != 0 && f.Session != id:
+		return errors.New("session conflicts with route")
+	case f.Request != 0 || f.Run != 0:
+		return errors.New("the route names the session; request and run do not apply")
+	}
+	f.Session = id
+	return nil
+}
+
 func auditError(w http.ResponseWriter, err error) {
 	code := http.StatusInternalServerError
 	if errors.Is(err, store.ErrNoAuditSession) {
@@ -92,11 +105,10 @@ func (s *Server) auditEvents(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 400, "a session is a positive integer")
 			return
 		}
-		if f.Session != 0 && f.Session != id {
-			writeError(w, 400, "session conflicts with route")
+		if err := scopeToSession(&f, id); err != nil {
+			writeError(w, 400, err.Error())
 			return
 		}
-		f.Session = id
 	}
 	page, err := s.Store.AuditEvents(f)
 	if err != nil {
@@ -189,7 +201,10 @@ func (s *Server) auditReproduction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, err.Error())
 		return
 	}
-	f.Session = id
+	if err := scopeToSession(&f, id); err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
 	page, err := s.Store.AuditEvents(f)
 	if err != nil {
 		auditError(w, err)

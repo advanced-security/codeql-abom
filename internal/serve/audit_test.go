@@ -167,6 +167,30 @@ func TestAuditSearchAndExportIncludeTheWholeFilteredSnapshot(t *testing.T) {
 	}
 }
 
+// A route names its session, so a request, run or other session in the query could only narrow it
+// silently to nothing; it is refused instead of answering with an empty page that reads as no events.
+func TestASessionRouteRefusesTermsThatWouldNarrowItsSession(t *testing.T) {
+	s, st, _, request := authoringServer(t)
+	session, err := st.StartAuthoringSession(request, "operator", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, route := range []string{"events", "reproduction"} {
+		for _, term := range []string{"request=999", "run=999", fmt.Sprintf("session=%d", session+1)} {
+			w := httptest.NewRecorder()
+			s.Handler().ServeHTTP(w, localRequest("GET", fmt.Sprintf("/api/authoring-sessions/%d/%s?%s", session, route, term), nil))
+			if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "route") {
+				t.Errorf("%s?%s: %d %s", route, term, w.Code, w.Body)
+			}
+		}
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, localRequest("GET", fmt.Sprintf("/api/authoring-sessions/%d/%s?session=%d", session, route, session), nil))
+		if w.Code != http.StatusOK {
+			t.Errorf("%s naming its own session: %d %s", route, w.Code, w.Body)
+		}
+	}
+}
+
 func TestAuditDownloadsRespectDemoProhibition(t *testing.T) {
 	s, _, _, _ := authoringServer(t)
 	s.Instance.Mode = ModeDemo

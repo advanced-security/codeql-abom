@@ -41,6 +41,25 @@ func TestASessionIsStartedOnlyOnARequestThatExists(t *testing.T) {
 	}
 }
 
+// The store is the one place an ending's detail is sanitized, so a caller hands it the raw error and
+// what is written is already safe to show; the read path's projection is not what keeps it out.
+func TestASessionEndingIsSanitizedWhereItIsWritten(t *testing.T) {
+	s := newTestStore(t)
+	_, session := aSessionOn(t, s)
+	raw := "push failed: token=ghp_abcdefghijklmnopqrstuvwxyz0123456789 at /Users/someone/private/checkout"
+	if err := s.EndAuthoringSession(session, SessionFailed, raw); err != nil {
+		t.Fatal(err)
+	}
+	var stored string
+	if err := s.db.QueryRow(`SELECT detail FROM abom_authoring_session WHERE row_id = ?`, session).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stored, "ghp_") || strings.Contains(stored, "/Users/someone") ||
+		!strings.Contains(stored, "[redacted credential]") || !strings.Contains(stored, "[path]") {
+		t.Errorf("stored detail %q", stored)
+	}
+}
+
 // The request list says which requests an agent is working on without reading each one's sessions.
 func TestTheRequestsUnderWayAreReadInOneGo(t *testing.T) {
 	s := newTestStore(t)
