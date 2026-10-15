@@ -215,16 +215,49 @@ public sealed class AbomApi(HttpClient http, TutorialService? tutorial = null)
     public async Task<PruneView?> GetPruneAsync(CancellationToken ct = default) =>
         await GetAsync<PruneView>("api/prune", ct);
 
-    public async Task<Staleness?> GetStalenessAsync(CancellationToken ct = default) =>
-        await GetAsync<Staleness>("api/prune/staleness", ct);
-
     /// <summary>
-    /// Tombstones what the declaration does not reach, or deletes what is already tombstoned.
-    /// Both carry the control header: they remove work that only re-analysis can rebuild.
+    /// Removes from view what a reviewed preview showed, naming it by its proof. The server applies
+    /// it only while nothing that preview kept would go, and most of the graph only when
+    /// <paramref name="majority"/> says so; otherwise nothing moves and the removal as it now
+    /// stands comes back to review instead. Any other refusal throws, like every control.
     /// </summary>
-    public Task<PruneView?> PruneAsync(bool compact, CancellationToken ct = default) =>
-        SendControlAsync<PruneView>(HttpMethod.Post,
-            compact ? "api/prune/compact" : "api/prune/apply", null, ct);
+    public async Task<PruneOutcome> ApplyPruneAsync(string proof, bool majority, CancellationToken ct = default)
+    {
+        using var response = await SendControlRequestAsync(HttpMethod.Post, "api/prune/apply", new { proof, majority }, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
+        {
+            return new PruneOutcome(null, await response.Content.ReadFromJsonAsync<PruneConflict>(Json, ct) ?? new PruneConflict());
+        }
+        await ThrowUnlessSucceededAsync(response, ct);
+        return new PruneOutcome(await response.Content.ReadFromJsonAsync<PruneView>(Json, ct), null);
+    }
+
+    /// <summary>Deletes what is already removed from view. Not reversible: only re-analysis rebuilds it.</summary>
+    public async Task<PruneView?> CompactPruneAsync(CancellationToken ct = default)
+    {
+        using var response = await SendControlRequestAsync(HttpMethod.Post, "api/prune/compact", null, ct);
+        await ThrowUnlessSucceededAsync(response, ct);
+        return await response.Content.ReadFromJsonAsync<PruneView>(Json, ct);
+    }
+
+    /// <summary>A refusal in the server's words, which say what did or did not happen, not only its status.</summary>
+    private static async Task ThrowUnlessSucceededAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        if (response.IsSuccessStatusCode)
+        {
+            return;
+        }
+        string? reason = null;
+        try
+        {
+            reason = (await response.Content.ReadFromJsonAsync<ApiError>(Json, ct))?.Error;
+        }
+        catch (Exception ex) when (ex is JsonException or NotSupportedException)
+        {
+            // A body that is not the server's error shape still has its status to report.
+        }
+        throw new HttpRequestException(reason ?? $"the server refused it ({(int)response.StatusCode})", null, response.StatusCode);
+    }
 
     public async Task<IReadOnlyList<RemediationItem>> GetRemediationAsync(
         int top = 50, CancellationToken ct = default) =>
@@ -373,10 +406,28 @@ public sealed class AbomApi(HttpClient http, TutorialService? tutorial = null)
         long request, CancellationToken ct = default) =>
         ControlAsync<AuthoringSessionList>($"api/query-requests/{request}/sessions/stop", null, ct);
 
-    /// <summary>A session's timeline from after the last event the reader holds.</summary>
-    public async Task<AuthoringEventPage?> GetAuthoringEventsAsync(
-        long session, long after, CancellationToken ct = default) =>
-        await GetAsync<AuthoringEventPage>($"api/authoring-sessions/{session}/events?after={after}", ct);
+    public async Task<AuthoringEventPage> GetAuditEventsAsync(string query, CancellationToken ct = default)
+    {
+        using var response = await http.GetAsync("api/authoring-events" + (query.Length > 0 ? "?" + query : ""), ct);
+        // Both answer the filters themselves: a malformed term, or a session, request or run that is
+        // not recorded. Neither is the server being unavailable, nor an empty log.
+        if (response.StatusCode is System.Net.HttpStatusCode.BadRequest or System.Net.HttpStatusCode.NotFound)
+        {
+            var problem = await response.Content.ReadFromJsonAsync<Dictionary<string, string>>(Json, ct);
+            throw new AuditFilterException(problem?.GetValueOrDefault("error") ?? "The audit filters were rejected.");
+        }
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<AuthoringEventPage>(Json, ct)
+            ?? throw new HttpRequestException("The audit response was empty.");
+    }
+
+    public async Task<AuditSession> GetAuditSessionAsync(long session, CancellationToken ct = default) =>
+        await http.GetFromJsonAsync<AuditSession>($"api/authoring-sessions/{session}", Json, ct)
+        ?? throw new HttpRequestException("The session response was empty.");
+
+    public async Task<AuditSessionList> GetAuditSessionsAsync(string query, CancellationToken ct = default) =>
+        await http.GetFromJsonAsync<AuditSessionList>($"api/authoring-sessions?{query}", Json, ct)
+        ?? throw new HttpRequestException("The session response was empty.");
 
     /// <summary>The trees a request's sessions printed, without their bodies.</summary>
     public async Task<IReadOnlyList<AuthoringAst>> GetAuthoringAstsAsync(long request, CancellationToken ct = default) =>

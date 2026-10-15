@@ -35,6 +35,23 @@ worth having if it reads the same in every view.
    `.expected` from the fixture's marks before the query, as a session must, and record no review.
    That means re-recording `authoring.json` with `--record-queries`, which runs CodeQL and so waits
    for a moment with no crawl. Depends on nothing.
+4. **A session's audit capture reads the pack for every event, under the lock that orders them.**
+   `Gate.keep` re-derives the session policy (`refreshPolicyLocked` → `Bounds.description` →
+   `firstChange`, until the query first changes) and the recorder stamps the query version
+   (`observedVersion`). Each calls `authoring.Find`, which lists the pack and versions the query, and
+   a pre-tool-use event holds its tool call until it is recorded. Measured per `Find`: **42 ms** on
+   the corpus pack, a 5-query pack inside the repository's CodeQL workspace, where
+   `runner.libraryRoots` walks the whole workspace for `codeql-pack.yml` on every call; **8 ms** at
+   50 queries and **150 ms** at 300 outside a workspace, where listing the files dominates. Two calls
+   an event before the first change and one after, over 100–300 events a session. The fork:
+   - cache the listing and the library roots per session, invalidated by what the gate sees change
+     the pack — a write it allowed, a test run, a pack install. Whether anything outside the gate
+     changes the pack mid-session has to be established first;
+   - re-derive the policy and stamp the version only after the events that can change them — a write,
+     a test run, a printed tree, binding a target — and carry the last stamp otherwise.
+
+   Neither may record a version or a policy that was not in force when the event happened: evidence
+   that is stale is worse than the latency it saves. Depends on nothing.
 
 ## Decisions
 

@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS abom_query_request (
   updated_at    TEXT NOT NULL,
   target_source TEXT,
   source_run_id INTEGER REFERENCES abom_analysis_run(row_id),
+  source_draft_id INTEGER,
   target_detail TEXT,
   title         TEXT NOT NULL DEFAULT '',
   slug          TEXT NOT NULL DEFAULT '',
@@ -154,7 +155,8 @@ type QueryRequest struct {
 	CreatedAt    string `json:"createdAt"`
 	UpdatedAt    string `json:"updatedAt"`
 	// SourceRunID is the run the request was asked from, zero when it was asked from nothing.
-	SourceRunID int64 `json:"sourceRunId"`
+	SourceRunID   int64 `json:"sourceRunId"`
+	SourceDraftID int64 `json:"sourceDraftId"`
 	// Evidence is what was picked from that run. Kept as filed: an edit changes what is asked
 	// for, never what it was asked from.
 	Evidence []RequestEvidence `json:"evidence"`
@@ -197,6 +199,17 @@ func (s *Store) fileQueryRequest(r QueryRequest, now string) (int64, error) {
 	if err := evidenceShown(tx, r); err != nil {
 		return 0, err
 	}
+	if r.SourceDraftID != 0 {
+		var matches int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM abom_request_draft d JOIN abom_authoring_session s
+			ON s.row_id=d.session_id WHERE d.row_id=? AND s.run_id=? AND s.query_id=?`,
+			r.SourceDraftID, r.SourceRunID, r.QueryID).Scan(&matches); err != nil {
+			return 0, err
+		}
+		if matches != 1 {
+			return 0, errors.New("the draft does not belong to this request's source run and query")
+		}
+	}
 	if err := slugFree(tx, r.Slug, 0); err != nil {
 		return 0, err
 	}
@@ -204,13 +217,13 @@ func (s *Store) fileQueryRequest(r QueryRequest, now string) (int64, error) {
 INSERT INTO abom_query_request
   (description, compliant, non_compliant, query_id, kind, status, requested_by, created_at, updated_at,
    target_source, source_run_id, title, slug, recommendation, target_decision, meta_description,
-   meta_precision, meta_problem_severity, meta_security_severity, closed_steps)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? THEN ? END)`,
+   meta_precision, meta_problem_severity, meta_security_severity, closed_steps, source_draft_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? THEN ? END, ?)`,
 		r.Description, r.Compliant, r.NonCompliant, r.QueryID, r.Kind, r.Status,
 		r.RequestedBy, now, now, nullable(r.TargetSource), nullableID(r.SourceRunID),
 		r.Title, r.Slug, r.Recommendation, nullable(r.TargetDecision), r.Metadata.Description,
 		r.Metadata.Precision, r.Metadata.ProblemSeverity, r.Metadata.SecuritySeverity,
-		r.closed(), nullable(r.ClosedSteps))
+		r.closed(), nullable(r.ClosedSteps), nullableID(r.SourceDraftID))
 	if err != nil {
 		return 0, fmt.Errorf("keeping a query request: %w", err)
 	}
@@ -521,7 +534,7 @@ func (s *Store) QueryRequests() ([]QueryRequest, error) {
 		       requested_by, created_at, updated_at, COALESCE(target_source, ''),
 		       COALESCE(source_run_id, 0), COALESCE(target_detail, ''), title, slug, recommendation,
 		       COALESCE(target_decision, ''), meta_description, meta_precision,
-		       meta_problem_severity, meta_security_severity, COALESCE(closed_steps, '')
+		       meta_problem_severity, meta_security_severity, COALESCE(closed_steps, ''),COALESCE(source_draft_id,0)
 		FROM abom_query_request ORDER BY row_id DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("reading query requests: %w", err)
@@ -535,7 +548,7 @@ func (s *Store) QueryRequests() ([]QueryRequest, error) {
 			&r.Kind, &r.Status, &r.RequestedBy, &r.CreatedAt, &r.UpdatedAt,
 			&r.TargetSource, &r.SourceRunID, &r.TargetDetail, &r.Title, &r.Slug, &r.Recommendation,
 			&r.TargetDecision, &r.Metadata.Description, &r.Metadata.Precision,
-			&r.Metadata.ProblemSeverity, &severity, &r.ClosedSteps); err != nil {
+			&r.Metadata.ProblemSeverity, &severity, &r.ClosedSteps, &r.SourceDraftID); err != nil {
 			return nil, fmt.Errorf("scanning a query request: %w", err)
 		}
 		if severity.Valid {

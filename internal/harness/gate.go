@@ -2,6 +2,7 @@ package harness
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -10,6 +11,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/advanced-security/codeql-abom/internal/audit"
+	"github.com/advanced-security/codeql-abom/internal/store"
 	copilot "github.com/github/copilot-sdk/go"
 	"github.com/github/copilot-sdk/go/rpc"
 )
@@ -56,7 +59,12 @@ type Event struct {
 	Reason   string    `json:"reason"`
 	Detail   string    `json:"detail"`
 	// Took is how long a call ran, from its approval to its result; zero when not measured.
-	Took time.Duration `json:"-"`
+	Took         time.Duration      `json:"-"`
+	Source       string             `json:"source"`
+	SourceID     string             `json:"sourceId"`
+	QueryID      string             `json:"queryId"`
+	QueryVersion string             `json:"queryVersion"`
+	Capture      store.AuditCapture `json:"capture"`
 }
 
 // MarshalJSON writes Took in milliseconds, the unit every other duration in the API uses.
@@ -75,6 +83,7 @@ type Flight struct {
 	Subject string    `json:"subject"`
 	Step    string    `json:"step"`
 	Since   time.Time `json:"since"`
+	CallID  string    `json:"callId"`
 }
 
 // Gate turns Bounds into a session's callbacks and records every invocation of them. No callback
@@ -84,10 +93,12 @@ type Gate struct {
 	// Now stamps events.
 	Now func() time.Time
 
-	mu      sync.Mutex
-	bounds  Bounds
-	record  func(Event) error
-	flights []Flight
+	mu         sync.Mutex
+	recordMu   sync.Mutex
+	decisionMu sync.Mutex
+	bounds     Bounds
+	record     func(Event) error
+	flights    []Flight
 
 	// scratch is where ql-mcp prints, and keepPrinted keeps what it printed there.
 	scratch     string
@@ -97,8 +108,13 @@ type Gate struct {
 	keepSpend func(Spend) error
 
 	// call and request decide, as fields so a test can break them.
-	call    func(Bounds, string, any) Verdict
-	request func(Bounds, rpc.PermissionRequest) Verdict
+	call       func(Bounds, string, any) Verdict
+	request    func(Bounds, rpc.PermissionRequest) Verdict
+	fatal      error
+	cancel     func()
+	policy     *audit.Policy
+	policyJSON string
+	seen       map[string]bool
 }
 
 // NewGate decides by b, and keeps each event with record before the call it describes may run.
@@ -108,17 +124,22 @@ func NewGate(b Bounds, record func(Event) error) *Gate {
 
 // Bind narrows the gate to one target. A session is about one query, so a second is refused.
 func (g *Gate) Bind(query, tests string) error {
+	g.decisionMu.Lock()
+	defer g.decisionMu.Unlock()
 	g.mu.Lock()
-	defer g.mu.Unlock()
 	if g.bounds.bound() {
-		return fmt.Errorf("this session is already about %s", g.bounds.rel(g.bounds.query))
+		target := g.bounds.rel(g.bounds.query)
+		g.mu.Unlock()
+		return fmt.Errorf("this session is already about %s", target)
 	}
 	b, err := g.bounds.Bind(query, tests)
 	if err != nil {
+		g.mu.Unlock()
 		return err
 	}
 	g.bounds = b
-	return nil
+	g.mu.Unlock()
+	return g.refreshPolicy()
 }
 
 // Bounds is what the gate decides by now.
@@ -138,12 +159,16 @@ func (g *Gate) InFlight() []Flight {
 // Hooks wires the gate into a session.
 func (g *Gate) Hooks() *copilot.SessionHooks {
 	return &copilot.SessionHooks{
-		OnPreToolUse:         g.PreToolUse,
-		OnPostToolUse:        g.PostToolUse,
-		OnPostToolUseFailure: g.PostToolUseFailure,
-		OnSessionStart:       g.SessionStart,
-		OnSessionEnd:         g.SessionEnd,
-		OnErrorOccurred:      g.ErrorOccurred,
+		OnPreToolUse:            g.PreToolUse,
+		OnPostToolUse:           g.PostToolUse,
+		OnPostToolUseFailure:    g.PostToolUseFailure,
+		OnSessionStart:          g.SessionStart,
+		OnSessionEnd:            g.SessionEnd,
+		OnErrorOccurred:         g.ErrorOccurred,
+		OnUserPromptSubmitted:   g.PromptSubmitted,
+		OnUserPromptTransformed: g.PromptTransformed,
+		OnAgentStop:             g.AgentStop,
+		OnPreMCPToolCall:        g.PreMCP,
 	}
 }
 
@@ -151,13 +176,16 @@ func (g *Gate) Hooks() *copilot.SessionHooks {
 // typed permission request that follows is judged again with what the CLI says it will touch.
 func (g *Gate) PreToolUse(in copilot.PreToolUseHookInput, _ copilot.HookInvocation) (
 	out *copilot.PreToolUseHookOutput, err error) {
+	g.decisionMu.Lock()
+	defer g.decisionMu.Unlock()
 	defer func() {
 		if r := recover(); r != nil {
+			_ = g.fail(fmt.Errorf("pre-action callback panicked"))
 			out, err = deny(fmt.Sprintf("the gate failed deciding this call, so it is refused: %v", r)), nil
 		}
 	}()
 	b := g.Bounds()
-	e := Event{Hook: HookPreToolUse, Tool: in.ToolName, Subject: b.subject(in.ToolName, in.ToolArgs),
+	e := Event{At: in.Timestamp, Capture: store.AuditCapture{RuntimeSessionID: in.SessionID}, Hook: HookPreToolUse, Tool: in.ToolName, Subject: b.subject(in.ToolName, in.ToolArgs),
 		Detail: detail(in.ToolArgs)}
 	v := decide(func() Verdict { return g.call(b, in.ToolName, in.ToolArgs) })
 	if err := g.keep(e, v); err != nil {
@@ -170,27 +198,31 @@ func (g *Gate) PreToolUse(in copilot.PreToolUseHookInput, _ copilot.HookInvocati
 }
 
 // Permission decides a typed permission request, and marks an approved ql-mcp call as under way.
-func (g *Gate) Permission(req copilot.PermissionRequest, _ copilot.PermissionInvocation) (
+func (g *Gate) Permission(req copilot.PermissionRequest, invocation copilot.PermissionInvocation) (
 	d rpc.PermissionDecision, err error) {
+	g.decisionMu.Lock()
+	defer g.decisionMu.Unlock()
 	defer func() {
 		if r := recover(); r != nil {
+			_ = g.fail(fmt.Errorf("permission callback panicked"))
 			d, err = reject(fmt.Sprintf("the gate failed deciding this request, so it is refused: %v", r)), nil
 		}
 	}()
 	b := g.Bounds()
 	tool, subject, args := b.describe(req)
-	e := Event{Hook: HookPermission, Tool: tool, Subject: subject, Detail: detail(args)}
+	var ids struct {
+		ToolCallID string `json:"toolCallId"`
+	}
+	raw, _ := json.Marshal(req)
+	_ = json.Unmarshal(raw, &ids)
+	e := Event{Hook: HookPermission, Tool: tool, Subject: subject, Detail: detail(args),
+		Capture: store.AuditCapture{RuntimeSessionID: invocation.SessionID, CallID: ids.ToolCallID}}
 	v := decide(func() Verdict { return g.request(b, req) })
 	if err := g.keep(e, v); err != nil {
 		return reject(unrecorded(err)), nil
 	}
 	if !v.Allowed {
 		return reject(v.Reason), nil
-	}
-	if _, ok := req.(*rpc.PermissionRequestMCP); ok {
-		g.mu.Lock()
-		g.flights = append(g.flights, Flight{Tool: tool, Subject: subject, Step: v.Step, Since: g.Now()})
-		g.mu.Unlock()
 	}
 	return &rpc.PermissionDecisionApproveOnce{}, nil
 }
@@ -200,10 +232,15 @@ func (g *Gate) PostToolUse(in copilot.PostToolUseHookInput, _ copilot.HookInvoca
 	out *copilot.PostToolUseHookOutput, err error) {
 	defer func() {
 		if r := recover(); r != nil {
+			_ = g.fail(fmt.Errorf("post-action capture panicked"))
 			out, err = nil, nil
 		}
 	}()
-	g.land(HookPostToolUse, in.ToolName, in.ToolArgs, DecisionSucceeded, resultText(in.ToolResult))
+	g.land(Event{At: in.Timestamp, Hook: HookPostToolUse, Tool: in.ToolName, Decision: DecisionSucceeded,
+		Capture: store.AuditCapture{RuntimeSessionID: in.SessionID}}, in.ToolArgs, resultText(in.ToolResult))
+	if err := g.Err(); err != nil {
+		return nil, err
+	}
 	if context := g.print(in.ToolName, in.ToolArgs, resultText(in.ToolResult)); context != "" {
 		return &copilot.PostToolUseHookOutput{AdditionalContext: context}, nil
 	}
@@ -215,10 +252,12 @@ func (g *Gate) PostToolUseFailure(in copilot.PostToolUseFailureHookInput, _ copi
 	out *copilot.PostToolUseFailureHookOutput, err error) {
 	defer func() {
 		if r := recover(); r != nil {
+			_ = g.fail(fmt.Errorf("post-failure capture panicked"))
 			out, err = nil, nil
 		}
 	}()
-	g.land(HookPostToolUseFailure, in.ToolName, in.ToolArgs, DecisionFailed, in.Error)
+	g.land(Event{At: in.Timestamp, Hook: HookPostToolUseFailure, Tool: in.ToolName, Decision: DecisionFailed,
+		Capture: store.AuditCapture{RuntimeSessionID: in.SessionID}}, in.ToolArgs, in.Error)
 	return nil, nil
 }
 
@@ -227,10 +266,12 @@ func (g *Gate) SessionStart(in copilot.SessionStartHookInput, _ copilot.HookInvo
 	out *copilot.SessionStartHookOutput, err error) {
 	defer func() {
 		if r := recover(); r != nil {
+			_ = g.fail(fmt.Errorf("session-start capture panicked"))
 			out, err = nil, nil
 		}
 	}()
-	_ = g.keep(Event{Hook: HookSessionStart, Tool: "session", Subject: in.Source}, Verdict{Allowed: true})
+	_ = g.keep(Event{At: in.Timestamp, Capture: store.AuditCapture{RuntimeSessionID: in.SessionID},
+		Hook: HookSessionStart, Tool: "session", Subject: in.Source}, Verdict{Allowed: true})
 	return nil, nil
 }
 
@@ -239,6 +280,7 @@ func (g *Gate) SessionEnd(in copilot.SessionEndHookInput, _ copilot.HookInvocati
 	out *copilot.SessionEndHookOutput, err error) {
 	defer func() {
 		if r := recover(); r != nil {
+			_ = g.fail(fmt.Errorf("session-end capture panicked"))
 			out, err = nil, nil
 		}
 	}()
@@ -249,7 +291,8 @@ func (g *Gate) SessionEnd(in copilot.SessionEndHookInput, _ copilot.HookInvocati
 	if in.Error != "" {
 		text = in.Error
 	}
-	_ = g.keep(Event{Hook: HookSessionEnd, Tool: "session", Subject: in.Reason, Detail: clip(text)},
+	_ = g.keep(Event{At: in.Timestamp, Capture: store.AuditCapture{RuntimeSessionID: in.SessionID},
+		Hook: HookSessionEnd, Tool: "session", Subject: in.Reason, Detail: detail(map[string]any{"message": text})},
 		Verdict{Allowed: true, Reason: in.Reason})
 	return nil, nil
 }
@@ -259,32 +302,108 @@ func (g *Gate) ErrorOccurred(in copilot.ErrorOccurredHookInput, _ copilot.HookIn
 	out *copilot.ErrorOccurredHookOutput, err error) {
 	defer func() {
 		if r := recover(); r != nil {
+			_ = g.fail(fmt.Errorf("error capture panicked"))
 			out, err = &copilot.ErrorOccurredHookOutput{ErrorHandling: "abort"}, nil
 		}
 	}()
-	_ = g.keep(Event{Hook: HookError, Tool: in.ErrorContext, Detail: clip(in.Error)},
+	_ = g.keep(Event{At: in.Timestamp, Capture: store.AuditCapture{RuntimeSessionID: in.SessionID},
+		Hook: HookError, Tool: in.ErrorContext, Detail: detail(map[string]any{"message": in.Error})},
 		Verdict{Allowed: true, Reason: in.Error})
 	return &copilot.ErrorOccurredHookOutput{ErrorHandling: "abort"}, nil
 }
 
 // Observe records the session events no hook sees: an MCP server's state, and what the agent said.
 func (g *Gate) Observe(e copilot.SessionEvent) {
-	defer func() { _ = recover() }()
+	defer func() {
+		if recover() != nil {
+			_ = g.fail(fmt.Errorf("SDK observation capture panicked"))
+		}
+	}()
+	if e.ID != "" {
+		g.mu.Lock()
+		if g.seen == nil {
+			g.seen = map[string]bool{}
+		}
+		seen := g.seen[e.ID]
+		g.seen[e.ID] = true
+		g.mu.Unlock()
+		if seen {
+			return
+		}
+	}
+	event := Event{At: e.Timestamp, Source: "sdk", SourceID: e.ID, Decision: DecisionNoted}
 	switch d := e.Data.(type) {
 	case *copilot.SessionMCPServerStatusChangedData:
 		var why string
 		if d.Error != nil {
 			why = *d.Error
 		}
-		_ = g.keep(Event{Hook: HookServer, Tool: d.ServerName, Subject: string(d.Status),
-			Decision: DecisionNoted, Detail: clip(why)}, Verdict{})
+		event.Hook, event.Tool, event.Subject, event.Detail = HookServer, d.ServerName, string(d.Status), detail(map[string]any{"message": why})
 	case *copilot.AssistantMessageData:
 		if strings.TrimSpace(d.Content) != "" {
-			_ = g.keep(Event{Hook: HookMessage, Tool: "agent", Decision: DecisionNoted,
-				Detail: clip(d.Content)}, Verdict{})
+			event.Hook, event.Tool, event.Detail = HookMessage, "agent", detail(map[string]any{"message": d.Content})
 		}
 	case *copilot.AssistantUsageData:
 		g.spent(d)
+		return
+	case *copilot.ToolExecutionStartData:
+		event.Hook, event.Tool, event.Detail = "tool-start", d.ToolName, detail(d.Arguments)
+		event.Subject = g.Bounds().subject(d.ToolName, d.Arguments)
+		event.Capture.CallID = d.ToolCallID
+		if d.ToolCallID != "" {
+			g.mu.Lock()
+			g.flights = append(g.flights, Flight{Tool: d.ToolName, Subject: event.Subject, CallID: d.ToolCallID, Since: g.Now()})
+			g.mu.Unlock()
+		}
+	case *copilot.ToolExecutionCompleteData:
+		event.Hook, event.Tool = "tool-complete", "runtime"
+		event.Capture.CallID = d.ToolCallID
+		event.Decision = DecisionFailed
+		if d.Success {
+			event.Decision = DecisionSucceeded
+		}
+		event.Detail = detail(map[string]any{"success": d.Success, "result": "[omitted: opaque tool result]"})
+		g.mu.Lock()
+		i := slices.IndexFunc(g.flights, func(f Flight) bool { return d.ToolCallID != "" && f.CallID == d.ToolCallID })
+		if i >= 0 {
+			f := g.flights[i]
+			event.Tool, event.Subject, event.Took = f.Tool, f.Subject, g.Now().Sub(f.Since)
+			g.flights = slices.Delete(g.flights, i, i+1)
+		}
+		g.mu.Unlock()
+	case *copilot.SessionLimitsExhaustedRequestedData:
+		event.Hook, event.Tool = "credit-limit", "session"
+		event.Detail = detail(map[string]any{"maxAiCredits": d.MaxAiCredits, "usedAiCredits": d.UsedAiCredits, "outcome": "limit reported by runtime"})
+	case *copilot.RawSessionEventData:
+		if d.EventType != "model.response_limits_status" {
+			return
+		}
+		var status struct {
+			Status map[string]any `json:"status"`
+		}
+		if json.Unmarshal(d.Raw, &status) != nil {
+			return
+		}
+		event.Hook, event.Tool = "credit-status", "session"
+		fields := map[string]any{}
+		for _, key := range []string{"maxAiCredits", "aiCreditsUsed", "isLimitsExhausted"} {
+			if value, ok := status.Status[key]; ok {
+				fields[key] = value
+			}
+		}
+		event.Detail = detail(fields)
+	default:
+		if e.Data == nil {
+			return
+		}
+		kind := string(e.Data.Type())
+		if !slices.Contains([]string{"session.start", "session.resume", "session.shutdown", "session.error", "session.idle", "session.limits", "abort", "agent.interrupted"}, kind) {
+			return
+		}
+		event.Hook, event.Tool = kind, "session"
+	}
+	if event.Hook != "" {
+		_ = g.keep(event, Verdict{})
 	}
 }
 
@@ -320,34 +439,38 @@ func (g *Gate) spent(d *copilot.AssistantUsageData) {
 		s.NanoAIU = &nano
 	}
 	if err := keep(s); err != nil {
-		_ = g.keep(Event{Hook: HookSpend, Tool: d.Model, Decision: DecisionNoted,
-			Detail: clip("what this model call cost could not be kept: " + err.Error())}, Verdict{})
+		_ = g.fail(fmt.Errorf("recording session spend failed"))
 	}
 }
 
 // land records a call's outcome, with how long it ran if the gate saw it approved.
-func (g *Gate) land(hook, tool string, args any, outcome, text string) {
+func (g *Gate) land(e Event, args any, text string) {
 	b := g.Bounds()
-	e := Event{Hook: hook, Tool: tool, Subject: b.subject(tool, args), Decision: outcome, Detail: clip(text)}
-	g.mu.Lock()
-	i := slices.IndexFunc(g.flights, func(f Flight) bool { return f.Tool == tool && f.Subject == e.Subject })
-	if i < 0 {
-		i = slices.IndexFunc(g.flights, func(f Flight) bool { return f.Tool == tool })
+	e.Subject, e.Detail = b.subject(e.Tool, args), detail(map[string]any{"message": text})
+	if e.Decision == DecisionSucceeded {
+		e.Detail = detail(map[string]any{"result": map[string]any{"omitted": "opaque tool result; measured tests are separate evidence", "bytes": len(text), "sha256": audit.Digest([]byte(text))}})
 	}
-	if i >= 0 {
-		f := g.flights[i]
-		g.flights = slices.Delete(g.flights, i, i+1)
-		e.Took, e.Step = g.Now().Sub(f.Since), f.Step
-	}
-	g.mu.Unlock()
-	if i < 0 {
-		e.Step = decide(func() Verdict { return g.call(b, tool, args) }).Step
-	}
+	e.Step = decide(func() Verdict { return g.call(b, e.Tool, args) }).Step
 	_ = g.keep(e, Verdict{})
 }
 
 // keep stamps and records an event, taking its decision from v unless it already has an outcome.
-func (g *Gate) keep(e Event, v Verdict) error {
+func (g *Gate) keep(e Event, v Verdict) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = g.fail(errors.New("audit callback panicked"))
+		}
+	}()
+	g.recordMu.Lock()
+	defer g.recordMu.Unlock()
+	if err := g.Err(); err != nil {
+		return err
+	}
+	if e.Hook != "policy" {
+		if err := g.refreshPolicyLocked(); err != nil {
+			return err
+		}
+	}
 	if e.At.IsZero() {
 		e.At = g.Now()
 	}
@@ -357,7 +480,26 @@ func (g *Gate) keep(e Event, v Verdict) error {
 			e.Decision = DecisionNoted
 		}
 	}
-	return g.record(e)
+	if e.Source == "" {
+		e.Source = "hook"
+		if e.Hook == HookPermission {
+			e.Source = "permission"
+		}
+		if e.Hook == HookArtifact || e.Hook == HookMessage && e.Tool == "abom" {
+			e.Source = "abom"
+		}
+	}
+	e.Capture.Version = audit.Version
+	e.Capture.Correlation = "uncorrelated hook observation"
+	if e.Capture.CallID != "" {
+		e.Capture.Correlation = "reported runtime call ID"
+	}
+	e.Tool, e.Subject, e.Reason = audit.Text(e.Tool), audit.Text(e.Subject), audit.Text(e.Reason)
+	e.Detail = audit.ProjectDetail(e.Detail)
+	if err := g.record(e); err != nil {
+		return g.fail(err)
+	}
+	return nil
 }
 
 func decisionOf(v Verdict) string {
@@ -456,30 +598,8 @@ func (b Bounds) name(p string) string {
 	return b.rel(real)
 }
 
-// textArgs carry the agent's working text, which the timeline replaces with its size.
-var textArgs = map[string]bool{"file_text": true, "old_str": true, "new_str": true, "ql_code": true}
-
 func detail(args any) string {
-	if args == nil {
-		return ""
-	}
-	fields, ok := args.(map[string]any)
-	if !ok {
-		return clip(fmt.Sprint(args))
-	}
-	shown := make(map[string]any, len(fields))
-	for k, v := range fields {
-		if s, ok := v.(string); ok && textArgs[k] {
-			shown[k] = fmt.Sprintf("<%d characters>", len(s))
-			continue
-		}
-		shown[k] = v
-	}
-	body, err := json.Marshal(shown)
-	if err != nil {
-		return ""
-	}
-	return clip(string(body))
+	return audit.Detail(args)
 }
 
 // resultText is what a tool reported back to the agent.
@@ -502,7 +622,7 @@ func clip(s string) string {
 	if len(s) <= maxDetail {
 		return s
 	}
-	const mark = "…"
+	const mark = "[truncated]"
 	cut := maxDetail - len(mark)
 	for cut > 0 && !utf8.RuneStart(s[cut]) {
 		cut--

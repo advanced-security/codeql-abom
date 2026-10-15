@@ -100,39 +100,6 @@ func (s *Server) requestSessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"sessions": sessions, "inFlight": flights}, nil)
 }
 
-// sessionEvents reads a session's timeline from after the last event the reader holds.
-func (s *Server) sessionEvents(w http.ResponseWriter, r *http.Request) {
-	session, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil || session <= 0 {
-		writeError(w, http.StatusBadRequest, "a session is named by a number")
-		return
-	}
-	var after int64
-	if v := r.URL.Query().Get("after"); v != "" {
-		if after, err = strconv.ParseInt(v, 10, 64); err != nil || after < 0 {
-			writeError(w, http.StatusBadRequest, "after is the last event number already read")
-			return
-		}
-	}
-	limit := 0
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if limit, err = strconv.Atoi(v); err != nil || limit <= 0 {
-			writeError(w, http.StatusBadRequest, "limit is a positive number of events")
-			return
-		}
-	}
-	events, err := s.Store.AuthoringEvents(session, after, limit)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	next := after
-	if len(events) > 0 {
-		next = events[len(events)-1].RowID
-	}
-	writeJSON(w, map[string]any{"events": events, "next": next}, nil)
-}
-
 // requestASTs lists the trees a request's sessions printed, without the trees.
 func (s *Server) requestASTs(w http.ResponseWriter, r *http.Request) {
 	id, ok := requestID(w, r)

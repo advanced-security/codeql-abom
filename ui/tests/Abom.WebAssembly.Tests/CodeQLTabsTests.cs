@@ -4,7 +4,7 @@ using Xunit;
 
 namespace Abom.WebAssembly.Tests;
 
-/// <summary>Four tabs: what is asked, what exists, where it ran and what the crawl runs.</summary>
+/// <summary>The lifecycle, its audit evidence, and the crawl's suites.</summary>
 public class CodeQLTabsTests : AbomTestContext
 {
     public CodeQLTabsTests()
@@ -17,12 +17,12 @@ public class CodeQLTabsTests : AbomTestContext
 
     /// <summary>Asked for, then written, then run: the tabs follow that order.</summary>
     [Fact]
-    public void ThePartsAreRequestsThenTheCatalogThenRunsThenSuites()
+    public void ThePartsAreRequestsCatalogRunsAuditAndSuites()
     {
         var page = Render<CodeQL>();
 
         var tabs = page.FindAll("[data-abom-tab]").Select(t => t.GetAttribute("data-abom-tab")).ToList();
-        Assert.Equal(["requests", "catalog", "runs", "suites"], tabs);
+        Assert.Equal(["requests", "catalog", "runs", "audit", "suites"], tabs);
         Assert.Equal("requests", page.Find("[aria-selected='true']").GetAttribute("data-abom-tab"));
         page.WaitForAssertion(() => Assert.NotNull(page.Find("[data-abom-requests]")));
     }

@@ -1,0 +1,374 @@
+@using System.Globalization
+@using Abom.WebAssembly.Models
+@using Abom.WebAssembly.Services
+@inject AbomApi Api
+@implements IDisposable
+
+@* One agent session: what it was held to beside what it used, and its details inside the card,
+   one at a time, so nothing about it is read under another session's heading. *@
+<section class="abom-session-card" data-abom-session="@SessionId" data-abom-session-state="@State">
+    @if (Summary is null && _meta is null)
+    {
+        @if (_error is not null)
+        {
+            <MudAlert Severity="Severity.Error" Dense="true">@_error</MudAlert>
+        }
+        else
+        {
+            <MudProgressLinear Indeterminate="true" />
+        }
+    }
+    else
+    {
+        <header class="abom-session-head">
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@StateColor(State)">@State</MudChip>
+            <span class="abom-session-name">Session #@SessionId</span>
+            <span class="abom-session-purpose">@AuditText.Purpose(_meta?.Purpose ?? "authoring")</span>
+            @if (RequestId > 0 && !InRequest)
+            {
+                <Tip Text="Open the request this session worked.">
+                    <MudLink Href="@($"/codeql?tab=requests&request={RequestId}")" Typo="Typo.body2">request #@RequestId</MudLink>
+                </Tip>
+            }
+            <MudSpacer />
+            <Tip Text="Open this session's recorded events in the Audit log.">
+                <MudIconButton Icon="@Icons.Material.Outlined.HistoryEdu" Size="Size.Small"
+                               Href="@AuditSpec.ForSession(SessionId)" aria-label="@($"Audit log for session #{SessionId}")"
+                               data-abom-session-audit />
+            </Tip>
+            <Tip Text="Download this session's recorded evidence, and what it cannot reproduce, as Markdown.">
+                <MudIconButton Icon="@Icons.Material.Outlined.Download" Size="Size.Small"
+                               Href="@($"api/authoring-sessions/{SessionId}/reproduction?download=1")"
+                               aria-label="@($"Download session #{SessionId} as Markdown")"
+                               data-abom-session-markdown />
+            </Tip>
+        </header>
+        <div class="abom-session-who">
+            Started by @StartedBy @TimeText.DayAndTime(StartedAt)@(Model.Length > 0 ? $" · {Model}" : "")
+        </div>
+        <dl class="abom-session-metrics">
+            <dt>Time</dt>
+            <dd data-abom-session-duration data-abom-session-duration-percent="@(Percent?.ToString(CultureInfo.InvariantCulture))">
+                @if (Percent is { } percent)
+                {
+                    <MudProgressLinear Value="@Math.Min(percent, 100)" Color="@GaugeColor(percent)" Rounded="true"
+                                       Size="Size.Medium" Class="abom-session-gauge" aria-label="@DurationText" />
+                }
+                <span>@DurationText</span>
+            </dd>
+            <dt>AI credit cap</dt>
+            <dd data-abom-session-credits>@CreditsText</dd>
+            <dt>Copilot usage</dt>
+            <dd data-abom-session-spend>@SpendText</dd>
+            <dt>Recorded</dt>
+            <dd data-abom-session-activity>
+                @CountText.Of(Events, "event", "events") ·
+                @if (Refused > 0)
+                {
+                    <Tip Text="Open the calls this session was refused in the Audit log, each with the reason the agent was given.">
+                        <MudLink Href="@(new AuditSpec().With("session", SessionId.ToString()).With("decision", "refused").Href)"
+                                 Color="Color.Warning" Typo="Typo.body2" Class="abom-session-refused" data-abom-session-refused>@Refused refused</MudLink>
+                    </Tip>
+                }
+                else
+                {
+                    <span>0 refused</span>
+                }
+            </dd>
+        </dl>
+        @if (Relation is { Length: > 0 })
+        {
+            <p class="abom-session-relation" data-abom-session-relation>@Relation</p>
+        }
+        @if (!Compact)
+        {
+            <div class="abom-session-tabs" role="tablist" aria-label="@($"Session #{SessionId} details")">
+                @foreach (var (key, label, tip) in Tabs)
+                {
+                    <Tip Text="@tip">
+                        <button type="button" role="tab" class="abom-session-tab" id="@($"session-{SessionId}-{key}")"
+                                aria-selected="@(_tab == key ? "true" : "false")"
+                                aria-controls="@($"session-{SessionId}-panel")"
+                                @onclick="@(() => Choose(key))"
+                                data-abom-session-tab="@key"
+                                data-abom-session-timeline="@(key == "events" ? "" : null)"
+                                data-abom-session-said="@(key == "said" ? "" : null)">@label</button>
+                    </Tip>
+                }
+            </div>
+            @if (_tab is { } open)
+            {
+                <div class="abom-session-panel" role="tabpanel" id="@($"session-{SessionId}-panel")"
+                     aria-labelledby="@($"session-{SessionId}-{open}")" data-abom-session-panel="@open">
+                    @switch (open)
+                    {
+                        case "events":
+                            <div data-abom-timeline><AuditEvents Filter="@($"session={SessionId}")" /></div>
+                            break;
+                        case "said":
+                            <pre class="abom-session-detail" data-abom-session-detail>@Detail</pre>
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                The agent's own words. Whether a test passed is shown by measured evidence in its events, never by this message.
+                            </MudText>
+                            break;
+                        case "limits":
+                            <SessionPolicy SessionId="@SessionId" Metadata="@_meta" />
+                            break;
+                        case "trees":
+                            <PrintedTrees Trees="@Trees" />
+                            break;
+                    }
+                </div>
+            }
+        }
+    }
+</section>
+
+@code {
+    [Parameter] public long SessionId { get; set; }
+
+    /// <summary>Limits, relations and counts; read by id when not given.</summary>
+    [Parameter] public AuditSession? Metadata { get; set; }
+
+    /// <summary>The request's own listing of this session, which a running session refreshes.</summary>
+    [Parameter] public AuthoringSession? Summary { get; set; }
+
+    /// <summary>Whether the session's events are a tab here; the Audit log lists them itself.</summary>
+    [Parameter] public bool ShowEvents { get; set; } = true;
+
+    /// <summary>A card under its own request does not link back to it.</summary>
+    [Parameter] public bool InRequest { get; set; }
+
+    /// <summary>The trees this session printed.</summary>
+    [Parameter] public IReadOnlyList<AuthoringAst> Trees { get; set; } = [];
+
+    /// <summary>Why the session is listed here, beside a run or a request.</summary>
+    [Parameter] public string? Relation { get; set; }
+
+    /// <summary>The summary alone, without the details below it.</summary>
+    [Parameter] public bool Compact { get; set; }
+
+    private AuditSession? _meta;
+    private AuditSession? _own;
+    private string? _error;
+    private string? _tab;
+    private bool _chosen;
+    private long _loaded;
+    private Timer? _clock;
+    private int _ticks;
+    private bool _rereading, _disposed;
+
+    // Every third tick of the clock: as often as the Audit log follows newer events.
+    private const int RereadEvery = 3;
+
+    private string State => Summary?.State ?? _meta?.State ?? "";
+    private string StartedBy => Summary?.StartedBy ?? _meta?.StartedBy ?? "";
+    private string StartedAt => Summary?.StartedAt ?? _meta?.StartedAt ?? "";
+    private string EndedAt => Summary?.EndedAt ?? _meta?.EndedAt ?? "";
+    private string Model => Summary?.Model ?? _meta?.Model ?? "";
+    private string Detail => Summary?.Detail ?? _meta?.Detail ?? "";
+    private int Events => Summary?.Events ?? _meta?.Events ?? 0;
+    private int Refused => Summary?.Refused ?? _meta?.Refused ?? 0;
+    private long RequestId => Summary?.RequestId ?? _meta?.RequestId ?? 0;
+    private bool Running => State == "running";
+
+    private SessionPolicyRecord? Policy => _meta?.Policies
+        .OrderByDescending(e => e.RowId).Select(e => e.Capture.Policy).FirstOrDefault(p => p is not null);
+
+    private IEnumerable<(string Key, string Label, string Tip)> Tabs
+    {
+        get
+        {
+            if (ShowEvents)
+            {
+                yield return ("events", $"Events ({Events})", "List every hook, permission and tool event this session recorded, as it happened.");
+            }
+            if (Detail.Length > 0)
+            {
+                yield return ("said", "Agent's last message", "Read the agent's final message in its own words.");
+            }
+            yield return ("limits", "Limits and permissions", "Read what this session was allowed: its time limit, AI credit cap, tools and editable files.");
+            if (Trees.Count > 0)
+            {
+                yield return ("trees", $"Printed trees ({Trees.Count})", "Read the syntax trees CodeQL printed over the test database while the agent worked.");
+            }
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_own is not null && _own.RowId != SessionId)
+        {
+            _own = null;
+        }
+        if (Metadata is not null)
+        {
+            // What the card read itself is newer than a listing that was read once.
+            _meta = _own ?? Metadata;
+        }
+        else if (_loaded != SessionId)
+        {
+            _loaded = SessionId;
+            try
+            {
+                _meta = await Api.GetAuditSessionAsync(SessionId);
+                _error = null;
+            }
+            catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                _error = $"No session #{SessionId} is recorded.";
+            }
+            catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException or OperationCanceledException)
+            {
+                _error = "Cannot load this session's limits. This is not evidence that the session had none.";
+            }
+        }
+        // A session being worked is followed as it happens, until somebody chooses otherwise.
+        if (!_chosen && Running && ShowEvents && !Compact)
+        {
+            _tab = "events";
+        }
+        ArmClock();
+    }
+
+    private void Choose(string key)
+    {
+        _chosen = true;
+        _tab = _tab == key ? null : key;
+    }
+
+    private TimeSpan? Elapsed
+    {
+        get
+        {
+            if (!DateTimeOffset.TryParse(StartedAt, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var started))
+            {
+                return null;
+            }
+            if (Running)
+            {
+                return DateTimeOffset.UtcNow - started;
+            }
+            return DateTimeOffset.TryParse(EndedAt, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var ended)
+                ? ended - started : null;
+        }
+    }
+
+    private TimeSpan? Limit => Policy is { TimeoutMs: > 0 } p ? TimeSpan.FromMilliseconds(p.TimeoutMs) : null;
+
+    private int? Percent => Elapsed is { } e && Limit is { } l
+        ? (int)Math.Round(e.TotalMilliseconds / l.TotalMilliseconds * 100, MidpointRounding.AwayFromZero)
+        : null;
+
+    private string DurationText
+    {
+        get
+        {
+            if (Elapsed is not { } elapsed)
+            {
+                return "How long it ran was not recorded";
+            }
+            var took = (Running ? "Running " : "") + AuditText.Span(elapsed);
+            if (Limit is { } limit)
+            {
+                return elapsed >= limit
+                    ? $"{took} of {AuditText.Span(limit)}, at its time limit"
+                    : $"{took} of {AuditText.Span(limit)}";
+            }
+            return _meta is null && _error is not null ? $"{took} · limit could not be loaded" : $"{took} · limit not recorded";
+        }
+    }
+
+    private string CreditsText => Policy is { } p
+        ? p.CreditsKnown && p.MaxAiCredits is null ? $"{AuditText.Credits(p)}. {AuditText.NoCapNote}" : AuditText.Credits(p)
+        : _meta is null && _error is not null ? "Could not be loaded" : "Not recorded";
+
+    // Absent until the CLI reports it: a cost nobody reported is not a session that cost nothing.
+    private string SpendText
+    {
+        get
+        {
+            var nano = Summary is not null ? Summary.NanoAiu : _meta?.NanoAiu;
+            var calls = Summary is not null ? Summary.ModelCalls : _meta?.ModelCalls;
+            var input = Summary is not null ? Summary.InputTokens : _meta?.InputTokens;
+            var output = Summary is not null ? Summary.OutputTokens : _meta?.OutputTokens;
+            if (nano is null && input is null && output is null)
+            {
+                return "Not reported by Copilot";
+            }
+            var parts = new List<string>();
+            if (nano is long n) parts.Add((n / 1e9).ToString("0.##", CultureInfo.CurrentCulture) + " AI units");
+            if (calls is long c) parts.Add(CountText.Of((int)c, "model call", "model calls"));
+            if (input is long i) parts.Add(i.ToString("N0", CultureInfo.CurrentCulture) + " tokens in");
+            if (output is long o) parts.Add(o.ToString("N0", CultureInfo.CurrentCulture) + " out");
+            return string.Join(" · ", parts);
+        }
+    }
+
+    // The time used of a limit is read as a level: plenty left, nearly gone, gone.
+    private static Color GaugeColor(int percent) => percent >= 100 ? Color.Error : percent >= 80 ? Color.Warning : Color.Primary;
+
+    private static Color StateColor(string state) => state switch
+    {
+        "running" => Color.Info,
+        "finished" => Color.Success,
+        "stopped" or "interrupted" => Color.Warning,
+        "failed" => Color.Error,
+        _ => Color.Default,
+    };
+
+    // A running session's time moves while nothing else on the page does, and one that nothing
+    // above the card follows is read again until it ends: read once, it said "running" for ever.
+    private void ArmClock()
+    {
+        // Never after disposal: a read in flight when the card goes would otherwise start a clock
+        // nothing stops.
+        if (Running && _clock is null && !_disposed)
+        {
+            _clock = new Timer(_ => _ = InvokeAsync(Tick), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+        }
+        else if (!Running && _clock is not null)
+        {
+            _clock.Dispose();
+            _clock = null;
+        }
+    }
+
+    private async Task Tick()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+        if (Summary is null && ++_ticks % RereadEvery == 0 && !_rereading)
+        {
+            _rereading = true;
+            try
+            {
+                _own = await Api.GetAuditSessionAsync(SessionId);
+                _meta = _own;
+                _error = null;
+            }
+            catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException or OperationCanceledException)
+            {
+                // The last read stands, and the next tick tries again.
+            }
+            finally
+            {
+                _rereading = false;
+            }
+            ArmClock();
+        }
+        StateHasChanged();
+    }
+
+    /// <summary>Whether this card reads its session again: while it runs, unless a listing above it is followed.</summary>
+    public bool Watching => _clock is not null && Summary is null;
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _clock?.Dispose();
+        _clock = null;
+    }
+}

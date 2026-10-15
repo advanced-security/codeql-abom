@@ -37,14 +37,14 @@ public class RequestSessionsTests : AbomTestContext
         """;
 
     private const string Timeline = """
-        {"events":[
+        {"items":[
           {"rowId":37,"sessionId":1,"at":"2026-09-24T02:21:00Z","hook":"pre-tool-use","tool":"bash",
            "subject":"rm -rf ~","decision":"refused","step":"",
            "reason":"bash is not part of the authoring loop","detail":"","tookMs":null},
           {"rowId":43,"sessionId":1,"at":"2026-09-24T02:21:08Z","hook":"post-tool-use",
            "tool":"ql-mcp-codeql_test_extract","subject":"test/CheckoutTagPin","decision":"succeeded",
            "step":"database","reason":"","detail":"","tookMs":3356}],
-         "next":43}
+         "total":2,"through":43}
         """;
 
     private const string Trees = """
@@ -171,11 +171,75 @@ public class RequestSessionsTests : AbomTestContext
             && r.Url.EndsWith("api/query-requests/7/sessions/stop", StringComparison.Ordinal)));
     }
 
+    // Every call the agent makes is followed now, not only CodeQL's, so the line names the tool
+    // rather than saying CodeQL is running a file read.
+    [Fact]
+    public void ACallInFlightIsNamedByItsToolRatherThanAsCodeQL()
+    {
+        var cut = Render(Running.Replace("ql-mcp-codeql_test_run", "view")
+            .Replace("\"subject\":\"test/CheckoutTagPin\"", "\"subject\":\"src/CheckoutTagPin.ql\""));
+
+        var flight = cut.WaitForElement("[data-abom-session-inflight]").TextContent;
+        Assert.Contains("view", flight);
+        Assert.Contains("src/CheckoutTagPin.ql", flight);
+        Assert.DoesNotContain("CodeQL", flight);
+    }
+
+    // A first read that fails is no reason to stop reading: unarmed, the page stayed on "cannot
+    // load" until somebody changed how often pages refresh.
+    [Fact]
+    public void AFirstReadThatFailsIsTriedAgainAndNotReadAsNoSessions()
+    {
+        Fail("api/query-requests/7/sessions", System.Net.HttpStatusCode.ServiceUnavailable);
+        var cut = Render(NoSessions);
+
+        cut.WaitForAssertion(() => Assert.Contains("Cannot load sessions", cut.Markup));
+        Assert.Empty(cut.FindAll("[data-abom-sessions-empty]"));
+        Assert.Equal(TimeSpan.FromSeconds(Abom.WebAssembly.Services.FollowService.DefaultSeconds), cut.Instance.Beat);
+    }
+
+    // A re-read that fails is not evidence the sessions went: what was read stays, said to be from
+    // before, and the warning goes once a read succeeds.
+    [Fact]
+    public void AReReadThatFailsKeepsTheSessionsShownUntilOneSucceeds()
+    {
+        var cut = Render(Finished);
+        cut.WaitForAssertion(() => cut.Find("[data-abom-session='1']"));
+        Fail("api/query-requests/7/sessions", System.Net.HttpStatusCode.ServiceUnavailable);
+
+        cut.Render(p => p.Add(c => c.Started, 1));
+
+        cut.WaitForAssertion(() => Assert.Contains("Cannot reload sessions", cut.Markup));
+        Assert.NotEmpty(cut.FindAll("[data-abom-session='1']"));
+
+        Recover("api/query-requests/7/sessions");
+        cut.Render(p => p.Add(c => c.Started, 2));
+
+        cut.WaitForAssertion(() => Assert.DoesNotContain("Cannot reload sessions", cut.Markup));
+        Assert.NotEmpty(cut.FindAll("[data-abom-session='1']"));
+    }
+
+    // Why a session could not start is the server's answer to somebody pressing Start, and reading
+    // the list again does not answer it.
+    [Fact]
+    public void ARefusalToStartOutlivesTheReadThatFollowsIt()
+    {
+        RefuseWrite("api/query-requests/7/sessions", System.Net.HttpStatusCode.Conflict, "discovery holds CodeQL");
+        var cut = Render(NoSessions);
+
+        cut.WaitForElement("[data-abom-session-start]").Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("discovery holds CodeQL",
+            cut.Find("[data-abom-session-refusal]").TextContent));
+        Assert.True(Sent.Count(r => r.Method == "GET" && r.Url.EndsWith("api/query-requests/7/sessions", StringComparison.Ordinal)) >= 2,
+            "the sessions were not read again after the refusal");
+    }
+
     /// <summary>The refusals are the security record, so each is shown with the reason the agent was given.</summary>
     [Fact]
     public void ASessionsTimelineShowsWhatWasRefusedAndWhy()
     {
-        Answer("api/authoring-sessions/1/events", Timeline);
+        Answer("api/authoring-events", Timeline);
         var cut = Render(Finished);
 
         cut.WaitForAssertion(() => cut.Find("[data-abom-session='1']"));
@@ -188,7 +252,7 @@ public class RequestSessionsTests : AbomTestContext
         var refused = cut.Find("[data-abom-event='37']").TextContent;
         Assert.Contains("rm -rf ~", refused);
         Assert.Contains("not part of the authoring loop", refused);
-        Assert.Contains("3.4 s", cut.Find("[data-abom-event='43']").TextContent);
+        Assert.Contains("3356 ms", cut.Find("[data-abom-event='43']").TextContent);
     }
 
     /// <summary>
@@ -198,11 +262,11 @@ public class RequestSessionsTests : AbomTestContext
     [Fact]
     public void AFailedCallSaysWhyItFailed()
     {
-        Answer("api/authoring-sessions/1/events", """
-            {"events":[{"rowId":18,"sessionId":1,"at":"2026-09-24T04:05:55Z","hook":"post-tool-use-failure",
+        Answer("api/authoring-events", """
+            {"items":[{"rowId":18,"sessionId":1,"at":"2026-09-24T04:05:55Z","hook":"post-tool-use-failure",
               "tool":"abom_target","subject":"","decision":"failed","step":"target","reason":"",
               "detail":"this session is already about src/CheckoutTagPin.ql; work on it","tookMs":null}],
-             "next":18}
+             "total":1,"through":18}
             """);
         var cut = Render(Finished);
         cut.WaitForAssertion(() => cut.Find("[data-abom-session='1']"));
@@ -223,7 +287,9 @@ public class RequestSessionsTests : AbomTestContext
         Answer("api/authoring-asts/3", Tree);
         var cut = Render(Finished, Trees);
 
-        cut.WaitForAssertion(() => cut.Find("[data-abom-ast='3']"));
+        cut.WaitForAssertion(() => cut.Find("[data-abom-session-tab='trees']"));
+        Assert.DoesNotContain(Sent, r => r.Url.Contains("api/authoring-asts/3", StringComparison.Ordinal));
+        cut.Find("[data-abom-session-tab='trees']").Click();
         Assert.Contains("test/CheckoutTagPin/CheckoutTagPin.testproj", cut.Find("[data-abom-ast='3']").TextContent);
         Assert.Empty(cut.FindAll("[data-abom-ast-body]"));
         Assert.DoesNotContain(Sent, r => r.Url.Contains("api/authoring-asts/3", StringComparison.Ordinal));
@@ -257,7 +323,7 @@ public class RequestSessionsTests : AbomTestContext
         var unreported = Render(Finished);
         unreported.WaitForAssertion(() => unreported.Find("[data-abom-session-spend]"));
         var text = unreported.Find("[data-abom-session-spend]").TextContent;
-        Assert.Contains("not reported", text);
+        Assert.Contains("Not reported", text);
         Assert.DoesNotContain("0 AI units", text);
     }
 

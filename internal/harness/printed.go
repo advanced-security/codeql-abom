@@ -69,7 +69,12 @@ func (g *Gate) print(tool string, args any, result string) string {
 		var id int64
 		id, err = keep(Printed{At: g.Now(), Query: name, Database: b.rel(b.database()),
 			SourceFiles: sourceFiles, Body: body, Truncated: truncated})
+		if err != nil {
+			_ = g.fail(err)
+			return "ABOM could not retain the printed evidence; the session is stopping."
+		}
 		if err == nil {
+			e.Capture.ArtifactID = id
 			e.Detail = fmt.Sprintf("kept %d bytes of what %s printed, as printout %d", len(body), name, id)
 			context = fmt.Sprintf("ABOM kept what %s printed. Read the tree in %s.", name,
 				strings.Join(files, " and "))

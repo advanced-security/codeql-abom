@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -66,6 +67,28 @@ func TestAQueryIsFoundByTheIDItDeclares(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("found\n\t%+v\nwant\n\t%+v", got, want)
+	}
+}
+
+// Find runs for every event an agent session records, under the lock that orders them, so it
+// versions the query it finds and nothing else. Versioning the whole pack made each tool call wait
+// on every query in it: 211ms a call at 300 queries.
+func TestFindingAQueryVersionsThatQueryAlone(t *testing.T) {
+	root := workspace(t, map[string]string{"A": "acme/a", "B": "acme/b", "C": "acme/c"})
+	var versioned [][]string
+	before := queryVersions
+	queryVersions = func(paths []string) ([]string, error) {
+		versioned = append(versioned, slices.Clone(paths))
+		return before(paths)
+	}
+	t.Cleanup(func() { queryVersions = before })
+
+	got, found, err := Find(root, "acme/b")
+	if err != nil || !found {
+		t.Fatalf("Find: found=%v err=%v", found, err)
+	}
+	if len(versioned) != 1 || !reflect.DeepEqual(versioned[0], []string{got.Path}) {
+		t.Errorf("versioned %v, want only %s", versioned, got.Path)
 	}
 }
 

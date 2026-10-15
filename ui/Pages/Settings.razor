@@ -4,7 +4,6 @@
 @using System.Text.Json
 @inject AbomApi Api
 @inject AccountService Accounts
-@inject PromptMemory Prompts
 @inject TutorialService Tutorial
 @implements IDisposable
 
@@ -940,44 +939,6 @@ else
 </MudText>
 <AuthoringReadinessPanel Editable="true" />
 
-@* Raised rather than waited for. The check runs at startup off the request path, and what it
-   found is a decision somebody has to make rather than a section they have to go and find.
-   Removal is never automatic: this asks, and "Not now" is a complete answer.
-
-   Rendered only while it is open. A MudDialog that is merely invisible still renders its focus
-   trap, whose four sentinels are focusable and have no accessible name. *@
-@if (_stalePrompt && _staleness is not null)
-{
-    <MudDialog @ref="_staleDialog" @bind-Visible="_stalePrompt" Options="@(new DialogOptions {
-                   CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true })">
-        <TitleContent>
-            <MudText Typo="Typo.h6">Some of this is no longer reachable from what you own</MudText>
-        </TitleContent>
-        <DialogContent>
-            <MudText Typo="Typo.body2" Class="mb-2" data-abom-stale-summary>
-                Checked at startup: your @_staleness.View.Declared declared
-                @(_staleness.View.Declared == 1 ? "repository reaches" : "repositories reach")
-                @_staleness.View.Reachable. Outside that sit @StaleText(_staleness.View.Removed).
-            </MudText>
-            <MudText Typo="Typo.body2" Class="mud-text-secondary">
-                Removing takes them out of every view and out of the crawl's queue. No analysis is
-                deleted, and anything a later analysis finds again comes back.
-            </MudText>
-        </DialogContent>
-        <DialogActions>
-            <MudButton OnClick="DismissStale"
-                       title="Leave this no-longer-reachable work visible and close this prompt."
-                       data-abom-stale-dismiss>Not now</MudButton>
-            <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="_stalePruning"
-                       OnClick="AcceptStale"
-                       title="Take what is no longer reachable out of every view and out of the queue, without deleting any analysis."
-                       data-abom-stale-accept>
-                @(_stalePruning ? "Working\u2026" : "Remove from view")
-            </MudButton>
-        </DialogActions>
-    </MudDialog>
-}
-
 <PruneControl />
 
 <MudText Typo="Typo.subtitle2" Class="mt-8 mb-1">Accounts holding repositories discovery started from</MudText>
@@ -1040,10 +1001,6 @@ else
 
 @code {
     private IReadOnlyList<OwnerCandidate>? _candidates;
-    private Staleness? _staleness;
-    private MudDialog? _staleDialog;
-    private bool _stalePrompt;
-    private bool _stalePruning;
     private string _search = string.Empty;
     private bool _checking;
     private AccountProblem? _problem;
@@ -1191,51 +1148,6 @@ else
             _ = CheckOnArrival();
         }
         _candidates = await Api.GetOwnerCandidatesAsync();
-        _staleness = await Api.GetStalenessAsync();
-        // Only a finished check that could measure and found something opens this. A check still
-        // running, or one that had no closure to measure against, says nothing at all.
-        _stalePrompt = !Tutorial.IsReadOnly && (_staleness?.HasSomethingToRemove ?? false) && !Prompts.Dismissed(_staleness!.CheckedAt);
-    }
-
-    // Only what it removes: a prompt reading "0 nodes and 0 edges" left the 4 it did remove unsaid.
-    private static string StaleText(PruneRemoval r)
-    {
-        static string Count(int n, string one, string many) => $"{n:N0} {(n == 1 ? one : many)}";
-        var graph = new List<string>();
-        if (r.Nodes > 0) graph.Add(Count(r.Nodes, "node", "nodes"));
-        if (r.Edges > 0) graph.Add(Count(r.Edges, "edge", "edges"));
-        var parts = new List<string>();
-        if (graph.Count > 0)
-        {
-            parts.Add(string.Join(" and ", graph) + (r.Repositories > 0
-                ? $" across {Count(r.Repositories, "repository", "repositories")}" : ""));
-        }
-        if (r.Queued > 0) parts.Add(Count(r.Queued, "queued dependency", "queued dependencies"));
-        return string.Join(", and ", parts);
-    }
-
-    private async Task DismissStale()
-    {
-        if (_staleDialog is not null) await _staleDialog.CloseAsync();
-        _stalePrompt = false;
-        if (_staleness is not null) Prompts.Dismiss(_staleness.CheckedAt);
-    }
-
-    private async Task AcceptStale()
-    {
-        _stalePruning = true;
-        try
-        {
-            await Api.PruneAsync(compact: false);
-            // Re-read rather than trusting the response: what is left is what the next decision
-            // turns on, and "what did that cost" is a different question.
-            _staleness = await Api.GetStalenessAsync();
-        }
-        finally
-        {
-            _stalePruning = false;
-            await DismissStale();
-        }
     }
 
     private void SeedDraft()

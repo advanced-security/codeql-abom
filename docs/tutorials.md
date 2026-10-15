@@ -63,3 +63,35 @@ ABOM's stricter [fail-first contract](architecture.md#what-produces-the-data) st
 fixture marks establish expectations before implementation. Accepting current query output
 as expected results is not the ABOM authoring workflow. Compilation proves syntax and types;
 tests and comparisons provide separate evidence about behavior.
+
+## Reading an agent's evidence
+
+Open **CodeQL → Audit log**, or the Audit log icon (a scroll) on a Request or Run row. These are
+the same records; a query-only search is broader than a proven session/run relation. A tab opened
+before the server was restarted keeps running the interface it loaded, so a tab added since is
+not there yet; the page says so and offers **Reload**.
+
+1. Each agent session is one card: how long it ran against its time limit, its AI credit cap
+   (Copilot's, when set), what Copilot reported it used, and its events and refusals. The
+   refusals open in the Audit log. Its details are tabs inside the card, one at a time: its
+   events, the agent's last message, **Limits and permissions**, and the trees it printed.
+   **Not recorded** means unknown, not current defaults. Drafting and query authoring have
+   different capabilities. Check the session state too: a recorded policy can precede a startup
+   failure, including a credit cap the installed runtime does not support.
+2. Expand an event to see safe arguments, its policy reference, exact correlation where supplied,
+   measured tests, input digests and existing printed-tree links. Totals count events, not calls.
+3. Turn on **TDD and reproduction evidence** to distinguish initial measured red tests, subsequent
+   iterations and stopping reasons. Compilation failures and agent messages never prove red/green.
+4. Search and filters apply as you type or choose; there is nothing to submit. Each shows as a
+   chip naming what it scopes to (a run by its queries, a request by its title, a session by its
+   purpose), and closing a chip removes that filter alone. Share the URL. The page arrows keep a
+   fixed cutoff; **Follow**, on by default, shows newer matching events as they are recorded, or
+   says they are waiting if you have paged away. Refresh starts a new snapshot; clearing all
+   filters returns to the global view.
+5. Export matching JSONL for the full filtered cutoff, or a session's reproduction Markdown.
+   Check the final completion marker. Exports are unavailable in Demo.
+
+The guide is evidence for manual investigation, not automatic replay. Obtain the matching query,
+pack dependencies, fixtures, expectations and toolchain independently, and compare their recorded
+digests. Source/patch bodies and scratch are not archived; missing or changed inputs are a limit,
+not permission to substitute current files and claim the original result.

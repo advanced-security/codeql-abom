@@ -184,10 +184,10 @@ type Server struct {
 	// whether or not Log is set.
 	metrics *metrics
 
-	// stale is the last answer to what no longer belongs, written by a check that runs off the
-	// request path. Guarded because startup writes it from a goroutine while requests read it.
-	staleMu sync.RWMutex
-	stale   Staleness
+	// pruneReviews holds what each recent removal preview kept, so a removal is applied only to a
+	// preview somebody read and never takes what that preview showed as kept.
+	pruneMu      sync.Mutex
+	pruneReviews []pruneReview
 
 	// figures holds drawn figures until the graph or the Graphviz that drew them changes.
 	figures figureCache
@@ -326,7 +326,12 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/query-requests/{id}/sessions", s.requestSessions)
 	mux.HandleFunc("POST /api/query-requests/{id}/sessions", s.startSession)
 	mux.HandleFunc("POST /api/query-requests/{id}/sessions/stop", s.stopSession)
-	mux.HandleFunc("GET /api/authoring-sessions/{id}/events", reading(s.sessionEvents, "after", "limit"))
+	mux.HandleFunc("GET /api/authoring-events", reading(s.auditEvents, auditTerms...))
+	mux.HandleFunc("GET /api/authoring-events/export", reading(s.auditExport, auditTerms...))
+	mux.HandleFunc("GET /api/authoring-sessions", reading(s.auditSessions, "request", "run"))
+	mux.HandleFunc("GET /api/authoring-sessions/{id}", reading(s.auditSession))
+	mux.HandleFunc("GET /api/authoring-sessions/{id}/events", reading(s.auditEvents, auditTerms...))
+	mux.HandleFunc("GET /api/authoring-sessions/{id}/reproduction", reading(s.auditReproduction, append(slices.Clone(auditTerms), "download")...))
 	mux.HandleFunc("GET /api/query-requests/{id}/asts", s.requestASTs)
 	mux.HandleFunc("GET /api/runs/{id}/drafts", s.runDrafts)
 	mux.HandleFunc("POST /api/runs/{id}/drafts", s.startDraft)
@@ -355,7 +360,6 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/owned-scope/preview", s.previewOwnedScope)
 	mux.HandleFunc("POST /api/owned-scope/enumerate", s.enumerate)
 	mux.HandleFunc("GET /api/prune", s.prune)
-	mux.HandleFunc("GET /api/prune/staleness", s.staleness)
 	mux.HandleFunc("POST /api/prune/apply", s.pruneApply)
 	mux.HandleFunc("POST /api/prune/compact", s.pruneCompact)
 	mux.HandleFunc("POST /api/accounts/refresh", s.refreshAccounts)

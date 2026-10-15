@@ -113,7 +113,7 @@ func prepareQueue(s store.Backend, queue *frontier.Queue, stdout, stderr io.Writ
 }
 
 // reclaimAbandonedWork settles claims left by a stopped server before serving.
-func reclaimAbandonedWork(s store.Backend, queue *frontier.Queue, stdout, stderr io.Writer) {
+func reclaimAbandonedWork(s store.Backend, queue *frontier.Queue, stdout, stderr io.Writer) error {
 	if n, err := queue.ReclaimOrphaned(); err != nil {
 		fmt.Fprintf(stderr, "serve: reclaiming abandoned work: %v\n", err)
 	} else if n > 0 {
@@ -131,10 +131,11 @@ func reclaimAbandonedWork(s store.Backend, queue *frontier.Queue, stdout, stderr
 		fmt.Fprintf(stdout, "serve: %d comparisons were interrupted when the server last stopped\n", n)
 	}
 	if n, err := s.InterruptAuthoringSessions(); err != nil {
-		fmt.Fprintf(stderr, "serve: marking abandoned authoring sessions: %v\n", err)
+		return fmt.Errorf("serve: cannot record abandoned authoring sessions; refusing to serve: %w", err)
 	} else if n > 0 {
 		fmt.Fprintf(stdout, "serve: %d authoring sessions were interrupted when the server last stopped\n", n)
 	}
+	return nil
 }
 
 // migratePolicyScopes writes retired policy scopes into predicates for this grouping key.
@@ -369,7 +370,9 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) (res
 	}
 	wireTrees(ctx, loop, cfg.apiURL, tokens)
 	wireCodeScanning(ctx, loop, s, cfg)
-	primeServedStore(s, loop.Queue, stdout, stderr)
+	if err := primeServedStore(s, loop.Queue, stdout, stderr); err != nil {
+		return err
+	}
 
 	srv, err := newConfiguredServer(ctx, cfg, s, loop, tokens, stderr)
 	if err != nil {
@@ -395,7 +398,6 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) (res
 	}
 	writeIdentityBanner(stdout, s)
 
-	go srv.CheckStaleness()
 	go srv.ReadUnreadDeclarations(ctx)
 	go srv.MeterPools(ctx, poolFlushEvery)
 	go pruneHistory(ctx, s, time.Hour, time.Now, stdout)
@@ -575,7 +577,7 @@ func openServeStore(cfg serveConfig, stdout, stderr io.Writer) (store.Backend, e
 	return s, nil
 }
 
-func primeServedStore(s store.Backend, queue *frontier.Queue, stdout, stderr io.Writer) {
+func primeServedStore(s store.Backend, queue *frontier.Queue, stdout, stderr io.Writer) error {
 	if _, err := s.LinkFindingsToNodes(); err != nil {
 		fmt.Fprintf(stderr, "serve: attributing findings: %v\n", err)
 	}
@@ -583,7 +585,7 @@ func primeServedStore(s store.Backend, queue *frontier.Queue, stdout, stderr io.
 		fmt.Fprintf(stderr, "serve: classifying edge boundaries: %v\n", err)
 	}
 	prepareQueue(s, queue, stdout, stderr)
-	reclaimAbandonedWork(s, queue, stdout, stderr)
+	return reclaimAbandonedWork(s, queue, stdout, stderr)
 }
 
 func newConfiguredServer(

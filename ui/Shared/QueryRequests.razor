@@ -62,7 +62,7 @@
     {
         <MudDataGrid T="QueryRequest" Items="_list.Requests" Dense="true" Hover="true" Bordered="false"
                      SortMode="SortMode.None" Filterable="false" ShowColumnOptions="false"
-                     FixedHeader="true" RowsPerPage="20" Class="abom-grid abom-grid-windowed"
+                     FixedHeader="true" RowsPerPage="20" Class="abom-grid abom-grid-windowed abom-grid-pinned-open"
                      data-abom-requests-table>
             <Columns>
                 <HierarchyColumn T="QueryRequest" InitiallyExpandedFunc="@(r => _opened.Contains(r.RowId))">
@@ -79,6 +79,7 @@
                 </HierarchyColumn>
                 <PropertyColumn Property="x => x.RowId" Title="#" CellClass="abom-nowrap">
                     <HeaderTemplate><HeaderTip Tip="The number ABOM gave this request when it was filed.">#</HeaderTip></HeaderTemplate>
+                    <CellTemplate>@context.Item.RowId</CellTemplate>
                 </PropertyColumn>
                 <TemplateColumn Title="" HeaderClass="abom-row-actions-head" CellClass="abom-row-actions">
                     <CellTemplate>
@@ -119,6 +120,12 @@
                                                    data-abom-request-agent />
                                 </Tip>
                             }
+                            <Tip Text="Open the Audit log of every agent session that worked this request.">
+                                <MudIconButton Icon="@Icons.Material.Outlined.HistoryEdu" Size="Size.Small"
+                                               Href="@AuditSpec.ForRequest(context.Item.RowId)"
+                                               aria-label="@($"Audit log for request #{context.Item.RowId}")"
+                                               data-abom-request-audit />
+                            </Tip>
                             <Tip Text="@(!CanFile ? "Sign in with gh to record who edits requests." : _draft is not null ? "Finish or discard the open form first." : "Change this request's description, examples, query or status.")">
                                 <MudIconButton Icon="@Icons.Material.Outlined.Edit" Size="Size.Small"
                                                Disabled="@(!CanFile || _draft is not null)"

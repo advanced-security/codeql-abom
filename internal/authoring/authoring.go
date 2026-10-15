@@ -36,6 +36,18 @@ type Query struct {
 // Read from the files rather than from `codeql resolve`: the CLI takes the machine-wide lock, and
 // a listing asked for on every page load must not queue behind a crawl.
 func Workspace(root string) ([]Query, error) {
+	out, err := listed(root)
+	if err != nil {
+		return nil, err
+	}
+	if err := versioned(root, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// listed is every query under root/src with the tests that name it, not yet versioned.
+func listed(root string) ([]Query, error) {
 	tests, err := testsByQuery(root)
 	if err != nil {
 		return nil, err
@@ -66,24 +78,32 @@ func Workspace(root string) ([]Query, error) {
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("listing the queries in %s: %w", root, err)
 	}
-
-	paths := make([]string, 0, len(out))
-	for _, q := range out {
-		paths = append(paths, q.Path)
-	}
-	versions, err := runner.QueryVersions(paths)
-	if err != nil {
-		return nil, fmt.Errorf("versioning the queries in %s: %w", root, err)
-	}
-	for i := range out {
-		out[i].Version = versions[i]
-	}
 	return out, nil
 }
 
-// Find is the workspace query that declares id.
+// versioned sets each query's version from its file and what it imports.
+func versioned(root string, queries []Query) error {
+	paths := make([]string, 0, len(queries))
+	for _, q := range queries {
+		paths = append(paths, q.Path)
+	}
+	versions, err := queryVersions(paths)
+	if err != nil {
+		return fmt.Errorf("versioning the queries in %s: %w", root, err)
+	}
+	for i := range queries {
+		queries[i].Version = versions[i]
+	}
+	return nil
+}
+
+// queryVersions is runner.QueryVersions, named apart so a test can count what is versioned.
+var queryVersions = runner.QueryVersions
+
+// Find is the workspace query that declares id. Only that query is versioned: Find runs for every
+// event an agent session records, and the rest of the pack is not what was asked about.
 func Find(root, id string) (Query, bool, error) {
-	queries, err := Workspace(root)
+	queries, err := listed(root)
 	if err != nil {
 		return Query{}, false, err
 	}
@@ -97,6 +117,9 @@ func Find(root, id string) (Query, bool, error) {
 	case 0:
 		return Query{}, false, nil
 	case 1:
+		if err := versioned(root, found); err != nil {
+			return Query{}, false, err
+		}
 		return found[0], true, nil
 	}
 	// Refused rather than picked: nothing would say which of the two a result was about.

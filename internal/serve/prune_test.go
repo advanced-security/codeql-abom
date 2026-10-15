@@ -40,7 +40,7 @@ func TestMarkingReportsWhatItRemovedAndTakesItOutOfTheLiveViews(t *testing.T) {
 	outside(t, s, "stranger/thing")
 	before := liveNodes(t, s)
 
-	rec := postControl(t, srv, "/api/prune/apply")
+	rec := applyReviewed(t, srv)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
@@ -64,7 +64,7 @@ func TestCompactingIsASeparateCallFromMarking(t *testing.T) {
 	declareOcto(t, s)
 	outside(t, s, "stranger/thing")
 
-	postControl(t, srv, "/api/prune/apply")
+	applyReviewed(t, srv)
 	marked := tombstoned(t, s)
 	if marked == 0 {
 		t.Fatal("nothing was marked, so compaction has nothing to prove")
@@ -127,7 +127,7 @@ func TestARepositoryWithNothingLeftToRemoveIsNotCountedAgain(t *testing.T) {
 		t.Fatal("nothing was outside the closure, so the second reading proves nothing")
 	}
 
-	postControl(t, srv, "/api/prune/apply")
+	applyReviewed(t, srv)
 	again := decode[PruneView](t, get(t, srv, "/api/prune"))
 
 	if again.Removed.Nodes != 0 || again.Removed.Edges != 0 {
@@ -153,7 +153,7 @@ func TestPruningTakesTheQueueWithIt(t *testing.T) {
 		t.Fatal("explaining reported no queue rows to remove, so the apply proves nothing")
 	}
 
-	postControl(t, srv, "/api/prune/apply")
+	applyReviewed(t, srv)
 
 	if left := queuedFor(t, s, "stranger", "thing"); left != 0 {
 		t.Errorf("%d queue rows survive for a repository outside the closure", left)

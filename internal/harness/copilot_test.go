@@ -190,6 +190,38 @@ func TestASessionAtItsCreditLimitDeclinesToSpendMoreAndRemembersWhatItSpent(t *t
 	}
 }
 
+// Copilot CLI may deliver the limit request while the session is still being created. Answering it
+// must wait for the session without holding up event delivery, or creating the session could wait
+// on an event handler that is itself waiting on the session.
+func TestALimitRequestBeforeTheSessionExistsDoesNotHoldUpEventDelivery(t *testing.T) {
+	ready := make(chan struct{})
+	answered := make(chan struct{})
+	limit := &creditLimit{answer: func(rpc.UIHandlePendingSessionLimitsExhaustedRequest) {
+		<-ready
+		close(answered)
+	}}
+	delivered := make(chan struct{})
+	go func() {
+		limit.observe(copilot.SessionEvent{Data: &copilot.SessionLimitsExhaustedRequestedData{
+			RequestID: "r1", MaxAiCredits: 30, UsedAiCredits: 31}})
+		close(delivered)
+	}()
+	select {
+	case <-delivered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("event delivery waited on a session that did not yet exist")
+	}
+	if limit.reached() == nil {
+		t.Error("the limit was not remembered before the session existed")
+	}
+	close(ready)
+	select {
+	case <-answered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the request was never answered once the session existed")
+	}
+}
+
 // Copilot CLI 1.0.88 asks nothing of a session like this one: it blocks the model call, says so in
 // a limits status the SDK does not type, and fails the turn. The payload is the one it emitted.
 func TestASessionTheRuntimeBlockedAtItsCreditLimitRemembersWhatItSpent(t *testing.T) {

@@ -146,10 +146,12 @@ func (s *Sessions) start(request int64, by string) (store.AuthoringSession, <-ch
 	})
 	limit := s.limit()
 	ctx, cancel := context.WithTimeout(context.Background(), limit)
+	gate.cancel = cancel
 	l := &live{session: id, gate: gate, cancel: cancel}
 	s.recordLive(request, l)
 
 	setup := Setup{
+		Timeout: limit, TimeoutSource: s.timeoutSource(),
 		Home:      home,
 		Scratch:   scratch,
 		Workspace: bounds.Workspace(),
@@ -221,12 +223,18 @@ func (s *Sessions) launchAuthoring(run startedAuthoring) <-chan struct{} {
 			final, err = s.run(run.ctx, run.setup)
 		}
 		state, detail := s.outcome(run.ctx, run.live, run.limit, final, err)
+		s.finishAudit(run.live, state, detail)
+		if err := run.live.gate.Err(); err != nil {
+			state, detail = store.SessionFailed, err.Error()
+		}
 		run.cancel()
 		s.mu.Lock()
 		delete(s.live, run.request)
 		s.mu.Unlock()
 		_ = os.RemoveAll(run.dir)
-		_ = s.Store.EndAuthoringSession(run.id, state, detail)
+		if err := s.Store.EndAuthoringSession(run.id, state, detail); err != nil {
+			_ = run.live.gate.fail(err)
+		}
 	}()
 	return done
 }
@@ -254,6 +262,17 @@ func (s *Sessions) run(ctx context.Context, setup Setup) (final string, err erro
 	if agent == nil {
 		return "", ErrNoAgent
 	}
+	if s.Version != nil {
+		if cli, err := s.codeQL(ctx); err == nil {
+			setup.Runtime = map[string]string{"codeql": cli}
+		}
+	}
+	if _, ok := agent.(*Copilot); !ok {
+		setup.Tools = setup.Gate.guardedTools(setup.Tools)
+		if err := setup.Gate.startPolicy(ctx, setup, nil, nil); err != nil {
+			return "", err
+		}
+	}
 	return agent.Run(ctx, setup)
 }
 
@@ -263,6 +282,8 @@ func (s *Sessions) outcome(ctx context.Context, l *live, limit time.Duration, fi
 	s.mu.Unlock()
 	var spent *CreditLimitError
 	switch {
+	case l.gate.Err() != nil:
+		return store.SessionFailed, l.gate.Err().Error()
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		return store.SessionStopped, fmt.Sprintf("stopped at the session's time limit of %s", limit)
 	case stopped:
@@ -322,7 +343,18 @@ func (s *Sessions) acquire() (func(), error) {
 }
 
 func (s *Sessions) recorder(session int64) func(Event) error {
+	owner, ownerErr := s.Store.AuditSession(session)
 	return func(e Event) error {
+		if ownerErr != nil {
+			return ownerErr
+		}
+		if owner.RequestID > 0 && e.QueryVersion == "" {
+			var err error
+			e.QueryID, e.QueryVersion, err = s.observedVersion(owner.RequestID)
+			if err != nil {
+				return err
+			}
+		}
 		var took *int64
 		if e.Took > 0 {
 			ms := e.Took.Milliseconds()
@@ -332,9 +364,23 @@ func (s *Sessions) recorder(session int64) func(Event) error {
 			SessionID: session, At: e.At.UTC().Format(time.RFC3339Nano), Hook: e.Hook, Tool: e.Tool,
 			Subject: e.Subject, Decision: e.Decision, Step: e.Step, Reason: e.Reason, Detail: e.Detail,
 			TookMs: took,
+			Source: e.Source, SourceID: e.SourceID, QueryID: e.QueryID, QueryVersion: e.QueryVersion, Capture: e.Capture,
 		})
 		return err
 	}
+}
+
+func (s *Sessions) observedVersion(request int64) (string, string, error) {
+	req, err := s.requestNamed(request)
+	if err != nil || req.QueryID == "" {
+		return "", "", err
+	}
+	// A partial edit can temporarily remove query metadata; that makes the version unknown.
+	q, found, _ := authoring.Find(s.Workspace, req.QueryID)
+	if !found {
+		return req.QueryID, "", nil
+	}
+	return q.ID, q.Version, nil
 }
 
 // keeper keeps a printout against the request's query as it stands, the fixtures it was printed
@@ -727,6 +773,9 @@ func (s *Sessions) tools(ctx context.Context, request int64, gate *Gate) []copil
 // testTarget runs the bound query's own tests through ABOM's runner and records them, saying
 // whether the failure is one on a marked result.
 func (s *Sessions) testTarget(ctx context.Context, request int64, gate *Gate) (string, error) {
+	if err := gate.Err(); err != nil {
+		return "", err
+	}
 	if !gate.Bounds().bound() {
 		return "", fmt.Errorf("decide the query this request is about with %s before testing it", ToolTarget)
 	}
@@ -748,6 +797,15 @@ func (s *Sessions) testTarget(ctx context.Context, request int64, gate *Gate) (s
 	if err != nil {
 		return "", err
 	}
+	ctx = authoring.WithTestEvidence(ctx, func(test store.QueryTest) error {
+		decision := DecisionFailed
+		if test.Passed {
+			decision = DecisionSucceeded
+		}
+		return gate.keep(Event{Source: "abom", Hook: "test-evidence", Tool: ToolTest, Decision: decision,
+			Step: StepTests, QueryID: test.QueryID, QueryVersion: test.QueryVersion,
+			Capture: store.AuditCapture{Test: &test, Inputs: s.inputDigests(gate.Bounds(), q)}}, Verdict{})
+	})
 	result, err := authoring.RecordTests(ctx, s.Store, s.RunTests, s.Workspace, q, cli)
 	if err != nil {
 		return "", err

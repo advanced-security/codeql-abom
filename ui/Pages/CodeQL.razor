@@ -8,7 +8,7 @@
     see where it ran and what it found, and choose what the crawl runs.
 </PageHeader>
 
-@* Four parts, told apart the way Inventory's units are: one strip, one part in view. *@
+@* One strip, one part in view, as with Inventory's units. *@
 <div class="abom-units d-flex flex-wrap align-center gap-1 mb-3" role="tablist" data-abom-tabs>
     @foreach (var (key, label, tip) in Tabs)
     {
@@ -34,6 +34,9 @@
     case TabSuites:
         <TierSuites />
         break;
+    case TabAudit:
+        <AuditLog />
+        break;
     default:
         <QueryRequests FocusRequest="@(RequestParam ?? 0)" />
         break;
@@ -44,13 +47,15 @@
     private const string TabCatalog = "catalog";
     private const string TabRuns = "runs";
     private const string TabSuites = "suites";
+    private const string TabAudit = "audit";
 
-    // In the order the work happens: asked for, written, run, then made part of the crawl.
+    // Audit sits beside the work it explains, before the crawl's suite controls.
     private static readonly (string Key, string Label, string Tip)[] Tabs =
     [
         (TabRequests, "Requests", "Ask for a new CodeQL query, or a fix to one, from examples."),
         (TabCatalog, "Query catalog", "Every query version ABOM holds, its stage, and where it ran."),
         (TabRuns, "Runs", "Query runs over a scope, and what each found."),
+        (TabAudit, "Audit log", "Search recorded agent observations, session permissions and reproduction evidence."),
         (TabSuites, "Suites", "Choose which query suites each crawl tier runs."),
     ];
 

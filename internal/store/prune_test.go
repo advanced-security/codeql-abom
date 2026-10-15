@@ -160,3 +160,28 @@ func countPrune(t *testing.T, s *Store, query string) int {
 	}
 	return n
 }
+
+// A removal is read against what is in view: "4 nodes" says nothing until it is 4 of 7. Counted
+// from the live views, so what an earlier prune already took out is not counted twice.
+func TestTheLiveGraphIsCountedWithoutWhatIsAlreadyRemoved(t *testing.T) {
+	s := pruneFixture(t)
+	before, err := s.LiveGraph()
+	if err != nil {
+		t.Fatalf("LiveGraph: %v", err)
+	}
+	if before.Nodes != len(liveNodes(t, s)) || before.Edges == 0 {
+		t.Fatalf("live graph %+v, want every live node and the fixture's edges", before)
+	}
+
+	report, err := s.MarkOutsideClosure([]string{"octo-org/app"})
+	if err != nil {
+		t.Fatalf("MarkOutsideClosure: %v", err)
+	}
+	after, err := s.LiveGraph()
+	if err != nil {
+		t.Fatalf("LiveGraph: %v", err)
+	}
+	if after.Nodes != before.Nodes-report.Nodes || after.Edges != before.Edges-report.Edges {
+		t.Errorf("live graph %+v after removing %+v from %+v", after, report, before)
+	}
+}
