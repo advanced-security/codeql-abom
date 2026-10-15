@@ -16,11 +16,34 @@ func recordingStore(t *testing.T) *store.Store {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	t.Cleanup(func() { st.Close() })
 	if err := st.Migrate(); err != nil {
 		t.Fatal(err)
 	}
 	return st
+}
+
+func TestEachMeasuredIterationSurvivesTheLatestTestUpsert(t *testing.T) {
+	root := workspace(t, map[string]string{"A": "acme/a"})
+	q, _ := mustVersion(t, root, "acme/a")
+	st := recordingStore(t)
+	var evidence []store.QueryTest
+	ctx := WithTestEvidence(context.Background(), func(test store.QueryTest) error {
+		evidence = append(evidence, test)
+		return nil
+	})
+	for _, passed := range []bool{false, true, false} {
+		run := func(context.Context, []string) (runner.TestResult, error) {
+			return runner.TestResult{Passed: passed, Total: 1, FailureStage: "RESULT"}, nil
+		}
+		if _, err := RecordTests(ctx, st, run, root, q, "2.27.1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(evidence) != 3 || evidence[0].Passed || !evidence[1].Passed || evidence[2].Passed {
+		t.Fatalf("lost measured iterations: %+v", evidence)
+	}
 }
 
 // A recorded run is evidence only with what it ran under: the CodeQL, the tests, the fixtures and

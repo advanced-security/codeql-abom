@@ -266,21 +266,17 @@ func (b Bounds) writable(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dir, stem := filepath.Dir(b.query), b.stem()
-	switch {
-	case b.isDenied(p):
-		return "", fmt.Errorf("%s is ABOM's own, which no session writes", path)
-	case p == b.query:
-		if b.firstChange != nil {
+	if step, ok := b.writableFiles()[p]; ok && !b.isDenied(p) {
+		if p == b.query && b.firstChange != nil {
 			if why := b.firstChange(); why != "" {
 				return "", errors.New(why)
 			}
 		}
-		return "", nil
-	case p == filepath.Join(dir, stem+".md") || p == filepath.Join(dir, stem+".qhelp"):
-		return StepHelp, nil
-	case p == filepath.Join(b.tests, stem+".expected"):
-		return StepExpected, nil
+		return step, nil
+	}
+	switch {
+	case b.isDenied(p):
+		return "", fmt.Errorf("%s is ABOM's own, which no session writes", path)
 	case !inside(b.tests, p):
 		return "", fmt.Errorf("a session writes %s, its help beside it and fixtures under %s, not %s",
 			b.rel(b.query), b.rel(b.tests), b.rel(p))
@@ -291,7 +287,7 @@ func (b Bounds) writable(path string) (string, error) {
 	switch ext := filepath.Ext(name); {
 	case slices.Contains([]string{".expected", ".qlref", ".ql", ".qll", ".actual"}, ext):
 		return "", fmt.Errorf("%s decides what the test runs, and only ABOM and the CLI write it; the "+
-			"target's own is %s", name, b.rel(filepath.Join(b.tests, stem+".expected")))
+			"target's own is %s", name, b.rel(filepath.Join(b.tests, b.stem()+".expected")))
 	case slices.Contains(manifests, name):
 		return "", fmt.Errorf("%s is a pack manifest, and one under a test directory changes how "+
 			"every test in it resolves", name)
@@ -300,6 +296,15 @@ func (b Bounds) writable(path string) (string, error) {
 			"under .github/workflows, or action metadata", name)
 	}
 	return "", nil
+}
+
+func (b Bounds) writableFiles() map[string]string {
+	if !b.bound() {
+		return map[string]string{}
+	}
+	dir, stem := filepath.Dir(b.query), b.stem()
+	return map[string]string{b.query: "", filepath.Join(dir, stem+".md"): StepHelp,
+		filepath.Join(dir, stem+".qhelp"): StepHelp, filepath.Join(b.tests, stem+".expected"): StepExpected}
 }
 
 // Call decides a tool call as the agent makes it, before anything runs.

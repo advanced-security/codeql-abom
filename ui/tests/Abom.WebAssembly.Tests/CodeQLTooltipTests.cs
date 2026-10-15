@@ -15,6 +15,31 @@ namespace Abom.WebAssembly.Tests;
 /// </summary>
 public class CodeQLTooltipTests : AbomTestContext
 {
+    // An icon among the row's actions, like its neighbours: as words it took a line under the number.
+    [Fact]
+    public void ARequestsAuditLogIsAnIconAmongItsActions()
+    {
+        var cut = Arrive("requests", "[data-abom-requests-table]");
+        AssertIconAction(cut.Find("[data-abom-request-audit]"), "request=8");
+        Assert.DoesNotContain(cut.FindAll("th"), header => header.TextContent.Trim() == "Audit");
+    }
+
+    [Fact]
+    public void ARunsAuditLogIsAnIconAmongItsActions()
+    {
+        var cut = Arrive("runs", "[data-abom-run-summary]");
+        AssertIconAction(cut.Find("[data-abom-run-audit]"), "run=7");
+    }
+
+    private static void AssertIconAction(IElement control, string scope)
+    {
+        Assert.Equal("", control.TextContent.Trim());
+        Assert.NotNull(control.QuerySelector("svg"));
+        Assert.NotNull(control.Closest("td.abom-row-actions"));
+        Assert.Contains(scope, control.GetAttribute("href"));
+        Assert.False(string.IsNullOrWhiteSpace(control.Closest("[data-abom-tip]")?.GetAttribute("data-abom-tip")));
+    }
+
     // What a person acts on. A text field is not here: its label is what it asks for.
     private const string Controls =
         "button, a[href], [role=tab], .mud-select, .mud-switch, .mud-checkbox, .mud-chip.mud-clickable";
@@ -175,6 +200,43 @@ public class CodeQLTooltipTests : AbomTestContext
 
     private static string? TipOf(IRenderedComponent<CodeQL> page, string selector) =>
         page.Find(selector).Closest("[data-abom-tip]")?.GetAttribute("data-abom-tip");
+
+    [Fact]
+    public void EveryControlInTheSessionAuditUsesTheStyledHelp()
+    {
+        Answer("api/authoring-events", """
+            {"items":[{"rowId":9,"sessionId":1,"hook":"pre-tool-use","tool":"view","decision":"allowed",
+            "capture":{"artifactId":3}}],"total":1,"through":9}
+            """);
+        Answer("api/authoring-sessions/1", """
+            {"rowId":1,"policies":[],"relations":[{"kind":"worked request","requestId":8},{"kind":"version evaluated by run","runId":7}]}
+            """);
+        Services.GetRequiredService<Bunit.TestDoubles.BunitNavigationManager>().NavigateTo("/codeql?tab=audit&session=1");
+        var page = Render<CodeQL>();
+        page.WaitForAssertion(() => page.Find("[data-abom-event='9']"));
+        AssertTipped(page);
+    }
+
+    // A disclosure is acted on like any control. A native title on one shows late, unstyled and in
+    // an embedded browser not at all — and on an event row, over every row a reader scans.
+    [Fact]
+    public void NoDisclosureInTheSessionAuditShowsANativeTitle()
+    {
+        Answer("api/authoring-events", """
+            {"items":[{"rowId":9,"sessionId":1,"hook":"pre-tool-use","tool":"view","decision":"allowed",
+            "detail":"{\"path\":\"src/Check.ql\"}","capture":{"artifactId":3}}],"total":1,"through":9}
+            """);
+        Answer("api/authoring-sessions/1", """
+            {"rowId":1,"policies":[],"relations":[{"kind":"worked request","requestId":8}]}
+            """);
+        Services.GetRequiredService<Bunit.TestDoubles.BunitNavigationManager>().NavigateTo("/codeql?tab=audit&session=1");
+        var page = Render<CodeQL>();
+        page.WaitForAssertion(() => page.Find("[data-abom-event='9']"));
+
+        var disclosures = page.FindAll("summary");
+        Assert.True(disclosures.Count >= 4, $"only {disclosures.Count} disclosures were checked");
+        Assert.Empty(disclosures.Where(s => s.HasAttribute("title")).Select(s => s.TextContent.Trim()));
+    }
 
     private static void AssertTipped(IRenderedComponent<CodeQL> page)
     {

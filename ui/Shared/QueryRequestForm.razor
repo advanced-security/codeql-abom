@@ -681,8 +681,11 @@
         }
     }
 
+    private long _sourceDraftId;
+
     private void UseDraft(AgentDraft draft)
     {
+        _sourceDraftId = draft.RowId;
         _description = draft.Description;
         Replace("compliant", draft.Compliant);
         Replace("non-compliant", draft.NonCompliant);
@@ -735,6 +738,7 @@
             var examples = Examples();
             var (list, refusal) = await Api.SaveQueryRequestAsync(Request with
             {
+                SourceDraftId = _sourceDraftId != 0 ? _sourceDraftId : Request.SourceDraftId,
                 Title = _title.Trim(),
                 Slug = _slug.Trim(),
                 Description = _description,

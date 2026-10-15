@@ -1,0 +1,252 @@
+@using Abom.WebAssembly.Models
+@inject NavigationManager Nav
+@inject AbomApi Api
+@implements IDisposable
+
+@* The address is the filter: every choice here is applied by navigating to it, so a filtered log
+   can be shared, reloaded and gone back from like any other page. *@
+<div data-abom-audit-log>
+    <MudText Typo="Typo.h6">Audit log</MudText>
+    <MudText Typo="Typo.body2" Class="mb-2 mud-text-secondary">Every hook, permission, policy and measured test that agent sessions recorded.</MudText>
+    @if (_error is not null)
+    {
+        <MudAlert Severity="Severity.Error" Dense="true" Class="mb-2">@_error</MudAlert>
+    }
+    <div class="abom-audit-filterbar">
+        <Tip Text="Search as you type: tools, files, decisions and recorded messages, matched literally and ignoring case." Class="abom-audit-search-tip">
+            <div class="abom-audit-search" data-abom-audit-search>
+                <SearchField Value="@_spec["text"]" ValueChanged="@(v => Apply("text", v ?? "", replace: true))"
+                             Label="Search events" Placeholder="Tool, file, decision or message" />
+            </div>
+        </Tip>
+        @Choice("decision", "Outcome")
+        @Choice("hook", "Event kind")
+        @Choice("purpose", "Session purpose")
+        @Order()
+        <div class="abom-audit-filter-actions">
+            <Tip Text="@(_more ? "Hide the request, run, session, query, tool, step, actor and time filters." : "Filter by request, run, session, query, tool, step, actor or time.")">
+                <MudIconButton Icon="@Icons.Material.Outlined.Tune" Size="Size.Small" OnClick="@(() => _more = !_more)"
+                               Color="@(_more ? Color.Primary : Color.Default)" aria-label="More filters"
+                               aria-expanded="@(_more ? "true" : "false")" data-abom-audit-more />
+            </Tip>
+            <Tip Text="Clear every filter and return to the whole log.">
+                <MudIconButton Icon="@Icons.Material.Outlined.FilterAltOff" Size="Size.Small" OnClick="Reset"
+                               Disabled="@(_spec.Values.Count == 0)" aria-label="Clear all filters" data-abom-audit-reset />
+            </Tip>
+        </div>
+    </div>
+    @if (_more)
+    {
+        <div class="abom-audit-more" data-abom-audit-more-filters>
+            @foreach (var key in MoreFilters)
+            {
+                <MudTextField T="string" Value="@_spec[key]" ValueChanged="@(v => Apply(key, v ?? "", replace: true))"
+                              Label="@AuditSpec.Label(key)" Placeholder="@Hint(key)" Immediate="true" DebounceInterval="500"
+                              Variant="Variant.Outlined" Margin="Margin.Dense" Class="abom-audit-more-field" />
+            }
+        </div>
+    }
+    @if (Chips.Any())
+    {
+        <div class="abom-audit-chips" data-abom-audit-filters>
+            @foreach (var (key, value) in Chips)
+            {
+                <Tip Text="@($"Remove this filter: {ChipText(key, value)}.")">
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@(Scopes.Contains(key) ? Color.Primary : Color.Default)"
+                             OnClose="@(() => Apply(key, ""))" data-abom-audit-chip="@key">@ChipText(key, value)</MudChip>
+                </Tip>
+            }
+        </div>
+    }
+    @if (SessionId > 0)
+    {
+        <div class="abom-audit-scope">
+            <SessionCard @key="SessionId" SessionId="@SessionId" ShowEvents="false" />
+            <Tip Text="Open each measured test iteration beside the full event list, as evidence for a manual reproduction.">
+                <MudSwitch T="bool" @bind-Value="_reproduction" Color="Color.Primary" Size="Size.Small" Class="abom-audit-switch" data-abom-audit-reproduction>TDD and reproduction evidence</MudSwitch>
+            </Tip>
+        </div>
+    }
+    else if (_spec["request"].Length > 0 || _spec["run"].Length > 0)
+    {
+        <div class="abom-audit-scope">
+            <AuditSessions RequestId="@Number("request")" RunId="@Number("run")" />
+        </div>
+    }
+    @if (_reproduction)
+    {
+        <div class="abom-audit-reproduction">
+            <strong>Evidence, not replay:</strong> every event remains below, and each measured test iteration is open.
+            <details>
+                <summary>Manual reproduction checklist</summary>
+                <ol>
+                    <li>Read the originating request and the policy in force at each event.</li>
+                    <li>Obtain the recorded query, dependencies, help, marked fixtures and expectations; compare their digests. Source and scratch are not archived.</li>
+                    <li>Use the recorded CodeQL toolchain and safe tool arguments. Inspect refusals before attempting any equivalent operation.</li>
+                    <li>Compare each measured result and its missing and unexpected counts. Compilation or extraction failure does not prove a marked red test.</li>
+                </ol>
+                <p>Missing or changed inputs prevent exact reproduction. Model messages never establish a passing test.</p>
+            </details>
+        </div>
+    }
+    <AuditEvents Filter="@_filter" ReproductionView="@_reproduction" />
+</div>
+
+@code {
+    private static readonly string[] MoreFilters = ["request", "run", "session", "query", "version", "tool", "step", "actor", "from", "to", "event"];
+    private static readonly string[] Scopes = ["request", "run", "session", "query"];
+    private AuditSpec _spec = new();
+    private string _filter = "";
+    private string? _error;
+    private bool _reproduction, _more;
+    private readonly Dictionary<string, string> _named = [];
+    private long SessionId => Number("session");
+    private long Number(string key) => long.TryParse(_spec[key], out var id) ? id : 0;
+
+    private IEnumerable<(string Key, string Value)> Chips => _spec.Values
+        .Where(p => p.Key is not ("cursor" or "through" or "limit"))
+        .OrderBy(p => Array.IndexOf(Scopes, p.Key) is var at && at >= 0 ? at : Scopes.Length)
+        .Select(p => (p.Key, p.Value));
+
+    protected override void OnInitialized()
+    {
+        Nav.LocationChanged += Changed;
+        Read();
+    }
+
+    private void Read()
+    {
+        try
+        {
+            _spec = AuditSpec.Parse(new Uri(Nav.Uri).Query);
+            _filter = _spec.Query;
+            _error = null;
+            _more |= MoreFilters.Any(k => _spec[k].Length > 0 && !Scopes.Contains(k));
+            _ = Name();
+        }
+        catch (FormatException ex) { _error = ex.Message; }
+    }
+
+    private void Changed(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs args)
+    {
+        Read();
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void Apply(string key, string value, bool replace = false)
+    {
+        if (_spec[key] == value)
+        {
+            return;
+        }
+        Nav.NavigateTo(_spec.With(key, value).With("cursor", "").With("through", "").Href, replace: replace);
+    }
+
+    private void Reset() => Nav.NavigateTo(new AuditSpec().Href);
+
+    private RenderFragment Choice(string key, string label) =>
+        @<Tip Text="@($"Show only events with this {label.ToLowerInvariant()}; the log updates as soon as one is chosen.")">
+            <MudSelect T="string" Value="@_spec[key]" ValueChanged="@(v => Apply(key, v ?? ""))" Label="@label"
+                       ToStringFunc="@(v => ChoiceText(key, v))" Dense="true" Variant="Variant.Outlined"
+                       Margin="Margin.Dense" Class="abom-audit-choice" data-abom-audit-filter="@key">
+                <MudSelectItem T="string" Value="@("")">@ChoiceText(key, "")</MudSelectItem>
+                @foreach (var choice in AuditSpec.Choices(key))
+                {
+                    <MudSelectItem T="string" Value="@choice">@ChoiceText(key, choice)</MudSelectItem>
+                }
+                @if (_spec[key].Length > 0 && !AuditSpec.Choices(key).Contains(_spec[key]))
+                {
+                    <MudSelectItem T="string" Value="@_spec[key]">@ChoiceText(key, _spec[key])</MudSelectItem>
+                }
+            </MudSelect>
+        </Tip>;
+
+    // A value nothing here offers is one the record holds, and it is shown as recorded.
+    private static string ChoiceText(string key, string? value) => value switch
+    {
+        null or "" => "Any",
+        _ when !AuditSpec.Choices(key).Contains(value) => $"{value} (recorded value)",
+        _ when key == "hook" => AuditText.Kind(value),
+        _ => AuditSpec.ChoiceLabel(value),
+    };
+
+    // The order in force is named, never "the default"; the default is no term in the address, so
+    // choosing it takes the term away. One session reads as it happened, everything else newest first.
+    private string DefaultOrder => SessionId > 0 ? "asc" : "desc";
+
+    private RenderFragment Order() =>
+        @<Tip Text="List the newest events first, or the oldest first. One session reads oldest first unless you choose otherwise.">
+            <MudSelect T="string" Value="@(_spec["order"] is { Length: > 0 } chosen ? chosen : DefaultOrder)"
+                       ValueChanged="@(v => Apply("order", v == DefaultOrder ? "" : v ?? ""))" Label="Event order"
+                       ToStringFunc="@(v => AuditSpec.ChoiceLabel(v ?? DefaultOrder))" Dense="true" Variant="Variant.Outlined"
+                       Margin="Margin.Dense" Class="abom-audit-choice" data-abom-audit-filter="order">
+                @foreach (var choice in AuditSpec.Choices("order"))
+                {
+                    <MudSelectItem T="string" Value="@choice">@AuditSpec.ChoiceLabel(choice)</MudSelectItem>
+                }
+            </MudSelect>
+        </Tip>;
+
+    private static string Hint(string key) => key switch
+    {
+        "from" or "to" => "2026-10-14T09:00:00Z",
+        "query" => "acme/my-query",
+        "tool" => "view, codeql_test_run",
+        _ => "",
+    };
+
+    // What a scope is, not just its number: a run by the queries it ran, a request by its title, a
+    // session by what it was for. A number nobody can resolve is shown as a number.
+    private string ChipText(string key, string value) => key switch
+    {
+        "text" => $"Search: \u201c{value}\u201d",
+        "request" or "run" or "session" => _named.GetValueOrDefault($"{key}:{value}") ?? $"{char.ToUpperInvariant(key[0])}{key[1..]} #{value}",
+        "query" => $"Query {value}",
+        "version" => $"Query version {AuditText.Short(value)}",
+        "event" => $"Event #{value}",
+        "order" => ChoiceText(key, value),
+        "hook" => $"Event kind: {ChoiceText(key, value)}",
+        "decision" or "purpose" => $"{AuditSpec.Label(key)}: {ChoiceText(key, value)}",
+        "step" => $"Step: {AuditText.Words(value)}",
+        "from" => $"From {value}",
+        "to" => $"Until {value}",
+        _ => $"{AuditSpec.Label(key)}: {value}",
+    };
+
+    private async Task Name()
+    {
+        try
+        {
+            if (Number("request") is var request and > 0 && !_named.ContainsKey($"request:{request}"))
+            {
+                var found = (await Api.GetQueryRequestsAsync())?.Requests.FirstOrDefault(r => r.RowId == request);
+                if (found is not null)
+                {
+                    var title = found.Title.Length > 0 ? found.Title : found.Description.Split('\n')[0];
+                    _named[$"request:{request}"] = $"Request #{request} · {Clip(title)}";
+                }
+            }
+            if (Number("run") is var run and > 0 && !_named.ContainsKey($"run:{run}") && await Api.GetAnalysisRunAsync(run) is { } analysis)
+            {
+                var queries = analysis.Queries.Select(q => q.QueryId).Distinct().ToList();
+                _named[$"run:{run}"] = queries.Count == 0 ? $"Run #{run}"
+                    : $"Run #{run} · {string.Join(", ", queries.Take(2))}{(queries.Count > 2 ? $" and {queries.Count - 2} more" : "")}";
+            }
+            if (Number("session") is var session and > 0 && !_named.ContainsKey($"session:{session}"))
+            {
+                var found = await Api.GetAuditSessionAsync(session);
+                _named[$"session:{session}"] = $"Session #{session} · {AuditText.Purpose(found.Purpose)}"
+                    + (found.RequestId > 0 ? $" · request #{found.RequestId}" : "");
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException or OperationCanceledException)
+        {
+            // A scope that cannot be named is still shown, by its number.
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private static string Clip(string text) => text.Length > 64 ? text[..61].TrimEnd() + "…" : text;
+
+    public void Dispose() => Nav.LocationChanged -= Changed;
+}

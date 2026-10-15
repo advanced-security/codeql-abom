@@ -2,6 +2,7 @@ package graph
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
@@ -12,18 +13,22 @@ import (
 // deep it sits; a dependency of a repository nothing owned reaches is somebody else's, and
 // following it is how a corpus of 56,830 nodes grows from 204 repositories nobody owns.
 type Closure struct {
-	// byRepository holds every repository admitted. Absence means "not reached", which is a real
-	// answer rather than a missing one: the walk visits the whole graph.
-	byRepository map[string]bool
+	// byRepository holds every repository admitted, keyed in lower case with the spelling it was
+	// first met under. GitHub's names are not case-sensitive and a `uses:` can spell one unlike
+	// the row it resolves to; keyed by spelling, the walk stopped at the first difference and all
+	// beyond it read as outside. Absence means "not reached", which is a real answer rather than a
+	// missing one: the walk visits the whole graph.
+	byRepository map[string]string
 	roots        int
 }
 
-// Contains reports whether a repository is inside the owned closure.
+// Contains reports whether a repository is inside the owned closure, however it is spelled.
 func (c *Closure) Contains(fullName string) bool {
 	if c == nil {
 		return true
 	}
-	return c.byRepository[fullName]
+	_, ok := c.byRepository[strings.ToLower(fullName)]
+	return ok
 }
 
 // Roots is how many declared repositories the walk started from. Zero means nothing is declared
@@ -50,7 +55,7 @@ func (c *Closure) Repositories() []string {
 		return nil
 	}
 	out := make([]string, 0, len(c.byRepository))
-	for name := range c.byRepository {
+	for _, name := range c.byRepository {
 		out = append(out, name)
 	}
 	sort.Strings(out)
@@ -100,7 +105,7 @@ func (b *Builder) KeepList() ([]string, *Closure, error) {
 // ClosureFrom walks outward from an explicit root set, so a declaration that has not been stored
 // can be measured before anyone commits to it.
 func (b *Builder) ClosureFrom(roots []string) (*Closure, error) {
-	out := &Closure{byRepository: map[string]bool{}, roots: len(roots)}
+	out := &Closure{byRepository: map[string]string{}, roots: len(roots)}
 
 	// Edges by containing repository to the repository each target belongs to. The target's
 	// owner and repo come from the node rather than its repository_row_id, which a node first
@@ -112,25 +117,26 @@ func (b *Builder) ClosureFrom(roots []string) (*Closure, error) {
 
 	dependsOn := map[string][]string{}
 	for _, d := range rows {
-		dependsOn[d.From] = append(dependsOn[d.From], d.To)
+		from := strings.ToLower(d.From)
+		dependsOn[from] = append(dependsOn[from], d.To)
 	}
 
 	queue := make([]string, 0, len(roots))
-	for _, r := range roots {
-		if !out.byRepository[r] {
-			out.byRepository[r] = true
-			queue = append(queue, r)
+	admit := func(name string) {
+		key := strings.ToLower(name)
+		if _, seen := out.byRepository[key]; !seen {
+			out.byRepository[key] = name
+			queue = append(queue, key)
 		}
+	}
+	for _, r := range roots {
+		admit(r)
 	}
 	for len(queue) > 0 {
 		from := queue[0]
 		queue = queue[1:]
 		for _, to := range dependsOn[from] {
-			if out.byRepository[to] {
-				continue
-			}
-			out.byRepository[to] = true
-			queue = append(queue, to)
+			admit(to)
 		}
 	}
 	return out, nil

@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/advanced-security/codeql-abom/internal/audit"
 )
 
 // authoringSessionTable is the session table's columns. A request's session writes its query; a
@@ -53,7 +55,14 @@ CREATE TABLE IF NOT EXISTS abom_authoring_event (
   step       TEXT NOT NULL DEFAULT '',
   reason     TEXT NOT NULL DEFAULT '',
   detail     TEXT NOT NULL DEFAULT '',
-  took_ms    INTEGER
+  took_ms    INTEGER,
+  source TEXT NOT NULL DEFAULT '',
+  source_id TEXT NOT NULL DEFAULT '',
+  received_at TEXT NOT NULL DEFAULT '',
+  query_id TEXT NOT NULL DEFAULT '',
+  query_version TEXT NOT NULL DEFAULT '',
+  policy_id INTEGER NOT NULL DEFAULT 0,
+  capture TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_authoring_event_session ON abom_authoring_event(session_id, row_id);`
@@ -119,7 +128,18 @@ type AuthoringEvent struct {
 	Reason    string `json:"reason"`
 	Detail    string `json:"detail"`
 	// TookMs is how long the call ran, nil where nothing measured it, which is not zero.
-	TookMs *int64 `json:"tookMs"`
+	TookMs       *int64       `json:"tookMs"`
+	Source       string       `json:"source"`
+	SourceID     string       `json:"sourceId"`
+	ReceivedAt   string       `json:"receivedAt"`
+	QueryID      string       `json:"queryId"`
+	QueryVersion string       `json:"queryVersion"`
+	PolicyID     int64        `json:"policyId"`
+	Capture      AuditCapture `json:"capture"`
+	RequestID    int64        `json:"requestId"`
+	RunID        int64        `json:"runId"`
+	Purpose      string       `json:"purpose"`
+	Actor        string       `json:"actor"`
 }
 
 // StartAuthoringSession records a session beginning on a request.
@@ -169,7 +189,7 @@ func (s *Store) EndAuthoringSession(session int64, state, detail string) error {
 	res, err := s.db.Exec(`
 		UPDATE abom_authoring_session SET state = ?, detail = ?, ended_at = ?
 		WHERE row_id = ? AND state = ?`,
-		state, detail, time.Now().UTC().Format(time.RFC3339), session, SessionRunning)
+		state, audit.Text(detail), time.Now().UTC().Format(time.RFC3339), session, SessionRunning)
 	if err != nil {
 		return fmt.Errorf("ending session %d: %w", session, err)
 	}
@@ -181,16 +201,37 @@ func (s *Store) EndAuthoringSession(session int64, state, detail string) error {
 
 // InterruptAuthoringSessions ends sessions still marked running; valid only before serving starts.
 func (s *Store) InterruptAuthoringSessions() (int, error) {
-	res, err := s.db.Exec(`
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	at := time.Now().UTC().Format(time.RFC3339Nano)
+	capture, err := marshalCapture(AuditCapture{Version: audit.Version, Correlation: "ABOM restart recovery; the missing terminal callback was not observed"})
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(`INSERT INTO abom_authoring_event
+		(session_id,at,hook,tool,decision,reason,detail,source,received_at,capture)
+		SELECT row_id,?,'abom-session-recovery','session',?,
+		'the server stopped before this session ended',
+		'{"omitted":"terminal runtime observations unavailable after restart"}','abom',?,?
+		FROM abom_authoring_session WHERE state=?`, at, SessionInterrupted, at, capture, SessionRunning); err != nil {
+		return 0, err
+	}
+	res, err := tx.Exec(`
 		UPDATE abom_authoring_session SET state = ?, ended_at = ?,
 		       detail = 'the server running this session stopped before the session ended'
 		WHERE state = ?`,
-		SessionInterrupted, time.Now().UTC().Format(time.RFC3339), SessionRunning)
+		SessionInterrupted, at, SessionRunning)
 	if err != nil {
 		return 0, fmt.Errorf("interrupting abandoned sessions: %w", err)
 	}
 	n, err := res.RowsAffected()
-	return int(n), err
+	if err != nil {
+		return 0, err
+	}
+	return int(n), tx.Commit()
 }
 
 // AuthoringSessions lists a request's sessions, newest first, with how much each did and how often
@@ -218,6 +259,7 @@ func (s *Store) AuthoringSessions(request int64) ([]AuthoringSession, error) {
 		}
 		a.ModelCalls, a.InputTokens = reported(calls), reported(input)
 		a.OutputTokens, a.NanoAIU = reported(output), reported(nano)
+		a.Detail, a.StartedBy, a.Model = audit.Text(a.Detail), audit.Text(a.StartedBy), audit.Text(a.Model)
 		return a, nil
 	})
 }
@@ -273,20 +315,56 @@ func (s *Store) RecordAuthoringEvent(e AuthoringEvent) (int64, error) {
 	if e.SessionID == 0 || e.At == "" || e.Hook == "" || e.Tool == "" || e.Decision == "" {
 		return 0, errors.New("an event names its session, when, the hook, the tool and the decision")
 	}
+	e = safeAuditEvent(e, false)
+	if e.Source != "sdk" {
+		e.SourceID = ""
+	}
+	capture, err := marshalCapture(e.Capture)
+	if err != nil {
+		return 0, err
+	}
 	var took any
 	if e.TookMs != nil {
 		took = *e.TookMs
 	}
-	res, err := s.db.Exec(`
+	if e.ReceivedAt == "" {
+		e.ReceivedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	if e.PolicyID == 0 && e.Capture.Policy == nil {
+		if err := s.db.QueryRow(`SELECT COALESCE(MAX(row_id),0) FROM abom_authoring_event
+			WHERE session_id=? AND hook='policy'`, e.SessionID).Scan(&e.PolicyID); err != nil {
+			return 0, err
+		}
+	}
+	// Only reported SDK identities deduplicate; equal hook arguments are distinct observations.
+	if e.SourceID != "" {
+		var id int64
+		err := s.db.QueryRow(`SELECT row_id FROM abom_authoring_event WHERE session_id=? AND source_id=?`,
+			e.SessionID, e.SourceID).Scan(&id)
+		if err == nil {
+			return id, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return 0, err
+		}
+	}
+	var id int64
+	err = s.db.QueryRow(`
 		INSERT INTO abom_authoring_event
-		  (session_id, at, hook, tool, subject, decision, step, reason, detail, took_ms)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.SessionID, e.At, e.Hook, e.Tool, e.Subject, e.Decision, e.Step, e.Reason, e.Detail, took)
+		  (session_id, at, hook, tool, subject, decision, step, reason, detail, took_ms,
+		   source, source_id, received_at, query_id, query_version, policy_id, capture)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (session_id,source_id) WHERE source_id<>'' DO NOTHING RETURNING row_id`,
+		e.SessionID, e.At, e.Hook, e.Tool, e.Subject, e.Decision, e.Step, e.Reason, e.Detail, took,
+		e.Source, e.SourceID, e.ReceivedAt, e.QueryID, e.QueryVersion, e.PolicyID, capture).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) && e.SourceID != "" {
+		err := s.db.QueryRow(`SELECT row_id FROM abom_authoring_event WHERE session_id=? AND source_id=?`, e.SessionID, e.SourceID).Scan(&id)
+		return id, err
+	}
 	if err != nil {
 		return 0, fmt.Errorf("recording an event in session %d: %w", e.SessionID, err)
 	}
-	// A plain INSERT, so LastInsertId is the row it just wrote.
-	return res.LastInsertId()
+	return id, nil
 }
 
 // AuthoringEvents reads a session's timeline in order, from after the event a reader already has.
@@ -294,26 +372,17 @@ func (s *Store) AuthoringEvents(session, after int64, limit int) ([]AuthoringEve
 	if limit <= 0 {
 		limit = authoringEventsLimit
 	}
+	if limit > 500 {
+		limit = 500
+	}
 	rows, err := s.db.Query(`
-		SELECT row_id, session_id, at, hook, tool, subject, decision, step, reason, detail, took_ms
-		FROM abom_authoring_event
-		WHERE session_id = ? AND row_id > ?
-		ORDER BY row_id LIMIT ?`, session, after, limit)
+		SELECT `+auditColumns+` FROM abom_authoring_event e JOIN abom_authoring_session s ON s.row_id=e.session_id
+		WHERE e.session_id = ? AND e.row_id > ?
+		ORDER BY e.row_id LIMIT ?`, session, after, limit)
 	if err != nil {
 		return nil, fmt.Errorf("reading session %d: %w", session, err)
 	}
-	return collectRows(rows, func(rows *sql.Rows) (AuthoringEvent, error) {
-		var e AuthoringEvent
-		var took sql.NullInt64
-		if err := rows.Scan(&e.RowID, &e.SessionID, &e.At, &e.Hook, &e.Tool, &e.Subject,
-			&e.Decision, &e.Step, &e.Reason, &e.Detail, &took); err != nil {
-			return AuthoringEvent{}, fmt.Errorf("scanning an event: %w", err)
-		}
-		if took.Valid {
-			e.TookMs = &took.Int64
-		}
-		return e, nil
-	})
+	return collectRows(rows, scanAudit)
 }
 
 // authoringEventsLimit bounds one read of a timeline; a reader pages on from the last row it got.

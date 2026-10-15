@@ -1,0 +1,263 @@
+@using System.Text.Json
+@inject AbomApi Api
+@implements IDisposable
+
+<section class="abom-audit-events" data-abom-audit-events>
+    @if (_error is not null)
+    {
+        <MudAlert Severity="Severity.Error" Dense="true" data-abom-audit-error>@_error</MudAlert>
+    }
+    @if (_page is null && _error is null)
+    {
+        <MudProgressLinear Indeterminate="true" />
+    }
+    @if (_page is { } page)
+    {
+        <div class="abom-audit-toolbar">
+            <MudText Typo="Typo.body2" data-abom-audit-count>Showing @(page.Items.Count) of @(page.Total) events · @(page.Total - page.Items.Count) on other pages · cutoff #@(page.Through)</MudText>
+            <div class="abom-audit-actions">
+                @Pager("top")
+                <Tip Text="Read the log again from its newest event, with the same filters.">
+                    <MudIconButton Icon="@Icons.Material.Outlined.Refresh" Size="Size.Small" OnClick="Refresh" Disabled="@_busy"
+                                   aria-label="Refresh the audit log" data-abom-audit-refresh />
+                </Tip>
+                <Tip Text="Keep this view current: newer matching events appear as they are recorded, unless you have paged away from them.">
+                    <MudSwitch T="bool" Value="_follow" ValueChanged="FollowChanged" Color="Color.Primary" Size="Size.Small" Class="abom-audit-follow"
+                               data-abom-audit-follow>Follow</MudSwitch>
+                </Tip>
+                <Tip Text="Download every matching event at this cutoff, not just this page, as JSON Lines.">
+                    <MudIconButton Icon="@Icons.Material.Outlined.Download" Size="Size.Small"
+                                   Href="@($"api/authoring-events/export?{ExportSpec.Query}")"
+                                   aria-label="Download the matching events as JSON Lines" data-abom-audit-export />
+                </Tip>
+            </div>
+        </div>
+        @if (_newer)
+        {
+            <div class="abom-audit-newer" role="status" data-abom-audit-newer>
+                <span>Newer events were recorded. This page stays where it is until you read the log again.</span>
+                <Tip Text="Read the log again from its newest event.">
+                    <MudIconButton Icon="@Icons.Material.Outlined.Refresh" Size="Size.Small" OnClick="Refresh"
+                                   aria-label="Show the newer events" />
+                </Tip>
+            </div>
+        }
+        @if (_followError is not null)
+        {
+            <MudAlert Severity="Severity.Warning" Dense="true">@_followError</MudAlert>
+        }
+        <div class="abom-audit-legend">
+            <span data-abom-duration-help>Local dates and times · time spent — means not measured.</span>
+            <details><summary>Events, not tool calls · coverage details</summary><p>@(page.Coverage)</p></details>
+        </div>
+        @if (page.Total == 0)
+        {
+            <MudText Typo="Typo.body2">No recorded events match these filters. This does not establish that no agent activity occurred.</MudText>
+        }
+        <div class="abom-audit-list@(_spec["session"].Length > 0 ? " abom-audit-in-session" : "")" tabindex="0" aria-label="Scrollable audit events">
+        <div class="abom-audit-columns" aria-hidden="true"><span></span><span>Local time</span><span>Session</span><span>Event / tool</span><span>Subject / reason</span><span>Outcome</span><span>Time spent</span></div>
+        @foreach (var e in page.Items)
+        {
+            <details @key="e.RowId" class="abom-audit-event" data-abom-event="@e.RowId" data-abom-decision="@e.Decision" open="@(SelectedEvent == e.RowId || ReproductionView && e.Capture.Test is not null)">
+                <summary>
+                    <time datetime="@e.At"><span>@AuditText.Date(e.At)</span><span class="abom-audit-secondary">@TimeText.Clock(e.At)</span></time>
+                    <span>Session #@e.SessionId<span class="abom-audit-secondary">@AuditText.Purpose(e.Purpose)</span></span>
+                    <span><strong>@AuditText.Kind(e.Hook)</strong><code class="abom-audit-secondary">@e.Tool</code></span>
+                    <span class="abom-audit-subject">
+                        <span class="abom-audit-clamp">@(e.Subject.Length > 0 ? e.Subject : e.Capture.Test is { } measured ? measured.QueryId : e.Hook == "policy" ? "Limits, tools and editable scope" : e.QueryId)</span>
+                        <span class="abom-audit-secondary abom-audit-clamp">@(e.Reason.Length > 0 ? e.Reason : e.Capture.Test is { } result ? AuditText.TestCounts(result) : "")</span>
+                    </span>
+                    <span class="abom-audit-outcome"><MudIcon Icon="@AuditText.Icon(e.Decision)" Size="Size.Small" />@AuditText.Words(e.Decision)</span>
+                    <span class="abom-audit-duration">@(e.TookMs is { } ms ? $"{ms} ms" : "—")</span>
+                </summary>
+                <div class="abom-audit-event-body">
+                <div class="abom-audit-wrap">@e.Subject @e.Reason</div>
+                <div class="d-flex flex-wrap align-center gap-2">
+                    <Tip Text="Open all recorded events for this session.">
+                        <MudLink Href="@AuditSpec.ForSession(e.SessionId)">Session #@e.SessionId</MudLink>
+                    </Tip>
+                    <Tip Text="Open this event alone, at an address you can share.">
+                        <MudIconButton Icon="@Icons.Material.Outlined.Link" Size="Size.Small"
+                                       Href="@(new AuditSpec().With("session", e.SessionId.ToString()).With("event", e.RowId.ToString()).Href)"
+                                       aria-label="@($"Link to event #{e.RowId}")" data-abom-audit-event-link />
+                    </Tip>
+                    <span>Policy @(e.PolicyId == 0 ? "not recorded" : $"event #{e.PolicyId}")</span>
+                    @if (e.Capture.ArtifactId > 0)
+                    {
+                        <Tip Text="Open the existing printed tree linked to this event.">
+                            <MudLink Href="@($"api/authoring-asts/{e.Capture.ArtifactId}")">Printed tree #@e.Capture.ArtifactId</MudLink>
+                        </Tip>
+                    }
+                </div>
+                <p class="abom-audit-note">@e.Capture.Correlation</p>
+                @if (e.Capture.Test is { } test)
+                {
+                    <AuditTestEvidenceView Test="@test" Inputs="@e.Capture.Inputs" />
+                }
+                @if (ReproductionView)
+                {
+                    <dl class="abom-audit-facts"><dt>Recorded step</dt><dd>@(e.Step.Length > 0 ? AuditText.Words(e.Step) : "Activity without a proved TDD milestone")</dd><dt>Query version</dt><dd><code>@AuditText.Value(e.QueryVersion)</code></dd></dl>
+                }
+                @if (e.Detail.Length > 0)
+                {
+                    <details><summary>Safe arguments and details</summary><pre class="abom-session-detail">@e.Detail</pre></details>
+                }
+                <details>
+                    <summary>Identity, inputs and coverage</summary>
+                    <dl class="abom-audit-facts"><dt>Event</dt><dd>#@e.RowId</dd><dt>Event kind</dt><dd><code>@e.Hook</code></dd><dt>Timestamp</dt><dd>@e.At</dd><dt>Received</dt><dd>@AuditText.Value(e.ReceivedAt)</dd><dt>Source</dt><dd>@AuditText.Value(e.Source)</dd></dl>
+                    <pre class="abom-session-detail">@JsonSerializer.Serialize(e, Format)</pre>
+                </details>
+                </div>
+            </details>
+        }
+        </div>
+        <div class="abom-audit-toolbar abom-audit-footer">
+            <span>@(page.Items.Count) of @(page.Total) events · page @(_history.Count + 1)</span>
+            @Pager("bottom")
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter] public string Filter { get; set; } = "";
+    [Parameter] public bool ReproductionView { get; set; }
+    private AuthoringEventPage? _page;
+    private string? _error;
+    private string? _loadedFilter;
+    private string _cursor = "";
+    private readonly Stack<string> _history = new();
+    private CancellationTokenSource? _load;
+    private CancellationTokenSource? _watch;
+    private string? _followError;
+    private long? _cutoff;
+    private bool _busy, _follow = true, _newer;
+    private AuditSpec _spec = new();
+    // As the server orders it: oldest first within one session, newest first everywhere else.
+    private bool Ascending => (_spec["order"] is { Length: > 0 } order ? order : _spec["session"].Length > 0 ? "asc" : "desc") == "asc";
+    // Whether newer events would be on the page being read: the first newest-first, the last oldest-first.
+    private bool AtNewest => Ascending ? _page?.HasMore != true : _history.Count == 0;
+    private long SelectedEvent => long.TryParse(_spec["event"], out var n) ? n : 0;
+    private AuditSpec ExportSpec => _spec.With("cursor", "").With("through", (_page?.Through ?? 0).ToString());
+    private static readonly JsonSerializerOptions Format = new() { WriteIndented = true };
+    private RenderFragment Pager(string position) => @<nav class="abom-audit-pager" aria-label="@($"Audit pages ({position})")" data-abom-audit-pager="@position">
+        <Tip Text="Go back to the page before this one, at the same cutoff.">
+            <MudIconButton Icon="@Icons.Material.Filled.ChevronLeft" Size="Size.Small" OnClick="Previous"
+                           Disabled="@(_history.Count == 0 || _busy)" aria-label="Previous page"
+                           data-abom-audit-previous="@(position == "top" ? "" : null)" />
+        </Tip>
+        <Tip Text="Read the next page, at the same cutoff.">
+            <MudIconButton Icon="@Icons.Material.Filled.ChevronRight" Size="Size.Small" OnClick="Next"
+                           Disabled="@(_page?.HasMore != true || _busy)" aria-label="Next page"
+                           data-abom-audit-next="@(position == "top" ? "" : null)" />
+        </Tip>
+    </nav>;
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedFilter == Filter) return;
+        _loadedFilter = Filter;
+        StopWatch();
+        _load?.Cancel();
+        _history.Clear();
+        _cursor = "";
+        _cutoff = null;
+        _newer = false;
+        _page = null;
+        try { _spec = AuditSpec.Parse(Filter); }
+        catch (FormatException ex) { _error = ex.Message; return; }
+        await Load();
+        FollowChanged(_follow);
+    }
+    private async Task Load()
+    {
+        _load?.Cancel();
+        _load?.Dispose();
+        _load = new();
+        var token = _load.Token;
+        _error = null;
+        _busy = true;
+        try
+        {
+            var spec = _spec.With("cursor", _cursor);
+            if (_cutoff is { } cutoff) spec = spec.With("through", cutoff.ToString());
+            var page = await Api.GetAuditEventsAsync(spec.Query, token);
+            if (!token.IsCancellationRequested) { _page = page; _cutoff = page.Through; }
+        }
+        catch (AuditFilterException ex)
+        {
+            if (!token.IsCancellationRequested) _error = $"Correct the audit filters: {ex.Message}";
+        }
+        // A superseded load is cancelled by its own token and says nothing; a timeout is a
+        // cancellation nobody asked for, and is a failure like any other.
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or OperationCanceledException)
+        {
+            if (!token.IsCancellationRequested) _error = "Cannot load the audit log: the server is unavailable or returned an invalid response. Retry; this is not an empty log.";
+        }
+        finally { if (!token.IsCancellationRequested) _busy = false; }
+    }
+    private async Task Next()
+    {
+        if (_page is not { HasMore: true }) return;
+        _history.Push(_cursor);
+        _cursor = _page.NextCursor;
+        await Load();
+    }
+    private async Task Previous()
+    {
+        if (_history.TryPop(out var cursor)) { _cursor = cursor; await Load(); }
+    }
+    private async Task Refresh()
+    {
+        _cursor = "";
+        _cutoff = null;
+        _spec = _spec.With("through", "");
+        _history.Clear();
+        _newer = false;
+        await Load();
+    }
+    private void FollowChanged(bool value)
+    {
+        StopWatch();
+        _follow = value;
+        _followError = null;
+        if (!value) return;
+        _watch = new();
+        _ = Watch(_watch.Token);
+    }
+    private async Task Watch(CancellationToken token)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(3));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(token))
+            {
+                var spec = _spec;
+                var latest = await Api.GetAuditEventsAsync(spec.With("cursor", "").With("through", "")
+                    .With("limit", "1").With("order", "desc").Query, token);
+                if (!token.IsCancellationRequested && spec == _spec && latest.Items.Any(e => e.RowId > (_cutoff ?? 0)))
+                    await InvokeAsync(async () =>
+                    {
+                        // Shown where they belong; a reader who paged away is told rather than moved.
+                        // Oldest first they belong at the end, so the last page is read on to them.
+                        if (AtNewest)
+                        {
+                            _cutoff = latest.Through;
+                            _spec = _spec.With("through", "");
+                            await Load();
+                        }
+                        else
+                        {
+                            _newer = true;
+                        }
+                        StateHasChanged();
+                    });
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or OperationCanceledException)
+        {
+            if (!token.IsCancellationRequested)
+                await InvokeAsync(() => { _follow = false; _followError = "Follow stopped: newer events could not be read. The page shown is unchanged; turn Follow on to try again."; StateHasChanged(); });
+        }
+    }
+    private void StopWatch() { _watch?.Cancel(); _watch?.Dispose(); _watch = null; }
+    public void Dispose() { _follow = false; StopWatch(); _load?.Cancel(); _load?.Dispose(); }
+}

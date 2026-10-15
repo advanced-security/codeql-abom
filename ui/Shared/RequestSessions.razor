@@ -9,8 +9,8 @@
 @* The agent's work on one request: its sessions, the CodeQL it has under way, every call the gate
    decided, and the trees PrintAST printed, which outlive the session that printed them. *@
 <div class="abom-request-sessions" data-abom-request-sessions>
-    <div class="d-flex align-center gap-2">
-        <MudText Typo="Typo.subtitle2">Agent sessions</MudText>
+    <div class="abom-request-sessions-head">
+        <MudText Typo="Typo.subtitle2">Agent Sessions</MudText>
         <MudSpacer />
         @if (Live is not null)
         {
@@ -39,10 +39,17 @@
     {
         <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-2" data-abom-session-refusal>@refused</MudAlert>
     }
+    @if (_unread is { Length: > 0 } unread)
+    {
+        <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-2" data-abom-sessions-unread>@unread</MudAlert>
+    }
 
     @if (_sessions is null)
     {
-        <MudProgressLinear Indeterminate="true" Class="mt-2" />
+        @if (_unread is null)
+        {
+            <MudProgressLinear Indeterminate="true" Class="mt-2" />
+        }
     }
     else if (_sessions.Sessions.Count == 0)
     {
@@ -59,82 +66,33 @@
                 @foreach (var flight in _sessions.InFlight)
                 {
                     <MudText Typo="Typo.caption" Class="d-block">
-                        CodeQL is running <span class="abom-path">@flight.Tool</span> on
-                        <span class="abom-path">@flight.Subject</span> for the agent, since
-                        @TimeText.DayAndTime(flight.Since, "HH:mm:ss").
-                    </MudText>
-                }
-            </div>
-        }
-        @foreach (var session in _sessions.Sessions)
-        {
-            <div class="abom-session" data-abom-session="@session.RowId">
-                <div class="d-flex align-center flex-wrap gap-2">
-                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
-                             Color="@StateColor(session.State)">@session.State</MudChip>
-                    <MudText Typo="Typo.caption">
-                        Session #@session.RowId, started by @session.StartedBy
-                        @TimeText.DayAndTime(session.StartedAt) with @session.Model:
-                        @CountText.Of(session.Events, "call", "calls"), @session.Refused refused;
-                        <span data-abom-session-spend>@SpendText(session)</span>
-                    </MudText>
-                    <Tip Text="@(_open == session.RowId ? "Fold this session's timeline away." : "Show every call this session made and what ABOM decided.")">
-                        <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-plain-button"
-                                   OnClick="@(() => Toggle(session))" data-abom-session-timeline>
-                            @(_open == session.RowId ? "Hide what it did" : "What it did")
-                        </MudButton>
-                    </Tip>
-                    @if (session.Detail.Length > 0)
-                    {
-                        <Tip Text="@(_said.Contains(session.RowId) ? "Fold the agent's last message away." : "Show the agent's last message, in its own words.")">
-                            <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-plain-button"
-                                       OnClick="@(() => ToggleSaid(session))" data-abom-session-said>
-                                @(_said.Contains(session.RowId) ? "Hide what the agent said" : "What the agent said")
-                            </MudButton>
-                        </Tip>
-                    }
-                </div>
-                @if (session.Detail.Length > 0 && _said.Contains(session.RowId))
-                {
-                    <pre class="abom-session-detail" data-abom-session-detail>@session.Detail</pre>
-                }
-                @if (_open == session.RowId)
-                {
-                    <div class="abom-timeline" data-abom-timeline>
-                        @foreach (var e in _events)
+                        The agent's <span class="abom-path">@flight.Tool</span> call
+                        @if (flight.Subject.Length > 0)
                         {
-                            <div class="abom-event" data-abom-event="@e.RowId" data-abom-decision="@e.Decision">
-                                <span class="abom-event-time">@TimeText.Clock(e.At)</span>
-                                <span class="abom-event-decision">@e.Decision</span>
-                                <span class="abom-path">@e.Tool</span>
-                                <span class="abom-event-subject">@e.Subject</span>
-                                @if (e.TookMs is long ms)
-                                {
-                                    <span class="abom-event-took">@DurationText(ms)</span>
-                                }
-                                @if (e.Reason.Length > 0)
-                                {
-                                    <div class="abom-event-reason">@e.Reason</div>
-                                }
-                                @if (ShowsDetail(e))
-                                {
-                                    <div class="abom-event-detail">@e.Detail</div>
-                                }
-                            </div>
+                            <text>on <span class="abom-path">@flight.Subject</span></text>
                         }
-                    </div>
+                        has been running since @TimeText.DayAndTime(flight.Since, "HH:mm:ss").
+                    </MudText>
                 }
             </div>
         }
+        <div class="abom-session-cards">
+            @foreach (var session in _sessions.Sessions)
+            {
+                <SessionCard @key="session.RowId" SessionId="@session.RowId" Summary="@session"
+                             Metadata="@_meta.GetValueOrDefault(session.RowId)" InRequest="true"
+                             Trees="@_asts.Where(a => a.SessionId == session.RowId).ToList()" />
+            }
+        </div>
     }
 
-    @if (_asts.Count > 0)
+    @if (Unattributed.Count > 0)
     {
         <div class="mt-2" data-abom-asts>
             <MudText Typo="Typo.caption" Class="mud-text-secondary">
-                Trees CodeQL printed over the test database, as the agent read them
+                Syntax trees printed outside an agent session
             </MudText>
-            <PrintedTrees Trees="@_asts" />
+            <PrintedTrees Trees="@Unattributed" />
         </div>
     }
 </div>
@@ -156,18 +114,20 @@
 
     private AuthoringSessionList? _sessions;
     private IReadOnlyList<AuthoringAst> _asts = [];
-    private long _open;
-    private List<AuthoringEvent> _events = [];
-    private long _after;
+    private Dictionary<long, AuditSession> _meta = [];
     private string? _refusal;
+    private string? _unread;
     private bool _busy;
     private Timer? _timer;
     private TimeSpan _beat;
-    private readonly HashSet<long> _said = [];
 
     private static readonly TimeSpan WhileRunning = TimeSpan.FromSeconds(3);
 
     private AuthoringSession? Live => _sessions?.Sessions.FirstOrDefault(s => s.State == "running");
+
+    // A tree belongs on the card of the session that printed it; the rest are listed beneath.
+    private List<AuthoringAst> Unattributed => _asts
+        .Where(a => a.SessionId == 0 || _sessions?.Sessions.Any(s => s.RowId == a.SessionId) != true).ToList();
 
     private bool CanStart => Accounts.Identity.Login.Length > 0;
 
@@ -197,40 +157,42 @@
 
     private async Task Load()
     {
-        _sessions = await Api.GetAuthoringSessionsAsync(Request.RowId) ?? new AuthoringSessionList();
+        var read = await Api.GetAuthoringSessionsAsync(Request.RowId);
+        if (read is null)
+        {
+            // Said apart from a refusal to start, which a later read does not answer. What was read
+            // before stays: a failed re-read is not evidence that the sessions went.
+            _unread = _sessions is null
+                ? "Cannot load sessions. This is not evidence that no agent worked here. Trying again."
+                : "Cannot reload sessions; what is shown was read earlier. Trying again.";
+            Arm();
+            return;
+        }
+        _unread = null;
+        _sessions = read;
         _asts = await Api.GetAuthoringAstsAsync(Request.RowId);
+        await LoadLimits();
         var was = _states;
         _states = string.Join(",", _sessions.Sessions.Select(s => $"{s.RowId}:{s.State}"));
         if (was is not null && was != _states)
         {
             await InvokeAsync(() => Changed.InvokeAsync());
         }
-        if (_open != 0)
-        {
-            await ReadOn();
-        }
         Arm();
     }
 
-    // Only what came after the last event held: a live timeline is read on, never read again.
-    private async Task ReadOn()
+    // Limits and relations for every session of this request, in one read. A card whose limits
+    // could not be read says so itself rather than reading as a session without any.
+    private async Task LoadLimits()
     {
-        if (await Api.GetAuthoringEventsAsync(_open, _after) is { } page)
+        try
         {
-            _events.AddRange(page.Events);
-            _after = page.Next;
+            var list = await Api.GetAuditSessionsAsync($"request={Request.RowId}");
+            _meta = list.Items.ToDictionary(s => s.RowId);
         }
-    }
-
-    private async Task Toggle(AuthoringSession session)
-    {
-        var opening = _open != session.RowId;
-        _open = opening ? session.RowId : 0;
-        _events = [];
-        _after = 0;
-        if (opening)
+        catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException or OperationCanceledException)
         {
-            await ReadOn();
+            _meta = [];
         }
     }
 
@@ -264,40 +226,8 @@
         }
     }
 
-    private void ToggleSaid(AuthoringSession session)
-    {
-        if (!_said.Remove(session.RowId))
-        {
-            _said.Add(session.RowId);
-        }
-    }
-
-    // Absent until the CLI reports it: a cost nobody reported is not a session that cost nothing.
-    private static string SpendText(AuthoringSession s)
-    {
-        if (s.NanoAiu is null && s.InputTokens is null && s.OutputTokens is null)
-        {
-            return "what it spent was not reported";
-        }
-        var parts = new List<string>();
-        if (s.NanoAiu is long nano)
-        {
-            parts.Add((nano / 1e9).ToString("0.##", CultureInfo.CurrentCulture) + " AI units");
-        }
-        if (s.ModelCalls is long calls)
-        {
-            parts.Add(CountText.Of((int)calls, "model call", "model calls"));
-        }
-        if (s.InputTokens is long input)
-        {
-            parts.Add(input.ToString("N0", CultureInfo.CurrentCulture) + " tokens in");
-        }
-        if (s.OutputTokens is long output)
-        {
-            parts.Add(output.ToString("N0", CultureInfo.CurrentCulture) + " out");
-        }
-        return "spent " + string.Join(", ", parts);
-    }
+    /// <summary>How often the sessions are read again; zero until a read has armed it.</summary>
+    public TimeSpan Beat => _beat;
 
     // A live session is watched closely; otherwise the reader's own beat.
     private void Arm()
@@ -322,26 +252,6 @@
             await InvokeAsync(StateHasChanged);
         }, null, beat, beat);
     }
-
-    // The agent's words, what was kept, how a session ended and why a call failed are the detail; a
-    // call's arguments are not.
-    private static bool ShowsDetail(AuthoringEvent e) =>
-        e.Detail.Length > 0 && (e.Decision == "failed"
-            || e.Hook is "message" or "artifact" or "mcp-server" or "session-end" or "error" or "spend");
-
-    private static string DurationText(long ms) =>
-        ms < 1000 ? $"{ms} ms"
-        : ms < 60_000 ? (ms / 1000.0).ToString("0.0", CultureInfo.CurrentCulture) + " s"
-        : $"{ms / 60_000} min {ms % 60_000 / 1000} s";
-
-    private static Color StateColor(string state) => state switch
-    {
-        "running" => Color.Info,
-        "finished" => Color.Success,
-        "stopped" or "interrupted" => Color.Warning,
-        "failed" => Color.Error,
-        _ => Color.Default,
-    };
 
     public void Dispose()
     {

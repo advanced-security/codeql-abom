@@ -1420,30 +1420,46 @@ public sealed record PruneView
     /// report, which says nothing is outside the closure rather than that nothing is known.</summary>
     public string Unavailable { get; init; } = string.Empty;
 
+    /// <summary>What is in view, so a removal reads as a share of it rather than a bare count.</summary>
+    public LiveSize Live { get; init; } = new();
+
+    /// <summary>The removal takes at least half of what is in view. The server applies it only
+    /// when that is said outright: a scope that could not be confirmed reads exactly like one that
+    /// owns little.</summary>
+    public bool Majority { get; init; }
+
+    /// <summary>Names this preview. A removal is applied only to a preview somebody read, and only
+    /// while nothing that preview kept would go.</summary>
+    public string Proof { get; init; } = string.Empty;
+
+    /// <summary>Working copies the removal deletes from disk, by name.</summary>
+    public IReadOnlyList<string> Checkouts { get; init; } = [];
+
     public bool RemovesNothing => Removed.Nodes == 0 && Removed.Edges == 0 && Removed.Queued == 0;
+
+    /// <summary>The removal as a whole-number share of what is in view, by nodes, and by edges
+    /// when no node goes.</summary>
+    public int Share => Live.Nodes > 0 && Removed.Nodes > 0
+        ? (int)Math.Round(100.0 * Removed.Nodes / Live.Nodes)
+        : Live.Edges > 0 ? (int)Math.Round(100.0 * Removed.Edges / Live.Edges) : 0;
 }
 
-/// <summary>The last answer to what no longer belongs, and when it was asked.</summary>
-/// <remarks>
-/// Written by a check that runs at startup off the request path, so the interface can raise what
-/// it found without anybody going looking for it.
-/// </remarks>
-public sealed record Staleness
+public sealed record LiveSize
 {
-    /// <summary>
-    /// False until the first check finishes. "Nothing has looked" and "nothing needs removing"
-    /// are different answers, and offering the second before a check has run would tell an
-    /// operator their corpus is tidy on no evidence.
-    /// </summary>
-    public bool Checked { get; init; }
-    public string CheckedAt { get; init; } = string.Empty;
-    public PruneView View { get; init; } = new();
-    public string Unavailable { get; init; } = string.Empty;
-
-    /// <summary>Whether a check finished, could measure, and found something to act on.</summary>
-    public bool HasSomethingToRemove =>
-        Checked && Unavailable.Length == 0 && !View.RemovesNothing;
+    public int Nodes { get; init; }
+    public int Edges { get; init; }
 }
+
+/// <summary>A removal that did not happen because its preview no longer holds, with the removal as
+/// it now stands to review in its place.</summary>
+public sealed record PruneConflict
+{
+    public string Error { get; init; } = string.Empty;
+    public PruneView View { get; init; } = new();
+}
+
+/// <summary>What asking for a removal came to: applied, or refused with what would go now.</summary>
+public sealed record PruneOutcome(PruneView? Applied, PruneConflict? Changed);
 
 public sealed record PruneRemoval
 {
@@ -2397,6 +2413,7 @@ public sealed record QueryRequest
 
     /// <summary>The run the request was asked from; zero when it was asked from nothing.</summary>
     public long SourceRunId { get; init; }
+    public long SourceDraftId { get; init; }
 
     /// <summary>What was picked from that run, as it was filed.</summary>
     public IReadOnlyList<RequestEvidence> Evidence { get; init; } = [];
@@ -2608,6 +2625,17 @@ public sealed record AuthoringReadiness
 /// <summary>One hook invocation in a session, as the gate decided or saw it.</summary>
 public sealed record AuthoringEvent
 {
+    public string Source { get; init; } = "";
+    public string SourceId { get; init; } = "";
+    public string ReceivedAt { get; init; } = "";
+    public string QueryId { get; init; } = "";
+    public string QueryVersion { get; init; } = "";
+    public string Purpose { get; init; } = "";
+    public string Actor { get; init; } = "";
+    public long PolicyId { get; init; }
+    public long RequestId { get; init; }
+    public long RunId { get; init; }
+    public AuditCapture Capture { get; init; } = new();
     public long RowId { get; init; }
     public long SessionId { get; init; }
     public string At { get; init; } = string.Empty;
@@ -2628,8 +2656,12 @@ public sealed record AuthoringEvent
 /// <summary>A page of a timeline, and the cursor to read on from.</summary>
 public sealed record AuthoringEventPage
 {
-    public IReadOnlyList<AuthoringEvent> Events { get; init; } = [];
-    public long Next { get; init; }
+    public IReadOnlyList<AuthoringEvent> Items { get; init; } = [];
+    public int Total { get; init; }
+    public string NextCursor { get; init; } = "";
+    public bool HasMore { get; init; }
+    public long Through { get; init; }
+    public string Coverage { get; init; } = "";
 }
 
 /// <summary>

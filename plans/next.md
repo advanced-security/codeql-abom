@@ -56,8 +56,9 @@ behind them or mistake parallel development for permission to skip its acceptanc
 **[A query request says enough to write the query](ui/codeql-requests.md) also starts alongside the
 ranked work, by the operator's call.** What is left: tag terms in the Explorer, a decision on how
 wide the catalog may be before tag chips go in, re-recording the fixture corpus without the removed
-acceptance, and the real-corpus check with screenshots. It touches the view language, the catalog
-and `cmd/abom-corpus`, not the graph.
+acceptance, the per-event cost of a session's audit capture, and the real-corpus check with
+screenshots. It touches the view language, the catalog, `cmd/abom-corpus` and the authoring harness,
+not the graph.
 
 ## Ranked next
 

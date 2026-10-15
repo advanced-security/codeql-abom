@@ -770,6 +770,14 @@ var droppedColumns = []struct{ table, column string }{
 }
 
 var addedColumns = []struct{ table, column, decl string }{
+	{"abom_query_request", "source_draft_id", "INTEGER"},
+	{"abom_authoring_event", "source", "TEXT NOT NULL DEFAULT ''"},
+	{"abom_authoring_event", "source_id", "TEXT NOT NULL DEFAULT ''"},
+	{"abom_authoring_event", "received_at", "TEXT NOT NULL DEFAULT ''"},
+	{"abom_authoring_event", "query_id", "TEXT NOT NULL DEFAULT ''"},
+	{"abom_authoring_event", "query_version", "TEXT NOT NULL DEFAULT ''"},
+	{"abom_authoring_event", "policy_id", "INTEGER NOT NULL DEFAULT 0"},
+	{"abom_authoring_event", "capture", "TEXT NOT NULL DEFAULT ''"},
 	// Zero for older rows is true: no build before this one read a tree.
 	{"abom_cycle_spend", "tree_reads", "INTEGER NOT NULL DEFAULT 0"},
 	// NULL on a cycle recorded before what code scanning supplied was kept.
@@ -967,6 +975,11 @@ var addedColumns = []struct{ table, column, decl string }{
 // indexDDL is applied only after bulk loading. Maintaining these indexes during a multi-million
 // row insert costs far more than building them once at the end.
 const indexDDL = `
+CREATE INDEX IF NOT EXISTS idx_authoring_event_source ON abom_authoring_event(session_id,source_id);
+CREATE INDEX IF NOT EXISTS idx_authoring_event_version ON abom_authoring_event(query_id,query_version,session_id,row_id);
+CREATE INDEX IF NOT EXISTS idx_authoring_session_run ON abom_authoring_session(run_id,row_id);
+CREATE INDEX IF NOT EXISTS idx_authoring_session_request ON abom_authoring_session(request_id,row_id);
+CREATE INDEX IF NOT EXISTS idx_authoring_event_kind ON abom_authoring_event(hook,row_id);
 CREATE INDEX IF NOT EXISTS idx_edge_src        ON abom_edge(src_node_row_id);
 CREATE INDEX IF NOT EXISTS idx_edge_dst        ON abom_edge(dst_node_row_id);
 CREATE INDEX IF NOT EXISTS idx_edge_repo       ON abom_edge(repository_row_id);

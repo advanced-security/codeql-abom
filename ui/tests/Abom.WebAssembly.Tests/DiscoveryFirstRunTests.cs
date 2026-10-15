@@ -71,45 +71,42 @@ public class DiscoveryFirstRunTests : AbomTestContext
             cut.Markup));
     }
 
-    // Measured on the live corpus: the check found only 4 queued dependencies outside the closure,
-    // and the prompt said "0 nodes and 0 edges across 0 repositories" — what it would remove, unsaid.
+    // Removing what is no longer owned opened by itself on every visit to Settings, with numbers
+    // from startup, one press from removing whatever the scope said by then. It is asked for.
     [Fact]
-    public void ThePromptToRemoveNamesWhatItRemovesAndNothingElse()
+    public void SettingsNeverOpensARemovalByItself()
     {
-        Serve(NothingEnumerated, "[]");
-        Answer("api/prune/staleness", """
-            {"checked":true,"checkedAt":"2026-01-01T00:00:00Z","unavailable":"",
-             "view":{"declared":3,"reachable":10,"removed":{"repositories":0,"nodes":0,"edges":0,"queued":4},
-                     "tombstoned":0,"applied":false,"unavailable":""}}
+        Serve(NothingEnumerated, """[{"owner":"octo-org","kind":"organization","enabled":true}]""", """
+            {"declared":3,"reachable":10,"removed":{"repositories":2,"nodes":9,"edges":4,"queued":4},
+             "tombstoned":0,"applied":false,"unavailable":"","live":{"nodes":90,"edges":40},
+             "majority":false,"proof":"P1","checkouts":[]}
             """);
 
         var dialogs = Render<MudBlazor.MudDialogProvider>();
-        Render<Pages.Settings>();
+        var cut = Render<Pages.Settings>();
 
-        var summary = dialogs.WaitForElement("[data-abom-stale-summary]").TextContent;
-        Assert.Contains("4 queued dependencies", summary);
-        Assert.DoesNotContain(" 0 ", summary);
+        cut.WaitForElement("[data-abom-prune-summary]");
+        Assert.Empty(dialogs.FindAll("[data-abom-stale-summary]"));
+        Assert.Empty(dialogs.FindAll("[data-abom-prune-review-summary]"));
+        Assert.Empty(dialogs.FindAll(".mud-dialog"));
     }
 
-    // "Not now" is a complete answer to the check that asked; Settings asked again on every visit.
+    // Measured on the live corpus: the check found only 4 queued dependencies outside the closure,
+    // and the summary said "0 nodes and 0 edges across 0 repositories" — what it would remove, unsaid.
     [Fact]
-    public void NotNowIsRememberedForTheCheckThatAsked()
+    public void TheRemovalSummaryNamesWhatItRemovesAndNothingElse()
     {
-        Serve(NothingEnumerated, "[]");
-        Answer("api/prune/staleness", """
-            {"checked":true,"checkedAt":"2026-01-01T00:00:00Z","unavailable":"",
-             "view":{"declared":3,"reachable":10,"removed":{"repositories":0,"nodes":0,"edges":0,"queued":4},
-                     "tombstoned":0,"applied":false,"unavailable":""}}
+        Serve(NothingEnumerated, """[{"owner":"octo-org","kind":"organization","enabled":true}]""", """
+            {"declared":3,"reachable":10,"removed":{"repositories":0,"nodes":0,"edges":0,"queued":4},
+             "tombstoned":0,"applied":false,"unavailable":"","live":{"nodes":90,"edges":40},
+             "majority":false,"proof":"P1","checkouts":[]}
             """);
-        var dialogs = Render<MudBlazor.MudDialogProvider>();
-        Render<Pages.Settings>();
-        dialogs.WaitForElement("[data-abom-stale-dismiss]").Click();
-        dialogs.WaitForAssertion(() => Assert.Empty(dialogs.FindAll("[data-abom-stale-summary]")));
 
-        var again = Render<Pages.Settings>();
-        again.WaitForAssertion(() => Assert.Contains("What the crawl is working on", again.Markup));
+        var cut = Render<Pages.Settings>();
 
-        Assert.Empty(dialogs.FindAll("[data-abom-stale-summary]"));
+        var summary = cut.WaitForElement("[data-abom-prune-summary]").TextContent;
+        Assert.Contains("4 queued dependencies", summary);
+        Assert.DoesNotContain(" 0 ", " " + string.Join(" ", summary.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)) + " ");
     }
 
     // Measured on the live corpus: "63 nodes and 34 edges across 1 repositories".

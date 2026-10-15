@@ -110,6 +110,7 @@ type GraphStore interface {
 	MarkOutsideClosure(inClosure []string) (PruneReport, error)
 	RepositoriesOutsideClosure(inClosure []string) ([]string, error)
 	Tombstoned() (int, error)
+	LiveGraph() (LiveSize, error)
 	Compact() (PruneReport, error)
 }
 
@@ -314,6 +315,10 @@ type QueryStore interface {
 	AddAuthoringSpend(session int64, spent AuthoringSpend) error
 	RecordAuthoringEvent(e AuthoringEvent) (int64, error)
 	AuthoringEvents(session, after int64, limit int) ([]AuthoringEvent, error)
+	AuditEvents(filter AuditFilter) (AuditPage, error)
+	AuditSession(session int64, through ...int64) (AuditSession, error)
+	AuditSessions(request, run int64) ([]AuditSession, error)
+	WalkAudit(filter AuditFilter, visit func(AuthoringEvent) error) error
 	DecideTarget(request int64, queryID, rationale string) error
 	CreateComparison(runID int64, by string) (int64, error)
 	PendingComparisonMembers(id int64) ([]DatabaseIdentity, error)

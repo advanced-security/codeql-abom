@@ -22,6 +22,8 @@ func runPrune(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	apply := fs.Bool("apply", false, "mark what is outside the declared scope, rather than explaining it")
 	compact := fs.Bool("compact", false,
 		"delete what has already been marked; every open page reloads afterwards")
+	most := fs.Bool("most", false,
+		"with --apply, mark even a removal of at least half of what is in view")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -55,11 +57,27 @@ func runPrune(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 
 	report, err := s.ExplainOutsideClosure(keep)
-	if *apply {
-		report, err = s.MarkOutsideClosure(keep)
-	}
 	if err != nil {
 		return fmt.Errorf("prune: %w", err)
+	}
+	if *apply {
+		live, err := s.LiveGraph()
+		if err != nil {
+			return fmt.Errorf("prune: %w", err)
+		}
+		// A scope that could not be confirmed reads exactly like one that owns little, and both
+		// put most of the graph outside it.
+		if report.TakesMostOf(live) && !*most {
+			fmt.Fprintf(stdout, "%d repositories declared, %d reachable from them\n",
+				closure.Roots(), closure.Size())
+			return fmt.Errorf("prune: this would mark %d of %d nodes and %d of %d edges, most of what "+
+				"is in view, and nothing was changed; check what is declared and that it could be "+
+				"confirmed, then re-run with --apply --most if this is what you mean",
+				report.Nodes, live.Nodes, report.Edges, live.Edges)
+		}
+		if report, err = s.MarkOutsideClosure(keep); err != nil {
+			return fmt.Errorf("prune: %w", err)
+		}
 	}
 
 	verb := "would remove"

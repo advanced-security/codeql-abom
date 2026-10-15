@@ -48,7 +48,8 @@ var demoControls = map[string]bool{
 
 // demoWithheld are reads that exist to carry data out of the instance.
 var demoWithheld = map[string]bool{
-	"GET /api/graph/export": true,
+	"GET /api/graph/export":            true,
+	"GET /api/authoring-events/export": true,
 }
 
 func (s *Server) instance(w http.ResponseWriter, _ *http.Request) {

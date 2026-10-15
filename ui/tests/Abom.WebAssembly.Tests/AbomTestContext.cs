@@ -41,7 +41,6 @@ public abstract class AbomTestContext : BunitContext
         Services.AddSingleton<FollowService>();
         Services.AddSingleton<RunDraft>();
         Services.AddSingleton<RequestDraft>();
-        Services.AddSingleton<PromptMemory>();
 
         _handler.Fallbacks.Add(("api/filters", DefaultFilters));
     }
@@ -125,11 +124,32 @@ public abstract class AbomTestContext : BunitContext
         _handler.Fail(path, status, message);
 
     /// <summary>
+    /// Times out every request for <paramref name="path"/> as HttpClient does: with a cancellation
+    /// nobody asked for. A view that treats every cancellation as a superseded answer of its own
+    /// swallows this one and says nothing at all.
+    /// </summary>
+    protected void TimeOut(string path) => _handler.Timeouts.Add(path);
+
+    /// <summary>
+    /// Ends the failures and timeouts registered for exactly <paramref name="path"/>, so a view can
+    /// be seen to recover: a page that shows an outage and never clears it looks identical to one
+    /// that recovered until the next answer arrives.
+    /// </summary>
+    protected void Recover(string path) => _handler.Recover(path);
+
+    /// <summary>
     /// Refuses only writes to exactly <paramref name="path"/>, with the server's message. A page
     /// that reads and writes one endpoint has to be able to load before its write can be refused.
     /// </summary>
     protected void RefuseWrite(string path, HttpStatusCode status, string message) =>
         _handler.WriteFailures.Add((path, status, message));
+
+    /// <summary>
+    /// Answers writes to exactly <paramref name="path"/> with <paramref name="status"/> and a body
+    /// of the test's choosing: a refusal can carry what to do next, not only why.
+    /// </summary>
+    protected void RespondWrite(string path, HttpStatusCode status, string json) =>
+        _handler.WriteResponses.Add((path, status, json));
 
     /// <summary>
     /// Every request the component made, in order.
@@ -164,11 +184,19 @@ public abstract class AbomTestContext : BunitContext
         private readonly List<(string Path, HttpStatusCode Status, string? Message)> _failures = [];
 
         public Dictionary<string, TaskCompletionSource> Gates { get; } = [];
+        public List<string> Timeouts { get; } = [];
         public List<(string Path, HttpStatusCode Status, string Message)> WriteFailures { get; } = [];
+        public List<(string Path, HttpStatusCode Status, string Json)> WriteResponses { get; } = [];
         public List<SentRequest> Sent { get; } = [];
 
         public void Fail(string path, HttpStatusCode status, string? message = null) =>
             _failures.Add((path, status, message));
+
+        public void Recover(string path)
+        {
+            _failures.RemoveAll(f => f.Path == path);
+            Timeouts.RemoveAll(p => p == path);
+        }
 
         /// <summary>Answers used only when no test registered one, so a default cannot win.</summary>
         public List<(string Path, string Json)> Fallbacks { get; } = [];
@@ -209,6 +237,22 @@ public abstract class AbomTestContext : BunitContext
                 if (url.Contains(path, StringComparison.Ordinal))
                 {
                     await gate.Task.WaitAsync(cancellationToken);
+                }
+            }
+            if (Timeouts.Any(path => url.Contains(path, StringComparison.Ordinal)))
+            {
+                throw new TaskCanceledException(
+                    "The request was canceled due to the configured HttpClient.Timeout of 100 seconds elapsing.",
+                    new TimeoutException());
+            }
+            foreach (var (path, status, json) in WriteResponses)
+            {
+                if (request.Method != HttpMethod.Get && Matches(url, path))
+                {
+                    return new HttpResponseMessage(status)
+                    {
+                        Content = new StringContent(json, Encoding.UTF8, "application/json"),
+                    };
                 }
             }
             foreach (var (path, status, message) in WriteFailures)
