@@ -21,7 +21,7 @@ flowchart LR
 | .NET SDK | The major version named by `TargetFramework` in [the UI project](../../ui/Abom.WebAssembly.csproj). `dotnet --list-sdks` shows what is installed. No extra workloads are needed. |
 | GitHub CLI | [gh](https://cli.github.com/), for authentication and ownership verification. |
 | CodeQL | The version in [.codeql-version](../../.codeql-version), on `PATH`. See [install CodeQL](#install-codeql). |
-| Graphviz | [Graphviz](https://graphviz.org/download/), with `dot` on `PATH`: `brew install graphviz` or `apt-get install graphviz`. Every details page draws its figure with it, and the Explorer's stable layout uses it. `serve` refuses to start without it and names the version it found. From Ubuntu 26.04 the other layout engines, which `make test` exercises, are a separate package: `apt-get install graphviz libgvplugin-neato-layout8`. [setup-graphviz.sh](../../scripts/setup-graphviz.sh) installs and checks them as CI does. |
+| Graphviz | [Graphviz](https://graphviz.org/download/), with `dot` on `PATH`: `brew install graphviz` or `apt-get install graphviz`. Every details page draws its figure with it, and the Explorer's stable layout uses it. `serve` refuses to start without it and names the version it found. On Ubuntu 26.04 and later, `make test` also needs the separately packaged neato layout plugin; run [setup-graphviz.sh](../../scripts/setup-graphviz.sh) as CI does, or install the available `libgvplugin-neato-layout*` package for your release. |
 
 These are the only requirements for serving and analyzing. Node, Playwright and golangci-lint are
 development tools. AI authoring and explicit lock verification have
