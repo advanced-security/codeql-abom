@@ -17,6 +17,25 @@ Demo is a fact about the server, not a setting. Its facts say what is real and w
 | Discovery, code scanning, dependency submissions, webhooks | Not offered |
 | Downloads and exports | Not offered: a Demo never helps share what you changed in it |
 
+## Run locally in VS Code
+
+1. Start Docker Desktop (or Docker Engine on Linux), with at least 4 CPUs, 8 GB memory and 32 GB
+   disk available. Install VS Code's [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers).
+2. Open a checkout or extracted copy of this repository in VS Code. From the Command Palette,
+   run **Dev Containers: Reopen in Container**.
+3. Wait for setup to install the tools, build ABOM and start the Demo. The first setup needs
+   internet access; no host Go, .NET or CodeQL installation is needed.
+4. In the **Ports** panel, open **ABOM Demo** (container port 8099) in your browser. Use the local
+   address shown there; VS Code chooses another local port if 8099 is already occupied.
+
+For optional Copilot authoring, run `.devcontainer/copilot-login.sh` in the container's terminal.
+It uses your GitHub sign-in and Copilot credits; no Codespace is involved.
+
+Each container start creates a fresh practice dataset. `.devcontainer/start-demo.sh` restarts
+without resetting it; add `--fresh` to reset or `--stop` to stop. Logs are in
+`/tmp/abom-demo-logs` inside the container. **Dev Containers: Reopen Folder Locally** returns to
+the host workspace.
+
 ## Run a Demo in a Codespace
 
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/advanced-security/codeql-abom?quickstart=1)
@@ -112,7 +131,7 @@ Docker, so `make test-postgres` runs in CI rather than there.
   simulated GitHub. No GitHub reader, App, token lookup, discovery loop, webhook or relay is built.
 - Its environment holds no token, proxy or credential helper, and its own HTTP clients refuse
   anything but loopback.
-- In a Codespace it runs as its own user, and a firewall limits that user to loopback and refuses
+- In the dev container it runs as its own user, and a firewall limits that user to loopback and refuses
   its name lookups: a Codespace's container shares its VM's network, where loopback also holds the
   VM's resolver. The start script proves both by trying them, and leaves Copilot off if either
   works.
@@ -237,7 +256,7 @@ is stopped and says what it spent.
   proxy, it lasts a day, and it can sign only `api.github.com`; only the Copilot CLI is told to
   trust it.
 - On a workstation nothing stops another program from ignoring the proxy, so the server's own
-  refusals and the empty environment are the boundary there. The Codespace adds a firewall.
+  refusals and the empty environment are the boundary there. The dev container adds a firewall.
 
 ## Leaving Demo
 
