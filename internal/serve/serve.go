@@ -55,6 +55,8 @@ type Server struct {
 	ReadProperties func(ctx context.Context, owner string) ([]ghauth.PropertyDefinition, []ghauth.RepositoryProperties, error)
 	// Discovery is the expansion loop. Nil answers that discovery is unavailable here.
 	Discovery Discovery
+	// InvalidateSources refreshes remote eligibility when the operator retries unavailable work.
+	InvalidateSources func()
 	// Enumerate reads one declared account, bounded by what a previous read established. Nil
 	// answers that this build cannot enumerate, which is not the same answer as an account
 	// holding nothing.

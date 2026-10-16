@@ -18,6 +18,7 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/ingest"
 	"github.com/advanced-security/codeql-abom/internal/lockfile"
 	"github.com/advanced-security/codeql-abom/internal/runner"
+	"github.com/advanced-security/codeql-abom/internal/sourcepolicy"
 	"github.com/advanced-security/codeql-abom/internal/store"
 	"github.com/advanced-security/codeql-abom/internal/work"
 )
@@ -113,11 +114,12 @@ type Stats struct {
 // Work is claimed and settled per repository rather than per dependency, because the clone and
 // the database build are the expensive steps and several actions often share one repository.
 type Expander struct {
-	Queue    *frontier.Queue
-	Store    store.Backend
-	Ingester *ingest.Ingester
-	Writer   store.GraphWriter
-	Fetcher  Fetcher
+	Queue        *frontier.Queue
+	Store        store.Backend
+	Ingester     *ingest.Ingester
+	Writer       store.GraphWriter
+	Fetcher      Fetcher
+	SourcePolicy *sourcepolicy.Policy
 	// Probe resolves a reference without fetching it, so the commit that decides whether any
 	// work is outstanding is known before a clone is paid for. Nil fetches first, as before.
 	Probe RefProbe

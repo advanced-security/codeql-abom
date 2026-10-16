@@ -61,10 +61,23 @@ unknown completeness, not that the operator belongs to no organization. A GitHub
 identity and token-refresh lifecycle are not a supported substitute for the source onboarding
 session yet.
 
-The API URL defaults to GitHub.com. `--api-url` overrides `GITHUB_API_URL` for that reader, but this
-does not establish coherent host routing for Git and `gh`. Do not treat the flag as a qualified
-GHES deployment option. Keep submission targets unset during onboarding; reading a repository is
-not authority to publish a dependency snapshot or alert to it.
+The API URL defaults to GitHub.com. `--api-url` overrides `GITHUB_API_URL` for that reader.
+Source checkouts use the corresponding GitHub host; ownership verification follows the `gh`
+session. GHES deployment is not qualified. Keep submission targets unset during onboarding;
+reading a repository is not authority to publish a dependency snapshot or alert to it.
+
+## Remote-source eligibility
+
+ABOM checks remote downloads on a best-effort basis. Public repositories are accepted without
+license inspection; private/internal repositories must be within declared ownership.
+
+Enabled Code Security/GHAS or scanning configuration, recorded analyses, or successful
+code-scanning access provide sufficient evidence. Alerts and an Actions database are not required.
+Explicit disablement skips the download; inconclusive evidence warns and continues for owned
+repositories. See [retry guidance](operations.md#source-policy-warnings-and-retry).
+
+Local source and cached databases remain trusted, and custom query/library development is
+unrestricted by these checks. Use synthetic or anonymized test fixtures.
 
 ## Database backends
 

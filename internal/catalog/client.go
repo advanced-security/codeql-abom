@@ -67,6 +67,8 @@ type Client struct {
 	GraphQL *work.TokenPool
 	// Tokens chooses each request's credential by the account it reads. Nil sends New's token, as before an App.
 	Tokens ghapp.TokenSource
+	// SourcePolicy applies only to remote source/result downloads, not metadata or eligibility probes.
+	SourcePolicy func(context.Context, string) error
 	// Route pins which API reads an account: RouteGraphQL, RouteREST, or empty for the default,
 	// which prefers GraphQL and falls back to REST. Selection is the operator's and detection is
 	// at most a default, so a pinned route is never second-guessed.
@@ -331,6 +333,9 @@ func (c *Client) FindDatabase(ctx context.Context, repository, language string) 
 // The download lands on a temporary file and is renamed only on success, so an interrupted
 // run can never leave a truncated archive that a later run mistakes for a complete database.
 func (c *Client) DownloadDatabase(ctx context.Context, repository, language, destPath string) error {
+	if err := c.allowSource(ctx, repository); err != nil {
+		return err
+	}
 	owner, name, err := splitRepository(repository)
 	if err != nil {
 		return err

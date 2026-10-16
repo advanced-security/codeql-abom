@@ -44,9 +44,8 @@ A plain `go test` outside the harness runs the store suite on SQLite and skips t
 tests the harness lifecycle without starting containers; `python3 scripts/with-postgres.py probe`
 checks the Docker runtime and wire protocol only.
 
-CodeQL has its own use and distribution terms. Access to a repository or membership in an
-organization is not a license grant. Use ABOM only for analysis you are authorized to perform;
-ABOM does not currently enforce base-repository Code Scanning eligibility.
+See the [CodeQL terms](../../LICENSE) and
+[remote-source eligibility](configuration.md#remote-source-eligibility).
 
 ## Get the checkout
 

@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"time"
 
 	"github.com/advanced-security/codeql-abom/internal/expand"
@@ -17,7 +18,18 @@ import (
 // lockVerifier runs GitHub's lock verification against a repository's current commit, fetched
 // fresh: the same path for the command and the server.
 func lockVerifier(s store.Backend, tokens ghapp.TokenSource) *lockverify.Service {
+	return lockVerifierWithPolicy(s, tokens, nil, defaultAPIURL())
+}
+
+func lockVerifierWithPolicy(s store.Backend, tokens ghapp.TokenSource,
+	policy func(context.Context, string) error, apiURL string,
+) *lockverify.Service {
+	if policy == nil {
+		reader := newReader(context.Background(), apiURL, tokens)
+		policy = protectSources(s, reader, os.Stderr).Check
+	}
 	checkout := &expand.Checkout{Timeout: 5 * time.Minute, Tokens: tokens}
+	bindSourcePolicy(checkout, apiURL, policy)
 	return &lockverify.Service{
 		Store: s,
 		Fetch: func(ctx context.Context, dest, owner, repo, commit string) error {

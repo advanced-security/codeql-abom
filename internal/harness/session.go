@@ -992,6 +992,9 @@ func rules(b Bounds, libraries []string, target string) string {
 		"Actions YAML fixtures under its test directory: workflows under .github/workflows there, or " +
 		"action metadata. create writes a new file and refuses one that exists; change a file with edit. " +
 		"The .qlref, the .actual, the test database and every manifest belong to ABOM and the CLI.\n\n")
+	out.WriteString("Use minimal synthetic or anonymized reproductions for fixtures and help examples, " +
+		"not verbatim private production source. Replace identifying names, URLs and sensitive values " +
+		"while preserving the behavior the query must detect and its compliant counterpart.\n\n")
 	out.WriteString("Work test-first, in this order. The query cannot change until 1 to 5 are done.\n" +
 		"1. Write the help in these sections and no others: a # title, ## Overview (what the query " +
 		"reports and why it matters), ## Recommendation (how to fix it), ## Example (the request's " +

@@ -384,6 +384,9 @@ func (s *Server) discoveryRetryUnavailable(w http.ResponseWriter, r *http.Reques
 	if !s.allowControl(w, r) {
 		return
 	}
+	if s.InvalidateSources != nil {
+		s.InvalidateSources()
+	}
 	got, err := s.Store.RetryUnavailable()
 	if err != nil {
 		writeJSON(w, nil, err)

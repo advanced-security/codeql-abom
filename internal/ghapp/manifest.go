@@ -64,6 +64,7 @@ var Permissions = []Grant{
 			{"catalog.Client.walkREST", "GET /orgs/{org}/repos, GET /users/{username}/repos", "/repos?per_page="},
 			{"catalog.repositoriesQuery", "GraphQL repositoryOwner.repositories", "repositories("},
 			{"catalog.Client.ReadRepository", "GET /repos/{owner}/{repo}", "%s/repos/%s/%s"},
+			{"catalog.Client.sourceAccess", "GET /repos/{owner}/{repo}", "%s/repos/%s/%s"},
 			{"catalog.Client.repositoryProperties", "GET /repos/{owner}/{repo}/properties/values",
 				"/repos/%s/%s/properties/values"},
 		}},
@@ -91,6 +92,7 @@ var Permissions = []Grant{
 		Doc: docPermissions + "#repository-permissions-for-code-scanning-alerts",
 		Uses: []Use{
 			{"catalog.Client.CodeScanningAlerts", "GET /repos/{owner}/{repo}/code-scanning/alerts", "/code-scanning/alerts"},
+			{"catalog.Client.CheckScanningAccess", "GET /repos/{owner}/{repo}/code-scanning/alerts", "/code-scanning/alerts"},
 			{"catalog.Client.analysesPage", "GET /repos/{owner}/{repo}/code-scanning/analyses", "/code-scanning/analyses"},
 			{"catalog.Client.DownloadAnalysis", "GET /repos/{owner}/{repo}/code-scanning/analyses/{analysis_id}",
 				"/code-scanning/analyses/"},

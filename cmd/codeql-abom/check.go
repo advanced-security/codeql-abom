@@ -57,7 +57,9 @@ func runCheck(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 			return fmt.Errorf("check: %w", err)
 		}
 		github = &lazyGitHub{build: func() *catalog.Client {
-			return checkReader(ctx, *apiURL, readerTokens(app), processPools)
+			c := checkReader(ctx, *apiURL, readerTokens(app), processPools)
+			protectSources(s, c, stderr)
+			return c
 		}}
 	}
 	build := checkBuild()

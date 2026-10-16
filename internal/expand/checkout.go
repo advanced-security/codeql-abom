@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/advanced-security/codeql-abom/internal/ghapp"
+	"github.com/advanced-security/codeql-abom/internal/sourcepolicy"
 )
 
 // ErrUnavailable reports a permanent answer for a dependency: the repository cannot be read, or
@@ -27,7 +28,9 @@ import (
 var ErrUnavailable = errors.New("dependency unavailable")
 
 // IsUnavailable reports whether err is a permanent answer.
-func IsUnavailable(err error) bool { return errors.Is(err, ErrUnavailable) }
+func IsUnavailable(err error) bool {
+	return errors.Is(err, ErrUnavailable) || sourcepolicy.IsDenied(err)
+}
 
 // NothingToAnalyze is a tree read in full that holds no workflow and no action manifest, with the
 // commit it was read at, empty when the repository has no commit. Unavailable for a dependency,
@@ -70,7 +73,8 @@ type Checkout struct {
 	BaseURL string
 	Timeout time.Duration
 	// Tokens authenticates every git call as the owner's installation, or the lent one. Nil runs git as before an App.
-	Tokens ghapp.TokenSource
+	Tokens       ghapp.TokenSource
+	SourcePolicy func(context.Context, string) error
 }
 
 // gitIdentity is the credential every git call under one fetch or probe carries, and the owner it was lent for.
@@ -148,6 +152,11 @@ func (c *Checkout) cloneURL(owner, repo string) string {
 
 // Fetch materializes owner/repo at ref into dest. An empty ref means the default branch.
 func (c *Checkout) Fetch(ctx context.Context, dest, owner, repo, ref string) (Tree, error) {
+	if c.SourcePolicy != nil {
+		if err := c.SourcePolicy(ctx, owner+"/"+repo); err != nil {
+			return Tree{}, err
+		}
+	}
 	if c.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, c.Timeout)

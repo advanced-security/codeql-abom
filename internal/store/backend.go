@@ -375,6 +375,8 @@ type PolicyStore interface {
 }
 
 type SetupStore interface {
+	SourcePolicySkipped(repository string) (bool, error)
+	RetrySourcePolicy(repository string) (int, error)
 	RecordListedFacts(facts []ListedFacts, at time.Time) error
 	ListedFactsOf(repository string) (ListedFacts, bool, error)
 	RecordSetupReading(r SetupReading) error

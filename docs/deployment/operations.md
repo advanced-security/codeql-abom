@@ -49,6 +49,13 @@ finding counts. An empty new database is not a security assessment.
 The local `--diagnostics` flag enables additional performance endpoints; it is not required for
 installation. Do not publish them or run expensive measurements against an active crawl.
 
+## Source-policy warnings and retry
+
+A `source policy:` warning allows analysis to continue; a refusal leaves the source unavailable
+with a reason. Correct the reported ownership or scanning configuration, then requeue from
+Discovery or use `expand-all --requeue owner/repository` with your database options.
+Retry refreshes the evidence immediately; setup refreshes and GitHub events also reconsider skips.
+
 ## State and backups
 
 Preserve the database and any authored custom-query workspace. Work directories can contain run
