@@ -47,7 +47,9 @@ func (e *Expander) RequeueStale(ctx context.Context) (Selection, error) {
 // already in the queue can still be moved to the front — which is what "run this next" meant.
 func (e *Expander) RequeueRepository(name string) (Selection, error) {
 	name = strings.TrimSpace(name)
-	e.SourcePolicy.Invalidate(name)
+	if e.SourcePolicy != nil {
+		e.SourcePolicy.Invalidate(name)
+	}
 	n, err := e.Store.RequeueRepository(name)
 	if err != nil {
 		return Selection{}, err
