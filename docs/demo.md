@@ -131,10 +131,10 @@ Docker, so `make test-postgres` runs in CI rather than there.
   simulated GitHub. No GitHub reader, App, token lookup, discovery loop, webhook or relay is built.
 - Its environment holds no token, proxy or credential helper, and its own HTTP clients refuse
   anything but loopback.
-- In the dev container it runs as its own user, and a firewall limits that user to loopback and refuses
-  its name lookups: a Codespace's container shares its VM's network, where loopback also holds the
-  VM's resolver. The start script proves both by trying them, and leaves Copilot off if either
-  works.
+- In the dev container it runs as its own user, and a firewall limits that user to loopback and
+  refuses its name lookups. Lookups are refused even over loopback because a Codespace runs the
+  container on its VM's network, where loopback also holds the VM's resolver. The start script
+  proves both by trying them, and leaves Copilot off if either works.
 - Copilot sessions reach the network only through `codeql-abom demo egress`, described in
   [What reaches the network](#what-reaches-the-network).
   Without that proxy, authoring is unavailable.
