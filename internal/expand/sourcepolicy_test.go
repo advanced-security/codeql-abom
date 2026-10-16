@@ -88,14 +88,15 @@ func TestTheCheckoutTimeoutBoundsTheSourceEligibilityCheck(t *testing.T) {
 	var bounded bool
 	c := &Checkout{Timeout: time.Hour, SourcePolicy: func(ctx context.Context, _ string) error {
 		deadline, ok := ctx.Deadline()
-		bounded = ok && time.Until(deadline) <= time.Hour
+		remaining := time.Until(deadline)
+		bounded = ok && remaining > 0 && remaining <= time.Hour
 		return refused
 	}}
 	if _, err := c.Fetch(context.Background(), t.TempDir(), "acme", "private", ""); !errors.Is(err, refused) {
 		t.Fatalf("Fetch: %v, want the policy refusal", err)
 	}
 	if !bounded {
-		t.Error("the source policy ran without the checkout deadline")
+		t.Error("the source policy did not run under the checkout deadline")
 	}
 }
 
