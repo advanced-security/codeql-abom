@@ -249,16 +249,19 @@ run in deployment environments:
 | Stage | Workflow and environment | What it writes |
 | --- | --- | --- |
 | Version | `release.yml` | Nothing; refuses a version that is not a release of the pinned CLI |
-| Tag | `release-tag.yml`, `release-tag` | The tag, only for a dispatched version that has none, after the Go tests pass on the tree it tags. An existing tag is checked and never moved. |
-| Build | `release-build.yml` | Nothing. Tests the tagged commit, builds each archive on its own platform's runner and smoke-tests the uploaded bytes there. |
+| Tag | `release-tag.yml`, `release-tag` | The tag, only for a dispatched version that has none, after the Go tests pass on the tree it tags. They run in [test-go.yml](../../.github/workflows/test-go.yml), the job pull requests run. An existing tag is checked and never moved. |
+| Build | `release-build.yml` | Nothing. Tests the tagged commit, builds each archive on its own platform's runner and smoke-tests the uploaded bytes there; darwin/amd64 is smoke-tested under Rosetta on arm64, because Homebrew has no Intel bottle for Graphviz. |
 | Draft | `release-publish.yml`, `release-draft` | Provenance attestations, then a draft release with the archives, SBOMs, `SHA256SUMS` and the attestation bundle |
 | Publish | `release-publish.yml`, `release` | Publishes the draft, after checking it holds exactly the staged assets |
 
 The [smoke test](../../scripts/release/smoke.sh) verifies the manifest against the extracted bytes
 and the executable's identity, starts the server from the archive root and reopens its database,
 then installs the shipped packs' dependencies and requires results from ABOM's own findings and
-graph queries against the pinned CLI. Attestations name `release-publish.yml` as the signing
-workflow. Artifact attestations on a private repository need GitHub Enterprise Cloud.
+graph queries against the pinned CLI. Every job that needs Graphviz installs it with
+[setup-graphviz.sh](../../scripts/setup-graphviz.sh), which adds the layout engines that Ubuntu
+26.04 splits into a separate package and checks that each one draws. Attestations name
+`release-publish.yml` as the signing workflow. Artifact attestations on a private repository need
+GitHub Enterprise Cloud.
 
 The repository needs, once: the three environments, with `release-tag` limited to `main`,
 `release-draft` and `release` limited to `main` and `v*` tags, and required reviewers on `release`
@@ -422,7 +425,10 @@ organization-wide crawl merely to validate the instructions.
    recorded floor with the pinned CodeQL, including the Xcode requirements on Apple silicon, before
    any floor appears in release documentation. Serving and analyzing need no Rosetta there, since
    ABOM traces no build and the Actions extractor is native; the floor run is what confirms it. The
-   candidates' archives are enough to start on.
+   candidates' archives are enough to start on. GitHub retires the `ubuntu-22.04` and
+   `ubuntu-22.04-arm` runner images in April 2027, after brownouts in which every job on them
+   fails, so the Linux archive and smoke rows need a new home first: an `ubuntu:22.04` container on
+   a supported runner keeps the glibc floor, and a newer image raises it.
 4. **Exercise the actual download path.** Document download, provenance/checksum verification,
    extraction into a versioned user-writable prefix, PATH setup, configuration and startup.
    Use appropriate Linux/macOS verification commands and an expected repository/workflow with

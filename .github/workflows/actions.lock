@@ -45,13 +45,15 @@ workflows:
         - 'anchore/sbom-action@v0.24.2'
     '.github/workflows/release-tag.yml':
         - 'actions/checkout@v7.0.1'
-        - 'actions/setup-go@v7.0.0'
     '.github/workflows/release.yml':
         - 'actions/checkout@v7.0.1'
     '.github/workflows/self-audit.yml':
         - 'actions/cache@v6.1.0'
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-dotnet@v6.0.0'
+        - 'actions/setup-go@v7.0.0'
+    '.github/workflows/test-go.yml':
+        - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
     '.github/workflows/update-codeql.yml':
         - 'actions/cache@v6.1.0'

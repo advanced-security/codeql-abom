@@ -16,7 +16,7 @@ permissions:
 jobs:
   dependency-review:
     name: Dependency Review
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Dependency Review - Checkout repository

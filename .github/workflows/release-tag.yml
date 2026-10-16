@@ -54,37 +54,19 @@ jobs:
             exit 1
           fi
 
+  # The job pull requests run, on the tree with every pack set to the release version. Read-only
+  # whatever this workflow is granted, and uncached: a release restores nothing another branch
+  # could have written.
   test:
     name: Tag - Test the tree to be tagged
     needs: inspect
     if: needs.inspect.outputs.exists == 'false'
-    runs-on: ubuntu-26.04
-
-    steps:
-      - name: Test - Checkout repository
-        uses: actions/checkout@v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Test - Setup Go
-        uses: actions/setup-go@v7.0.0
-        with:
-          go-version-file: go.mod
-          # A release restores nothing another branch could have written.
-          cache: false
-
-      - name: Test - Set the release version
-        env:
-          VERSION: ${{ inputs.version }}
-        run: scripts/release-version.sh "$VERSION"
-
-      # Graphviz is a requirement: serve refuses to start without it, and the layout and figure
-      # tests fail rather than skip.
-      - name: Test - Install Graphviz
-        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends graphviz
-
-      - name: Test - Run the Go checks
-        run: make check-corrupt check-release-version fmt vet test
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test-go.yml
+    with:
+      version: ${{ inputs.version }}
+      targets: check-corrupt check-release-version fmt vet test
 
   create:
     name: Tag - Create

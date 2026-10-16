@@ -1,0 +1,81 @@
+# This workflow is managed by gh actions-lock.
+
+name: Test - Go
+
+# The Go tests, run the same way for a pull request as for a release: build-and-test-go.yml calls
+# this for each of its jobs, and release-tag.yml for the tree it is about to tag, so a release fails
+# on nothing a pull request has not already run on the same image.
+#
+# Called, never triggered, and given no secrets. The token can only read, the checkout keeps no
+# credentials, and every input reaches the shell through the environment and is checked first.
+
+on:
+  workflow_call:
+    inputs:
+      targets:
+        description: 'The make targets to run, separated by spaces'
+        required: true
+        type: string
+      version:
+        description: 'A release version to set every pack to first, as tagging does'
+        required: false
+        type: string
+        default: ''
+      cache:
+        description: 'Restore and save the Go module and build caches'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: make ${{ inputs.targets }}
+    runs-on: ubuntu-26.04
+
+    steps:
+      - name: Test - Checkout repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test - Setup Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          # Off unless the caller turns it on: a release restores nothing another branch could
+          # have written.
+          cache: ${{ inputs.cache }}
+
+      - name: Test - Set the release version
+        if: inputs.version != ''
+        env:
+          VERSION: ${{ inputs.version }}
+        run: scripts/release-version.sh "$VERSION"
+
+      # Graphviz is a requirement: serve refuses to start without it, and the layout and figure
+      # tests fail rather than skip.
+      - name: Test - Setup Graphviz
+        run: scripts/setup-graphviz.sh
+
+      # Target names only: an option or a variable assignment would change what make runs.
+      - name: Test - Run make
+        env:
+          TARGETS: ${{ inputs.targets }}
+        run: |
+          set -f
+          # shellcheck disable=SC2086 # one argument per target, with globbing off.
+          set -- $TARGETS
+          set +f
+          [ $# -gt 0 ] || { echo "::error::no make targets given"; exit 1; }
+          for target in "$@"; do
+            case "$target" in
+              -* | *[!A-Za-z0-9._-]*)
+                echo "::error::'$target' is not a make target"
+                exit 1
+                ;;
+            esac
+          done
+          make "$@"

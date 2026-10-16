@@ -3,8 +3,9 @@
 name: Release - Build
 
 # Called by release.yml only. Read-only: it tests the tagged commit, builds each platform's
-# archive on that platform, and smoke-tests the uploaded bytes on that platform again. Nothing
-# here signs or publishes, and nothing restores a cache another branch could have written.
+# archive on that platform, and smoke-tests the uploaded bytes on that platform again, darwin/amd64
+# under Rosetta. Nothing here signs or publishes, and nothing restores a cache another branch could
+# have written.
 
 on:
   workflow_call:
@@ -57,8 +58,8 @@ jobs:
 
       # Graphviz is a requirement: serve refuses to start without it, and the layout and figure
       # tests fail rather than skip.
-      - name: Verify - Install Graphviz
-        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends graphviz
+      - name: Verify - Setup Graphviz
+        run: scripts/setup-graphviz.sh
 
       # `make verify` less lint, pins and the browser suite, which pull requests already run and
       # which need tools this job would otherwise install for nothing the archive contains.
@@ -161,7 +162,10 @@ jobs:
         include:
           - { os: linux, arch: amd64, runner: ubuntu-22.04, codeql: linux64 }
           - { os: linux, arch: arm64, runner: ubuntu-22.04-arm, codeql: linux-arm64 }
-          - { os: darwin, arch: amd64, runner: macos-15-intel, codeql: osx64 }
+          # Under Rosetta on arm64: Homebrew has no Intel bottle for Graphviz or its dependencies,
+          # so an Intel runner would compile all of them before the smoke could start. The
+          # manifest check still requires the executable to report darwin/amd64.
+          - { os: darwin, arch: amd64, runner: macos-15, codeql: osx64 }
           - { os: darwin, arch: arm64, runner: macos-15, codeql: osx64 }
 
     steps:
@@ -200,13 +204,17 @@ jobs:
 
       # Graphviz is a requirement the release notes name: serve refuses to start without `dot`, so
       # the archive is proven on a machine that has it, installed the way a user would.
-      - name: Smoke - Install Graphviz
+      - name: Smoke - Setup Graphviz
+        run: scripts/setup-graphviz.sh dot
+
+      # An arm64 Mac runs the amd64 build only through Rosetta, which the image normally ships.
+      - name: Smoke - Install Rosetta
+        if: matrix.os == 'darwin' && matrix.arch == 'amd64'
         run: |
-          case "$RUNNER_OS" in
-            Linux) sudo apt-get update && sudo apt-get install --yes --no-install-recommends graphviz ;;
-            macOS) brew install graphviz ;;
-            *) echo "::error::no Graphviz install for $RUNNER_OS"; exit 1 ;;
-          esac
+          if ! arch -x86_64 /usr/bin/true 2>/dev/null; then
+            sudo softwareupdate --install-rosetta --agree-to-license
+          fi
+          arch -x86_64 /usr/bin/true
 
       - name: Smoke - Run
         run: |

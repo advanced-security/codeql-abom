@@ -6,6 +6,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/build-and-test-ui.yml'
+      - 'scripts/setup-graphviz.sh'
       - '.node-version'
       - 'Makefile'
       # The populated run is only as good as what it runs against, and both of these decide that:
@@ -28,6 +29,7 @@ on:
     branches: ['main']
     paths:
       - '.github/workflows/build-and-test-ui.yml'
+      - 'scripts/setup-graphviz.sh'
       - '.node-version'
       - 'Makefile'
       - 'cmd/abom-corpus/**'
@@ -55,7 +57,7 @@ jobs:
   # seconds rather than behind a toolchain neither of them uses.
   browser:
     name: Interface - Browser code
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Browser code - Checkout repository
@@ -78,7 +80,7 @@ jobs:
 
   components:
     name: Interface - Components
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Components - Checkout repository
@@ -110,7 +112,7 @@ jobs:
   # `dotnet publish` and a `go build` that together cost more than the tests it then runs.
   build:
     name: Interface - Build what the suite drives
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     outputs:
       specs: ${{ steps.specs.outputs.specs }}
@@ -189,7 +191,7 @@ jobs:
   suite:
     name: Interface - Browser suite (${{ matrix.spec }})
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     strategy:
       # Every shard reports. "Which spec files are broken" is the question a split suite exists to
@@ -240,8 +242,8 @@ jobs:
 
       # Graphviz is a requirement: serve refuses to start without it, and the layout and figure
       # tests fail rather than skip.
-      - name: Browser suite - Install Graphviz
-        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends graphviz
+      - name: Browser suite - Setup Graphviz
+        run: scripts/setup-graphviz.sh
 
       # `-run` rather than `make e2e`: the binary, the interface and the data set were built once
       # and unpacked above, and rebuilding them here would be the whole saving spent again.
@@ -261,7 +263,7 @@ jobs:
     name: Build and Test - Interface
     needs: [browser, build, components, suite]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Interface - Summary

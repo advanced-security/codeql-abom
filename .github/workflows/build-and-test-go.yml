@@ -16,6 +16,7 @@ on:
       - '**/testdata/**'
       - 'scripts/**'
       - '.github/workflows/build-and-test-go.yml'
+      - '.github/workflows/test-go.yml'
       - 'go.mod'
       - 'go.sum'
       - 'Makefile'
@@ -26,6 +27,7 @@ on:
       - '**/testdata/**'
       - 'scripts/**'
       - '.github/workflows/build-and-test-go.yml'
+      - '.github/workflows/test-go.yml'
       - 'go.mod'
       - 'go.sum'
       - 'Makefile'
@@ -34,82 +36,43 @@ permissions:
   contents: read
 
 jobs:
+  # Each of these is test-go.yml, the job a release tests its tree with, so a release runs nothing
+  # that a pull request has not already run.
   checks:
     name: Build and Test - Checks
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Build and Test - Checkout repository
-        uses: actions/checkout@v7.0.1
-
-      - name: Build and Test - Setup Go
-        uses: actions/setup-go@v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      # First, because a duplicated package clause reads as a syntax error everywhere else and
-      # sends the reader looking in the wrong place.
-      - name: Build and Test - Check for corrupted writes
-        run: make check-corrupt
-
-      - name: Build and Test - Check formatting
-        run: make fmt
-
-      - name: Build and Test - Vet
-        run: make vet
-
-      - name: Build and Test - Test the scripts
-        run: make script-test
-
-      - name: Build and Test - Build the binary
-        run: make build
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test-go.yml
+    with:
+      # check-corrupt first, because a duplicated package clause reads as a syntax error
+      # everywhere else and sends the reader looking in the wrong place.
+      targets: check-corrupt fmt vet script-test build
+      cache: true
 
   sqlite:
     name: Build and Test - Go (SQLite)
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Build and Test - Checkout repository
-        uses: actions/checkout@v7.0.1
-
-      - name: Build and Test - Setup Go
-        uses: actions/setup-go@v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      # Graphviz is a requirement: serve refuses to start without it, and the layout and figure
-      # tests fail rather than skip.
-      - name: Build and Test - Install Graphviz
-        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends graphviz
-
-      - name: Build and Test - Run tests
-        run: make test-sqlite
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test-go.yml
+    with:
+      targets: test-sqlite
+      cache: true
 
   postgres:
     name: Build and Test - Go (PostgreSQL)
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Build and Test - Checkout repository
-        uses: actions/checkout@v7.0.1
-
-      - name: Build and Test - Setup Go
-        uses: actions/setup-go@v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      # Docker is a requirement: the store suite runs on a PostgreSQL primary and physical standby in
-      # containers, and fails rather than skips without a daemon. Ubuntu runners have one.
-      - name: Build and Test - Run tests
-        run: make test-postgres
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test-go.yml
+    with:
+      # Docker is a requirement: the store suite runs on a PostgreSQL primary and physical standby
+      # in containers, and fails rather than skips without a daemon. Ubuntu runners have one.
+      targets: test-postgres
+      cache: true
 
   # One name to require in branch protection, whichever jobs the run is split into.
   build-and-test-go:
     name: Build and Test - Go
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [checks, sqlite, postgres]
     if: always()
 

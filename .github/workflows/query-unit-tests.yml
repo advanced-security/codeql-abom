@@ -36,7 +36,7 @@ jobs:
   # here rather than at release time.
   versions:
     name: Query Unit Tests - Versions
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Versions - Checkout repository
@@ -49,7 +49,7 @@ jobs:
 
   query-unit-tests:
     name: Query Unit Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Query Unit Tests - Checkout repository
