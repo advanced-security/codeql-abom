@@ -152,15 +152,15 @@ func (c *Checkout) cloneURL(owner, repo string) string {
 
 // Fetch materializes owner/repo at ref into dest. An empty ref means the default branch.
 func (c *Checkout) Fetch(ctx context.Context, dest, owner, repo, ref string) (Tree, error) {
-	if c.SourcePolicy != nil {
-		if err := c.SourcePolicy(ctx, owner+"/"+repo); err != nil {
-			return Tree{}, err
-		}
-	}
 	if c.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, c.Timeout)
 		defer cancel()
+	}
+	if c.SourcePolicy != nil {
+		if err := c.SourcePolicy(ctx, owner+"/"+repo); err != nil {
+			return Tree{}, err
+		}
 	}
 	ctx, err := c.as(ctx, owner)
 	if err != nil {
