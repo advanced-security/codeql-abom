@@ -1,8 +1,11 @@
-# The Demo Codespace image: the system packages ABOM needs, and the user the Demo runs as. Versioned
-# tools are installed by on-create.sh, at the versions the checkout names.
+# Copy Go without the feature's remote tag lookup; the feature still configures its environment.
+FROM golang:1.26.0-bookworm@sha256:2a0ba12e116687098780d3ce700f9ce3cb340783779646aafbabed748fa6677c AS go-toolchain
+
 # Pinned as tag@digest so Dependabot can follow the tag. Codespaces' Dev Containers CLI 0.83.3 logs
 # "Could not parse image name" for that form, then pulls and reads the image anyway.
 FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04@sha256:d94c97dd9cacf183d0a6fd12a8e87b526e9e928307674ae9c94139139c0c6eae
+
+COPY --from=go-toolchain /usr/local/go /usr/local/go
 
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
