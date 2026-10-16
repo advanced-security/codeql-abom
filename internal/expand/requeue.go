@@ -46,7 +46,9 @@ func (e *Expander) RequeueStale(ctx context.Context) (Selection, error) {
 // the request in all but name. It runs even when nothing was put back, because a repository
 // already in the queue can still be moved to the front — which is what "run this next" meant.
 func (e *Expander) RequeueRepository(name string) (Selection, error) {
-	e.SourcePolicy.Invalidate(name)
+	if e.SourcePolicy != nil {
+		e.SourcePolicy.Invalidate(name)
+	}
 	name = strings.TrimSpace(name)
 	n, err := e.Store.RequeueRepository(name)
 	if err != nil {
