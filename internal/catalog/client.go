@@ -67,7 +67,8 @@ type Client struct {
 	GraphQL *work.TokenPool
 	// Tokens chooses each request's credential by the account it reads. Nil sends New's token, as before an App.
 	Tokens ghapp.TokenSource
-	// SourcePolicy applies only to remote source/result downloads, not metadata or eligibility probes.
+	// SourcePolicy gates every read of repository content or code-scanning results, alerts included,
+	// and commit comparisons, whose answer carries file patches. Metadata and eligibility probes skip it.
 	SourcePolicy func(context.Context, string) error
 	// Route pins which API reads an account: RouteGraphQL, RouteREST, or empty for the default,
 	// which prefers GraphQL and falls back to REST. Selection is the operator's and detection is
