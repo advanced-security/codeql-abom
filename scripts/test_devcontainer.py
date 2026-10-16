@@ -174,6 +174,20 @@ class ConfigurationTests(unittest.TestCase):
         self.assertIs(features["ghcr.io/devcontainers/features/go:1"].get("installGoTools"), False)
         self.assertEqual(features["ghcr.io/devcontainers/features/node:1"].get("pnpmVersion"), "none")
 
+    def test_go_comes_from_a_pinned_image_without_remote_tag_discovery(self):
+        feature = self.config()["features"]["ghcr.io/devcontainers/features/go:1"]
+        self.assertEqual(feature["version"], "none", "the Go feature must not query go.googlesource.com")
+        dockerfile = (DEVCONTAINER / "Dockerfile").read_text()
+        stage = re.search(
+            r"(?m)^FROM golang:(\d+\.\d+\.\d+)-bookworm@sha256:[0-9a-f]{64} AS (\S+)$",
+            dockerfile,
+        )
+        self.assertIsNotNone(stage, "Go must come from a digest-pinned official image")
+        toolchain = re.search(r"(?m)^toolchain go(\S+)$", (ROOT / "go.mod").read_text())
+        self.assertIsNotNone(toolchain)
+        self.assertEqual(stage.group(1), toolchain.group(1))
+        self.assertIn(f"COPY --from={stage.group(2)} /usr/local/go /usr/local/go", commands(DEVCONTAINER / "Dockerfile"))
+
     # In a Codespace a lifecycle command that fails leaves a recovery container holding none of the
     # tools, so one dropped connection during creation cost the whole Codespace.
     def test_every_network_step_of_creation_is_retried(self):
