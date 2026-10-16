@@ -1343,8 +1343,8 @@
         "text": "A `uses:` reference that no `.github/workflows/actions.lock` entry resolves to a commit runs whatever its ref points at today, with nothing recording what that was."
        },
        "help": {
-        "markdown": "# Action reference not covered by the Actions lockfile\n\nA repository that keeps `.github/workflows/actions.lock` has committed to recording, for every\naction it runs, the exact commit that will run. A `uses:` reference the lockfile does not account\nfor is outside that record: it resolves to whatever its ref points at on the day the workflow runs,\nand nothing in the repository says what that was.\n\nThis query reports such references. It only runs where a lockfile already exists \u2014 a repository\nthat has not adopted `gh actions-lock` is a different question, and not this one.\n\n## Why this is not `actions/unpinned-tag`\n\n`actions/unpinned-tag` asks whether a reference is *pinned*. This query asks whether the lockfile\n*covers* it. The two diverge in three places, and the gap only ever falls this way:\n\n- **Trusted owners.** `actions/unpinned-tag` exempts the `actions` and `github` organizations\n  outright, so `actions/setup-go@v7.0.0` is never examined, lockfile or not.\n- **Bare commits.** A reference written as a full SHA satisfies that query whatever the lockfile\n  says, so an entry can be dropped from the lock without anything reporting it.\n- **Stale entries.** A lockfile entry left at `v1.0.0` after the workflow moved to `v2.0.0`\n  describes a commit nothing will run. The reference still looks pinned.\n\n## Recommendation\n\nRun `gh actions-lock` to add the missing entry, or `gh actions-lock --verify-local --no-fix` to\nreport every uncovered reference without modifying anything.\n\n## Example\n\nWith a lockfile present, the second step is reported and the first is not:\n\n```yaml\nsteps:\n  # Covered: the lockfile lists this reference and resolves it to a commit.\n  - uses: third/party@v1.0.0\n  # Reported: a trusted owner, and absent from the lockfile.\n  - uses: actions/setup-go@v7.0.0\n```\n\nLocal (`./`), same-repository (`$/`) and container (`docker://`) references are never reported.\nThe first two resolve from the checkout at the commit already running, and `gh actions-lock`\nrecords neither them nor images.\n\n## References\n\n- GitHub Docs: [Using an actions lockfile](https://gh.io/actions-lockfile)\n- Common Weakness Enumeration: [CWE-829](https://cwe.mitre.org/data/definitions/829.html)\n",
-        "text": "# Action reference not covered by the Actions lockfile\n\nA repository that keeps `.github/workflows/actions.lock` has committed to recording, for every\naction it runs, the exact commit that will run. A `uses:` reference the lockfile does not account\nfor is outside that record: it resolves to whatever its ref points at on the day the workflow runs,\nand nothing in the repository says what that was.\n\nThis query reports such references. It only runs where a lockfile already exists \u2014 a repository\nthat has not adopted `gh actions-lock` is a different question, and not this one.\n\n## Why this is not `actions/unpinned-tag`\n\n`actions/unpinned-tag` asks whether a reference is *pinned*. This query asks whether the lockfile\n*covers* it. The two diverge in three places, and the gap only ever falls this way:\n\n- **Trusted owners.** `actions/unpinned-tag` exempts the `actions` and `github` organizations\n  outright, so `actions/setup-go@v7.0.0` is never examined, lockfile or not.\n- **Bare commits.** A reference written as a full SHA satisfies that query whatever the lockfile\n  says, so an entry can be dropped from the lock without anything reporting it.\n- **Stale entries.** A lockfile entry left at `v1.0.0` after the workflow moved to `v2.0.0`\n  describes a commit nothing will run. The reference still looks pinned.\n\n## Recommendation\n\nRun `gh actions-lock` to add the missing entry, or `gh actions-lock --verify-local --no-fix` to\nreport every uncovered reference without modifying anything.\n\n## Example\n\nWith a lockfile present, the second step is reported and the first is not:\n\n```yaml\nsteps:\n  # Covered: the lockfile lists this reference and resolves it to a commit.\n  - uses: third/party@v1.0.0\n  # Reported: a trusted owner, and absent from the lockfile.\n  - uses: actions/setup-go@v7.0.0\n```\n\nLocal (`./`), same-repository (`$/`) and container (`docker://`) references are never reported.\nThe first two resolve from the checkout at the commit already running, and `gh actions-lock`\nrecords neither them nor images.\n\n## References\n\n- GitHub Docs: [Using an actions lockfile](https://gh.io/actions-lockfile)\n- Common Weakness Enumeration: [CWE-829](https://cwe.mitre.org/data/definitions/829.html)\n"
+        "markdown": "# Action reference not covered by the Actions lockfile\n\nA repository that keeps `.github/workflows/actions.lock` has committed to recording, for every\naction it runs, the exact commit that will run. A `uses:` reference the lockfile does not account\nfor is outside that record: it resolves to whatever its ref points at on the day the workflow runs,\nand nothing in the repository says what that was.\n\nThis query reports such references. It only runs where a lockfile already exists \u2014 a repository\nthat has not adopted `gh actions-lock` is a different question, and not this one.\n\n## Why this is not `actions/unpinned-tag`\n\n`actions/unpinned-tag` asks whether a reference is *pinned*. This query asks whether the lockfile\n*covers* it. The two diverge in three places, and the gap only ever falls this way:\n\n- **Trusted owners.** `actions/unpinned-tag` exempts the `actions` and `github` organizations\n  outright, so `actions/setup-go@v7.0.0` is never examined, lockfile or not.\n- **Bare commits.** A reference written as a full SHA satisfies that query whatever the lockfile\n  says, so an entry can be dropped from the lock without anything reporting it.\n- **Stale entries.** A lockfile entry left at `v1.0.0` after the workflow moved to `v2.0.0`\n  describes a commit nothing will run. The reference still looks pinned.\n\n## Recommendation\n\nRun `gh actions-lock` to add the missing entry, or `gh actions-lock --verify-local --no-fix` to\nreport every uncovered reference without modifying anything.\n\n## Example\n\nWith a lockfile present, the second step is reported and the first is not:\n\n```yaml\nsteps:\n  # Covered: the lockfile lists this reference and resolves it to a commit.\n  - uses: third/party@v1.0.0\n  # Reported: a trusted owner, and absent from the lockfile.\n  - uses: actions/setup-go@v7.0.0\n```\n\nLocal (`./`), same-repository (`$/`) and container (`docker://`) references are never reported.\nThe first two resolve from the checkout at the commit already running, and `gh actions-lock`\nrecords neither them nor images.\n\n## References\n\n- GitHub Docs: [Workflow dependency lockfiles](https://docs.github.com/en/actions/concepts/security/workflow-dependency-lockfiles)\n- GitHub Docs: [Locking action dependencies in a repository's workflows](https://docs.github.com/en/actions/how-tos/secure-your-work/lock-workflow-dependencies)\n- Common Weakness Enumeration: [CWE-829](https://cwe.mitre.org/data/definitions/829.html)\n",
+        "text": "# Action reference not covered by the Actions lockfile\n\nA repository that keeps `.github/workflows/actions.lock` has committed to recording, for every\naction it runs, the exact commit that will run. A `uses:` reference the lockfile does not account\nfor is outside that record: it resolves to whatever its ref points at on the day the workflow runs,\nand nothing in the repository says what that was.\n\nThis query reports such references. It only runs where a lockfile already exists \u2014 a repository\nthat has not adopted `gh actions-lock` is a different question, and not this one.\n\n## Why this is not `actions/unpinned-tag`\n\n`actions/unpinned-tag` asks whether a reference is *pinned*. This query asks whether the lockfile\n*covers* it. The two diverge in three places, and the gap only ever falls this way:\n\n- **Trusted owners.** `actions/unpinned-tag` exempts the `actions` and `github` organizations\n  outright, so `actions/setup-go@v7.0.0` is never examined, lockfile or not.\n- **Bare commits.** A reference written as a full SHA satisfies that query whatever the lockfile\n  says, so an entry can be dropped from the lock without anything reporting it.\n- **Stale entries.** A lockfile entry left at `v1.0.0` after the workflow moved to `v2.0.0`\n  describes a commit nothing will run. The reference still looks pinned.\n\n## Recommendation\n\nRun `gh actions-lock` to add the missing entry, or `gh actions-lock --verify-local --no-fix` to\nreport every uncovered reference without modifying anything.\n\n## Example\n\nWith a lockfile present, the second step is reported and the first is not:\n\n```yaml\nsteps:\n  # Covered: the lockfile lists this reference and resolves it to a commit.\n  - uses: third/party@v1.0.0\n  # Reported: a trusted owner, and absent from the lockfile.\n  - uses: actions/setup-go@v7.0.0\n```\n\nLocal (`./`), same-repository (`$/`) and container (`docker://`) references are never reported.\nThe first two resolve from the checkout at the commit already running, and `gh actions-lock`\nrecords neither them nor images.\n\n## References\n\n- GitHub Docs: [Workflow dependency lockfiles](https://docs.github.com/en/actions/concepts/security/workflow-dependency-lockfiles)\n- GitHub Docs: [Locking action dependencies in a repository's workflows](https://docs.github.com/en/actions/how-tos/secure-your-work/lock-workflow-dependencies)\n- Common Weakness Enumeration: [CWE-829](https://cwe.mitre.org/data/definitions/829.html)\n"
        },
        "id": "abom/actions/uncovered-action-ref",
        "name": "abom/actions/uncovered-action-ref",
@@ -1374,6 +1374,10 @@
        },
        "fullDescription": {
         "text": "A repository that runs workflows and keeps no `.github/workflows/actions.lock` records nothing about which commit any of its `uses:` references resolves to."
+       },
+       "help": {
+        "markdown": "# Workflows without an Actions lockfile\n\n`.github/workflows/actions.lock` records, for every action a repository runs, the exact commit that\nwill run. A repository with workflows but no lockfile has no such record: each `uses:` reference\nresolves to whatever its ref points at on the day the workflow runs, and a tag can be moved to a\ndifferent commit at any time by whoever owns it.\n\nThis query reports that absence once per repository, naming how many workflow files are affected.\n\n## Why this is reported separately\n\n`abom/actions/uncovered-action-ref` compares a workflow against a lockfile, so it has nothing to\ncompare against \u2014 and therefore stays silent \u2014 on exactly the repositories with the least coverage.\nReading that silence as \"no problem found\" inverts the truth. The two queries are complements: one\nmeasures gaps *within* an adopted lockfile, this one measures *non-adoption*.\n\nTogether they hold the invariant that every repository with workflows produces at least one finding\nuntil it is both onboarded and fully covered.\n\n## Scope\n\nOnly files directly in `.github/workflows/` ending `.yml` or `.yaml` are counted. Composite actions\n(`.github/actions/*/action.yml`) are not workflows, and GitHub does not run workflows from\nsubdirectories of `.github/workflows/`, so neither is counted.\n\nA repository with no workflow files at all is not reported: there is nothing for a lockfile to\ncover, so its absence is not a gap.\n\n## Recommendation\n\nRun `gh actions-lock` to generate the lockfile and commit it, then `gh actions-lock --verify-local\n--no-fix` in CI to keep it honest.\n\n## Example\n\nA repository containing only this workflow, and no `.github/workflows/actions.lock`, is reported:\n\n```yaml\non: push\n\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      # Resolves to whatever `v4` points at when this runs. Nothing here records what that was.\n      - uses: actions/checkout@v4\n```\n\n## References\n\n- GitHub Docs: [Workflow dependency lockfiles](https://docs.github.com/en/actions/concepts/security/workflow-dependency-lockfiles)\n- GitHub Docs: [Locking action dependencies in a repository's workflows](https://docs.github.com/en/actions/how-tos/secure-your-work/lock-workflow-dependencies)\n- Common Weakness Enumeration: [CWE-829](https://cwe.mitre.org/data/definitions/829.html)\n",
+        "text": "# Workflows without an Actions lockfile\n\n`.github/workflows/actions.lock` records, for every action a repository runs, the exact commit that\nwill run. A repository with workflows but no lockfile has no such record: each `uses:` reference\nresolves to whatever its ref points at on the day the workflow runs, and a tag can be moved to a\ndifferent commit at any time by whoever owns it.\n\nThis query reports that absence once per repository, naming how many workflow files are affected.\n\n## Why this is reported separately\n\n`abom/actions/uncovered-action-ref` compares a workflow against a lockfile, so it has nothing to\ncompare against \u2014 and therefore stays silent \u2014 on exactly the repositories with the least coverage.\nReading that silence as \"no problem found\" inverts the truth. The two queries are complements: one\nmeasures gaps *within* an adopted lockfile, this one measures *non-adoption*.\n\nTogether they hold the invariant that every repository with workflows produces at least one finding\nuntil it is both onboarded and fully covered.\n\n## Scope\n\nOnly files directly in `.github/workflows/` ending `.yml` or `.yaml` are counted. Composite actions\n(`.github/actions/*/action.yml`) are not workflows, and GitHub does not run workflows from\nsubdirectories of `.github/workflows/`, so neither is counted.\n\nA repository with no workflow files at all is not reported: there is nothing for a lockfile to\ncover, so its absence is not a gap.\n\n## Recommendation\n\nRun `gh actions-lock` to generate the lockfile and commit it, then `gh actions-lock --verify-local\n--no-fix` in CI to keep it honest.\n\n## Example\n\nA repository containing only this workflow, and no `.github/workflows/actions.lock`, is reported:\n\n```yaml\non: push\n\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      # Resolves to whatever `v4` points at when this runs. Nothing here records what that was.\n      - uses: actions/checkout@v4\n```\n\n## References\n\n- GitHub Docs: [Workflow dependency lockfiles](https://docs.github.com/en/actions/concepts/security/workflow-dependency-lockfiles)\n- GitHub Docs: [Locking action dependencies in a repository's workflows](https://docs.github.com/en/actions/how-tos/secure-your-work/lock-workflow-dependencies)\n- Common Weakness Enumeration: [CWE-829](https://cwe.mitre.org/data/definitions/829.html)\n"
        },
        "id": "abom/actions/actions-lock-missing-for-workflow",
        "name": "abom/actions/actions-lock-missing-for-workflow",
@@ -1423,7 +1427,7 @@
        }
       }
      ],
-     "semanticVersion": "2.27.0"
+     "semanticVersion": "2.27.2"
     },
     "extensions": [
      {
@@ -1437,7 +1441,7 @@
           "CodeQL/LocalPackRoot"
          ]
         },
-        "uri": "file:///codeql/packages/codeql/actions-queries/0.6.35/"
+        "uri": "file:///codeql/packages/codeql/actions-queries/0.6.37/"
        },
        {
         "description": {
@@ -1448,11 +1452,11 @@
           "CodeQL/LocalPackDefinitionFile"
          ]
         },
-        "uri": "file:///codeql/packages/codeql/actions-queries/0.6.35/qlpack.yml"
+        "uri": "file:///codeql/packages/codeql/actions-queries/0.6.37/qlpack.yml"
        }
       ],
       "name": "codeql/actions-queries",
-      "semanticVersion": "0.6.35+c6baf479093fafc81d4655dc2014dc583360308e"
+      "semanticVersion": "0.6.37+a7057b836bf29767461026718b14d20790b9085f"
      },
      {
       "locations": [
@@ -1465,7 +1469,7 @@
           "CodeQL/LocalPackRoot"
          ]
         },
-        "uri": "file:///codeql/packages/codeql/actions-queries/0.6.35/.codeql/libraries/codeql/actions-all/0.6.1/"
+        "uri": "file:///codeql/packages/codeql/actions-queries/0.6.37/.codeql/libraries/codeql/actions-all/0.6.3/"
        },
        {
         "description": {
@@ -1476,11 +1480,11 @@
           "CodeQL/LocalPackDefinitionFile"
          ]
         },
-        "uri": "file:///codeql/packages/codeql/actions-queries/0.6.35/.codeql/libraries/codeql/actions-all/0.6.1/qlpack.yml"
+        "uri": "file:///codeql/packages/codeql/actions-queries/0.6.37/.codeql/libraries/codeql/actions-all/0.6.3/qlpack.yml"
        }
       ],
       "name": "codeql/actions-all",
-      "semanticVersion": "0.6.1+c6baf479093fafc81d4655dc2014dc583360308e"
+      "semanticVersion": "0.6.3+a7057b836bf29767461026718b14d20790b9085f"
      },
      {
       "locations": [
@@ -1493,7 +1497,7 @@
           "CodeQL/LocalPackRoot"
          ]
         },
-        "uri": "file:///codeql/packages/codeql/actions-queries/0.6.35/.codeql/libraries/codeql/javascript-all/2.10.1/"
+        "uri": "file:///codeql/packages/codeql/actions-queries/0.6.37/.codeql/libraries/codeql/javascript-all/2.10.3/"
        },
        {
         "description": {
@@ -1504,11 +1508,11 @@
           "CodeQL/LocalPackDefinitionFile"
          ]
         },
-        "uri": "file:///codeql/packages/codeql/actions-queries/0.6.35/.codeql/libraries/codeql/javascript-all/2.10.1/qlpack.yml"
+        "uri": "file:///codeql/packages/codeql/actions-queries/0.6.37/.codeql/libraries/codeql/javascript-all/2.10.3/qlpack.yml"
        }
       ],
       "name": "codeql/javascript-all",
-      "semanticVersion": "2.10.1+c6baf479093fafc81d4655dc2014dc583360308e"
+      "semanticVersion": "2.10.3+a7057b836bf29767461026718b14d20790b9085f"
      },
      {
       "locations": [
@@ -1521,7 +1525,7 @@
           "CodeQL/LocalPackRoot"
          ]
         },
-        "uri": "file:///codeql/packages/codeql/actions-queries/0.6.35/.codeql/libraries/codeql/threat-models/1.0.57/"
+        "uri": "file:///codeql/packages/codeql/actions-queries/0.6.37/.codeql/libraries/codeql/threat-models/1.0.59/"
        },
        {
         "description": {
@@ -1532,11 +1536,11 @@
           "CodeQL/LocalPackDefinitionFile"
          ]
         },
-        "uri": "file:///codeql/packages/codeql/actions-queries/0.6.35/.codeql/libraries/codeql/threat-models/1.0.57/qlpack.yml"
+        "uri": "file:///codeql/packages/codeql/actions-queries/0.6.37/.codeql/libraries/codeql/threat-models/1.0.59/qlpack.yml"
        }
       ],
       "name": "codeql/threat-models",
-      "semanticVersion": "1.0.57+c6baf479093fafc81d4655dc2014dc583360308e"
+      "semanticVersion": "1.0.59+a7057b836bf29767461026718b14d20790b9085f"
      },
      {
       "locations": [
@@ -1564,7 +1568,7 @@
        }
       ],
       "name": "advanced-security/abom-actions-findings-src",
-      "semanticVersion": "2.27.0+66bff22cf450b79264fab8a348d89fb9f7bcdd1e"
+      "semanticVersion": "2.27.2+562d98cceb0338fa8eb5f095aa266ecb30676c05"
      },
      {
       "locations": [
@@ -1577,7 +1581,7 @@
           "CodeQL/LocalPackRoot"
          ]
         },
-        "uri": "file:///codeql/packages/codeql/actions-all/0.6.1/"
+        "uri": "file:///codeql/packages/codeql/actions-all/0.6.3/"
        },
        {
         "description": {
@@ -1588,11 +1592,11 @@
           "CodeQL/LocalPackDefinitionFile"
          ]
         },
-        "uri": "file:///codeql/packages/codeql/actions-all/0.6.1/qlpack.yml"
+        "uri": "file:///codeql/packages/codeql/actions-all/0.6.3/qlpack.yml"
        }
       ],
       "name": "codeql/actions-all",
-      "semanticVersion": "0.6.1+c6baf479093fafc81d4655dc2014dc583360308e"
+      "semanticVersion": "0.6.3+a7057b836bf29767461026718b14d20790b9085f"
      },
      {
       "locations": [
@@ -1605,7 +1609,7 @@
           "CodeQL/LocalPackRoot"
          ]
         },
-        "uri": "file:///codeql/packages/codeql/javascript-all/2.10.1/"
+        "uri": "file:///codeql/packages/codeql/javascript-all/2.10.3/"
        },
        {
         "description": {
@@ -1616,11 +1620,11 @@
           "CodeQL/LocalPackDefinitionFile"
          ]
         },
-        "uri": "file:///codeql/packages/codeql/javascript-all/2.10.1/qlpack.yml"
+        "uri": "file:///codeql/packages/codeql/javascript-all/2.10.3/qlpack.yml"
        }
       ],
       "name": "codeql/javascript-all",
-      "semanticVersion": "2.10.1+c6baf479093fafc81d4655dc2014dc583360308e"
+      "semanticVersion": "2.10.3+a7057b836bf29767461026718b14d20790b9085f"
      },
      {
       "locations": [
@@ -1633,7 +1637,7 @@
           "CodeQL/LocalPackRoot"
          ]
         },
-        "uri": "file:///codeql/packages/codeql/threat-models/1.0.57/"
+        "uri": "file:///codeql/packages/codeql/threat-models/1.0.59/"
        },
        {
         "description": {
@@ -1644,11 +1648,11 @@
           "CodeQL/LocalPackDefinitionFile"
          ]
         },
-        "uri": "file:///codeql/packages/codeql/threat-models/1.0.57/qlpack.yml"
+        "uri": "file:///codeql/packages/codeql/threat-models/1.0.59/qlpack.yml"
        }
       ],
       "name": "codeql/threat-models",
-      "semanticVersion": "1.0.57+c6baf479093fafc81d4655dc2014dc583360308e"
+      "semanticVersion": "1.0.59+a7057b836bf29767461026718b14d20790b9085f"
      }
     ]
    }

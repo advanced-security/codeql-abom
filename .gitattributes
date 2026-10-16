@@ -1,0 +1,2 @@
+# Recorded by scripts/regenerate-corpus-fixtures.sh and never edited by hand; collapsed in GitHub diffs.
+testdata/corpus/fixtures/**/*.sarif linguist-generated=true
