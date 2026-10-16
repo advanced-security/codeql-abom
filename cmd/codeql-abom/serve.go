@@ -28,6 +28,7 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/runner"
 	"github.com/advanced-security/codeql-abom/internal/serve"
 	"github.com/advanced-security/codeql-abom/internal/setup"
+	"github.com/advanced-security/codeql-abom/internal/sourcepolicy"
 	"github.com/advanced-security/codeql-abom/internal/store"
 	"github.com/advanced-security/codeql-abom/internal/supervisor"
 	"github.com/advanced-security/codeql-abom/internal/toolchain"
@@ -261,7 +262,11 @@ func newProcessor(
 	}
 	if reader != nil {
 		processor.Branches, processor.Databases = reader.ProtectedBranches, reader.FindDatabase
-		processor.Setup = setup.Reader{Store: s, Catalog: reader}.Read
+		var policy *sourcepolicy.Policy
+		if loop.Expander != nil {
+			policy = loop.Expander.SourcePolicy
+		}
+		processor.Setup = sourceSetupReader(s, policy, setup.Reader{Store: s, Catalog: reader}.Read)
 		processor.Dependencies = reader.CompareDependencies
 	}
 	if loop.Enumerate != nil {
@@ -369,6 +374,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) (res
 		return fmt.Errorf("serve: %w", err)
 	}
 	wireTrees(ctx, loop, cfg.apiURL, tokens)
+	wireSourcePolicy(ctx, loop.Expander, s, cfg.apiURL, tokens, stderr)
 	wireCodeScanning(ctx, loop, s, cfg)
 	if err := primeServedStore(s, loop.Queue, stdout, stderr); err != nil {
 		return err
@@ -630,7 +636,11 @@ func newConfiguredServer(
 	srv.EnumerateBranches = reader.ProtectedBranches
 	srv.EnumerateRepository = reader.ReadRepository
 	setupReader := setup.Reader{Store: s, Catalog: reader}
-	srv.EnumerateSetup = setupReader.Read
+	if policy := loop.Expander.SourcePolicy; policy != nil {
+		reader.SourcePolicy = policy.Check
+		srv.InvalidateSources = policy.InvalidateAll
+	}
+	srv.EnumerateSetup = sourceSetupReader(s, loop.Expander.SourcePolicy, setupReader.Read)
 	srv.EnumerateConfigurations = setupReader.ReadConfigurations
 	srv.CodeScanningWrites = codeScanningWrites(ctx, cfg, s, setupReader)
 	srv.FindDatabase = reader.FindDatabase
@@ -640,7 +650,11 @@ func newConfiguredServer(
 	srv.GroupProperty = cfg.groupProperty
 	srv.QueueOwned = func() (int, error) { return expand.SeedOwnedRepositories(s, loop.Queue) }
 	srv.QueueClosure = loop.Queue.Closure
-	verifier := lockVerifier(s, tokens)
+	var sourceCheck func(context.Context, string) error
+	if policy := loop.Expander.SourcePolicy; policy != nil {
+		sourceCheck = policy.Check
+	}
+	verifier := lockVerifierWithPolicy(s, tokens, sourceCheck, cfg.apiURL)
 	fetchTree, locks := verifier.Fetch, processPools.Pool(work.PoolLocks, work.UnitGit)
 	verifier.Fetch = func(ctx context.Context, dest, owner, repo, commit string) error {
 		if err := locks.Take(ctx); err != nil {

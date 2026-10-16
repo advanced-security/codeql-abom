@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/advanced-security/codeql-abom/internal/catalog"
+	"github.com/advanced-security/codeql-abom/internal/sourcepolicy"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
@@ -104,6 +105,9 @@ func (s *Server) readExample(ctx context.Context, e store.RequestExample) (store
 	}
 	batch, err := s.Files.CommitFiles(ctx, repository, commit, []string{path})
 	if err != nil {
+		if sourcepolicy.IsDenied(err) {
+			return e, http.StatusForbidden, err
+		}
 		return e, http.StatusBadGateway, fmt.Errorf("reading %s: %w", e.URL, err)
 	}
 	file := batch.Files[path]

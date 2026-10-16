@@ -61,6 +61,21 @@ func controlRequest(target string) *http.Request {
 	return r
 }
 
+func TestRetryUnavailableRefreshesSourceEvidenceOnlyAfterControlAuthorization(t *testing.T) {
+	s, _ := newServer(t)
+	refreshes := 0
+	s.InvalidateSources = func() { refreshes++ }
+	s.Handler().ServeHTTP(httptest.NewRecorder(), localRequest(http.MethodPost, "/api/discovery/retry-unavailable", nil))
+	if refreshes != 0 {
+		t.Fatal("an unauthorized request changed source evidence")
+	}
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, controlRequest("/api/discovery/retry-unavailable"))
+	if w.Code != http.StatusOK || refreshes != 1 {
+		t.Fatalf("status=%d refreshes=%d body=%s", w.Code, refreshes, w.Body)
+	}
+}
+
 // A handler answers the caller and nothing else, so a query that breaks for every reader leaves
 // no trace on the machine actually running it.
 func TestAFailedRequestIsRecordedServerSide(t *testing.T) {

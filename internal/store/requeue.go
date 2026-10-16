@@ -89,6 +89,23 @@ type UnavailableRetry struct {
 	NamesNoRepository int `json:"namesNoRepository"`
 }
 
+func (s *Store) SourcePolicySkipped(repository string) (bool, error) {
+	var found bool
+	err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM abom_frontier
+		WHERE status = 'unavailable' AND reason LIKE 'source policy:%'
+		  AND LOWER(owner || '/' || repo) = LOWER(?))`, repository).Scan(&found)
+	if err != nil {
+		return false, fmt.Errorf("reading source-policy skips: %w", err)
+	}
+	return found, nil
+}
+
+func (s *Store) RetrySourcePolicy(repository string) (int, error) {
+	result, err := s.retryUnavailable(` AND reason LIKE 'source policy:%'
+		AND LOWER(owner || '/' || repo) = LOWER(?)`, repository)
+	return result.Requeued, err
+}
+
 // RetryUnavailable puts every dependency that could not be fetched back in the queue.
 //
 // Nothing retries unavailable work on its own: Git reports a missing credential and a missing

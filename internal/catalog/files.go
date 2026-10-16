@@ -33,6 +33,9 @@ func (c *Client) CommitFiles(ctx context.Context, repository, commit string, pat
 	if len(paths) == 0 {
 		return out, nil
 	}
+	if err := c.allowSource(ctx, repository); err != nil {
+		return out, err
+	}
 	owner, name, err := splitRepository(repository)
 	if err != nil {
 		return out, err

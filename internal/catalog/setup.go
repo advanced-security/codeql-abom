@@ -183,6 +183,9 @@ func deref(s *string) string {
 
 // FileContent reads one file of a repository at ref through the contents API.
 func (c *Client) FileContent(ctx context.Context, repository, path, ref string) ([]byte, error) {
+	if err := c.allowSource(ctx, repository); err != nil {
+		return nil, err
+	}
 	owner, name, err := splitRepository(repository)
 	if err != nil {
 		return nil, err

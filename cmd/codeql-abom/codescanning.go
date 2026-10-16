@@ -20,5 +20,8 @@ func wireCodeScanning(ctx context.Context, loop *supervisor.Supervisor, s store.
 	// The build a refused read falls back to costs less than waiting out a rate limit.
 	client.MaxRetries = 0
 	client.REST = processPools.Pool(work.PoolFetching, work.UnitREST)
+	if policy := loop.Expander.SourcePolicy; policy != nil {
+		client.SourcePolicy = policy.Check
+	}
 	loop.Expander.CodeScanning = client
 }

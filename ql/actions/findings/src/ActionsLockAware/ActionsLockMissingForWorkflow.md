@@ -48,5 +48,6 @@ jobs:
 
 ## References
 
-- GitHub Docs: [Using an actions lockfile](https://gh.io/actions-lockfile)
+- GitHub Docs: [Workflow dependency lockfiles](https://docs.github.com/en/actions/concepts/security/workflow-dependency-lockfiles)
+- GitHub Docs: [Locking action dependencies in a repository's workflows](https://docs.github.com/en/actions/how-tos/secure-your-work/lock-workflow-dependencies)
 - Common Weakness Enumeration: [CWE-829](https://cwe.mitre.org/data/definitions/829.html)

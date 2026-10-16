@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/advanced-security/codeql-abom/internal/catalog"
+	"github.com/advanced-security/codeql-abom/internal/sourcepolicy"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
@@ -24,6 +25,7 @@ type fakeFiles struct {
 	files     map[string]catalog.CommitFile
 	refCalls  [][]catalog.RefQuestion
 	fileCalls []string
+	fileErr   error
 }
 
 func (f *fakeFiles) ResolveRefs(_ context.Context, qs []catalog.RefQuestion) (catalog.RefBatch, error) {
@@ -40,6 +42,9 @@ func (f *fakeFiles) ResolveRefs(_ context.Context, qs []catalog.RefQuestion) (ca
 }
 
 func (f *fakeFiles) CommitFiles(_ context.Context, repository, commit string, paths []string) (catalog.FileBatch, error) {
+	if f.fileErr != nil {
+		return catalog.FileBatch{}, f.fileErr
+	}
 	out := catalog.FileBatch{Files: map[string]catalog.CommitFile{}}
 	for _, p := range paths {
 		key := repository + "@" + commit + ":" + p
@@ -54,6 +59,15 @@ func (f *fakeFiles) CommitFiles(_ context.Context, repository, commit string, pa
 }
 
 const ciLink = "https://github.com/octo/app/blob/feature/x/.github/workflows/ci.yml#L2-L3"
+
+func TestASourcePolicyRefusalIsNotReportedAsABrokenGitHubService(t *testing.T) {
+	s, f := filesServer(t)
+	f.fileErr = &sourcepolicy.Denied{Repository: "octo/app", Reason: "private and not declared owned"}
+	w := postRequest(s, linkedBody(t, store.RequestExample{Side: store.ExampleNonCompliant, URL: ciLink}))
+	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "source policy") {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body)
+	}
+}
 
 func filesServer(t *testing.T) (*Server, *fakeFiles) {
 	t.Helper()

@@ -1,5 +1,5 @@
 {
-  "cliVersion": "2.27.1",
+  "cliVersion": "2.27.2",
   "runs": [
     {
       "query": "CheckoutTagPin",

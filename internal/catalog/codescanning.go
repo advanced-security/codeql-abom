@@ -37,6 +37,9 @@ type Alert struct {
 // already decided about, and a fixed one reopens when its result comes back. A read that asked
 // for open alerts alone would count the other two as new.
 func (c *Client) CodeScanningAlerts(ctx context.Context, repository string) ([]Alert, error) {
+	if err := c.allowSource(ctx, repository); err != nil {
+		return nil, err
+	}
 	owner, name, err := splitRepository(repository)
 	if err != nil {
 		return nil, err
@@ -210,6 +213,9 @@ func (c *Client) analysesPage(ctx context.Context, repository, ref string) ([]An
 
 // DownloadAnalysis writes one analysis's SARIF document to destPath, as GitHub serves it.
 func (c *Client) DownloadAnalysis(ctx context.Context, repository string, id int64, destPath string) error {
+	if err := c.allowSource(ctx, repository); err != nil {
+		return err
+	}
 	owner, name, err := splitRepository(repository)
 	if err != nil {
 		return err
@@ -233,6 +239,9 @@ type Moved struct {
 
 // CompareCommits reports how head relates to base.
 func (c *Client) CompareCommits(ctx context.Context, repository, base, head string) (Moved, error) {
+	if err := c.allowSource(ctx, repository); err != nil {
+		return Moved{}, err
+	}
 	owner, name, err := splitRepository(repository)
 	if err != nil {
 		return Moved{}, err

@@ -149,6 +149,7 @@ func githubClient(ctx context.Context, apiURL string, s store.Backend, tokens gh
 	c.Pace = githubPace
 	c.REST = processPools.Pool(work.PoolEnumeration, work.UnitREST)
 	c.GraphQL = processPools.Pool(work.PoolEnumeration, work.UnitGraphQL)
+	protectSources(s, c, os.Stderr)
 	return c
 }
 

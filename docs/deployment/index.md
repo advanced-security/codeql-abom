@@ -33,9 +33,7 @@ The live database is embedded SQLite with a single running owner. Do not place i
 network storage or run multiple server/CLI writers against it. Its WAL is part of its committed
 state; copying only the main database file is not a backup.
 
-CodeQL's license and repository authorization apply independently of installation. ABOM does not
-currently enforce a base-repository Code Scanning eligibility policy. Missing coverage or failed
-reads are not evidence that a repository is clean.
+ABOM applies [best-effort remote-source checks](configuration.md#remote-source-eligibility).
 
 The [deployment plan](../../plans/tools/deployment.md) owns release archives and Kubernetes work,
 including the proposed Linux/macOS amd64/arm64 release matrix. Windows is outside that workstream.

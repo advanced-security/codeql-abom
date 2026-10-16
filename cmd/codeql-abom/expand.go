@@ -324,7 +324,7 @@ func newExpander(
 		cleanup()
 		return nil, nil, nil, err
 	}
-	return &expand.Expander{
+	e := &expand.Expander{
 		Queue:    queue,
 		Store:    s,
 		Ingester: ingest.New(s, w),
@@ -341,7 +341,9 @@ func newExpander(
 		Cache:     cache,
 		Databases: databases,
 		OnEvent:   logFailures(stdout),
-	}, cache, cleanup, nil
+	}
+	wireSourcePolicy(context.Background(), e, s, defaultAPIURL(), cfg.tokens, stdout)
+	return e, cache, cleanup, nil
 }
 
 func runExpandRounds(
