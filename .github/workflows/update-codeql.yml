@@ -208,7 +208,7 @@ jobs:
       # Graphviz is a requirement: serve refuses to start without it, and the layout and figure
       # tests fail rather than skip.
       - name: Upgrade - Setup Graphviz
-        run: scripts/setup-graphviz.sh
+        run: bash scripts/setup-graphviz.sh
 
       - name: Upgrade - Verify
         run: make verify
