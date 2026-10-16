@@ -176,7 +176,7 @@ class ConfigurationTests(unittest.TestCase):
 
     def test_go_comes_from_a_pinned_image_without_remote_tag_discovery(self):
         feature = self.config()["features"]["ghcr.io/devcontainers/features/go:1"]
-        self.assertEqual(feature["version"], "none", "the Go feature must not query go.googlesource.com")
+        self.assertEqual(feature.get("version"), "none", "the Go feature must not query go.googlesource.com")
         dockerfile = (DEVCONTAINER / "Dockerfile").read_text()
         stage = re.search(
             r"(?m)^FROM golang:(\d+\.\d+\.\d+)-bookworm@sha256:[0-9a-f]{64} AS (\S+)$",
