@@ -30,7 +30,7 @@ const SuitePath = "codeql-suites/abom-custom.qls"
 
 // ActionsAll is the codeql/actions-all both scaffolded packs pin: the version ABOM's own queries
 // and ql-mcp's tool queries resolve, so a query is written and run against one library.
-const ActionsAll = "0.6.3"
+const ActionsAll = "0.7.0"
 
 // Postprocess is the query, relative to the test pack, that reads a fixture's `# $ Alert` markers.
 const Postprocess = "utils/InlineExpectationsTestQuery.ql"
