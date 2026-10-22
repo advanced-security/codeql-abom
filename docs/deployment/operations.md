@@ -84,7 +84,7 @@ is not available merely because SQLite can produce a snapshot.
 
 ## Checkout updates and removal
 
-ABOM is unreleased and has no supported release-to-release upgrade or downgrade procedure. Before
+ABOM has no supported release-to-release upgrade or downgrade procedure. Before
 changing a working checkout, stop its server and preserve its state. Follow
 [source setup](source.md) again for changed toolchain pins or query dependencies, then rebuild.
 Startup migrations are not a promise that an older executable can read the resulting database.
