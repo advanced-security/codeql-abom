@@ -1,7 +1,7 @@
 name: advanced-security/abom-python-quality-src
-version: 2.27.2
+version: 2.27.3
 description: "Security and quality queries ABOM runs against its own Python"
 library: false
 suites: codeql-suites
 dependencies:
-  codeql/python-queries: 1.8.12
+  codeql/python-queries: 1.8.13

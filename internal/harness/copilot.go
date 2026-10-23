@@ -53,7 +53,7 @@ var builtins = []string{"view", "glob", "grep", "create", "edit"}
 const DefaultModel = "claude-opus-5"
 
 // DefaultQLMCP starts the ql-mcp release the loop was recorded against.
-const DefaultQLMCP = "npx -y codeql-development-mcp-server@2.27.2"
+const DefaultQLMCP = "npx -y codeql-development-mcp-server@2.27.3"
 
 // mcpTimeout bounds one ql-mcp call; extracting and testing run CodeQL.
 const mcpTimeout = int((20 * time.Minute) / time.Millisecond)
