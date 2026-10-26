@@ -8,8 +8,10 @@ including findings about private code that cannot travel the public advisory rou
 
 ## GETTING STARTED
 
-**ABOM is unreleased. Building from source is the only supported installation.** GitHub Release
-downloads and Helm deployment are not available.
+**ABOM is published as [GitHub Releases](https://github.com/advanced-security/codeql-abom/releases)**:
+verifiable archives for Linux and macOS on amd64 and arm64, each built against the CodeQL CLI its
+version names. A release's notes say how to verify its archive and start it. You can also build
+from source, as the steps below do. Helm deployment is planned but not yet available.
 
 To try ABOM without an organization, run a [Demo](docs/demo.md) from an archive of this
 repository: `make demo-check`, then `make demo`. Or
@@ -62,7 +64,6 @@ claim traces back to the query or advisory that made it. If `actions/unpinned-ta
 a reference, this tool will not tell you it is safe — it will tell you the rule did not look.
 
 Coverage, unresolved dependencies and unplaceable findings are reported as first-class output.
-Silence about what was not analyzed reads as completeness, and would be a lie.
 
 ## Native Actions lockfiles
 

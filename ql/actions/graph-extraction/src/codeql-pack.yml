@@ -1,8 +1,8 @@
 name: advanced-security/abom-actions-graph-extraction-src
-version: 2.27.2
+version: 2.27.3
 description: 'Extraction queries for the Actions Bill of Materials (ABOM)'
 library: false
 suites: codeql-suites
 dependencies:
-  codeql/actions-all: 0.6.3
+  codeql/actions-all: 0.7.0
   advanced-security/abom-actions-lib: ${workspace}

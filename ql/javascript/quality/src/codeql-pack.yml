@@ -1,7 +1,7 @@
 name: advanced-security/abom-javascript-quality-src
-version: 2.27.2
+version: 2.27.3
 description: "Code quality queries ABOM runs against its own browser code"
 library: false
 suites: codeql-suites
 dependencies:
-  codeql/javascript-queries: 2.4.7
+  codeql/javascript-queries: 2.4.8

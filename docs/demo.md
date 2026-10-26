@@ -185,11 +185,11 @@ Install the CodeQL CLI with the [GitHub CLI](https://cli.github.com/)'s `gh code
 ```bash
 gh auth login                                   # once; the extension downloads CodeQL from GitHub
 gh extension install github/gh-codeql
-gh codeql set-version v2.27.2
+gh codeql set-version v2.27.3
 mkdir -p "$HOME/.local/bin"
 gh codeql install-stub "$HOME/.local/bin"       # puts `codeql` on PATH
 export PATH="$HOME/.local/bin:$PATH"            # add this line to your shell profile too
-codeql version --format=terse                   # prints 2.27.2
+codeql version --format=terse                   # prints 2.27.3
 ```
 
 Any patch release of the minor version in [`.codeql-version`](../.codeql-version) (`v2.27.x`, at

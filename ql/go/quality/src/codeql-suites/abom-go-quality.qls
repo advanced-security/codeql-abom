@@ -10,4 +10,4 @@
 # that moves on its own cannot be a baseline, and a gate built on one cannot be a gate.
 - import: codeql-suites/go-security-and-quality.qls
   from: codeql/go-queries
-  version: 1.6.12
+  version: 1.6.13
