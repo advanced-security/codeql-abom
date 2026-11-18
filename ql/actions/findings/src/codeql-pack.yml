@@ -1,9 +1,9 @@
 name: advanced-security/abom-actions-findings-src
-version: 2.27.2
+version: 2.27.3
 description: 'Actions queries whose findings ABOM records and attributes, upstream and its own'
 library: false
 suites: codeql-suites
 dependencies:
-  codeql/actions-queries: 0.6.37
-  codeql/actions-all: 0.6.3
+  codeql/actions-queries: 0.6.38
+  codeql/actions-all: 0.7.0
   advanced-security/abom-actions-lib: ${workspace}
