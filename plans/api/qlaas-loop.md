@@ -33,8 +33,13 @@ allowlist: the name may already have been allowed, and the argument is what fail
 1. **Confirm the refusal, then offer the server's tools.** Read one real session's refused event.
    Offer every ql-mcp tool the pinned server advertises, not a list copied from a document that
    will drift. LSP tools take the arguments the server documents: a plain pack directory for
-   `workspace_uri`, 0-based positions, and `file_path` as well as `ql_code`. A tool the server
-   does not advertise is still refused by name. Depends on nothing.
+   `workspace_uri`, 0-based positions, and `file_path` as well as `ql_code`. **The fix for the
+   `packURI` mismatch is to accept the plain directory path the server documents and keep
+   confinement unchanged:** the path is resolved through links and must be the pack or inside it,
+   exactly as `packFile` already judges it. A `file://` URI stays accepted for the same check, and
+   is normalized to a path first. ABOM does not rewrite the argument it forwards. The same rule
+   applies to `workspace_uri` on every LSP tool. A tool the server does not advertise is still
+   refused by name. Depends on nothing.
 2. **Three tools stay refused, by name, with the reason.** `codeql_test_accept` makes the query's
    own output the expected result, so the test can never fail. `codeql_pack_install` rewrites the
    lock ABOM resolves. `create_codeql_query` writes a layout ABOM did not choose. An argument that

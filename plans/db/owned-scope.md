@@ -42,7 +42,7 @@ the operator both has the privilege to analyze and the responsibility to remedia
    deferral — private repositories, the cheap listing missing team grants, advisory forks that
    are not claims — lives there. This plan keeps the predicate those claims are saved into.
    Membership still decides nothing on its own. The person's token is not a crawl credential.
-3. **The pre-flight role check is the same plan.** `gh` verification is recorded and shown beside
+3. **The pre-flight role check is deferred to the ownership plan.** `gh` verification is recorded and shown beside
    each declaration, and the gate asks only whether a scope is declared. Checking that the
    recorded role still supports the claim is [ownership claims](../api/ownership-claims.md). It
    is not what stops a crawl from being unbounded, and it is not a second reader of the honored

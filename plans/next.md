@@ -121,7 +121,7 @@ ownership by repository property, which the operator ranked ahead of them, is bu
   observed Dependabot update of workflow and lock need an approved target, coordinated with
   [the native coverage crosscheck](api/dependency-graph-crosscheck.md). GitHub owns generation
   and verification, not a second ABOM pinning tool.
-6. **[Measure native Actions coverage before filling a gap](api/dependency-graph-crosscheck.md)** -
+6. **[Measure native Actions coverage before filling a gap](api/dependency-graph-crosscheck.md)** —
   the isolated source-extraction comparison at identical commits runs continuously against GitHub's
   own parsers as the checker's check 1; native lock evidence and the reference action's parser are
   still to compare over the same trees, and need no submission or live test target.
@@ -141,7 +141,7 @@ ownership by repository property, which the operator ranked ahead of them, is bu
     is built: findings or advisories, how an owned repository reaches either, and other policies
     by name. Its verdict-only client
     remains deferred in [api/abom-check.md](api/abom-check.md).
-8. **[A commit-pinned action can still be named as a version](db/version-resolution.md)** - measured
+8. **[A commit-pinned action can still be named as a version](db/version-resolution.md)** — measured
     crawl mappings already feed versions into the existing submission path. Remaining lookup fills
     version-evidence gaps, including native lock refs whose release association is unverified;
     it never substitutes a live tag for the commit a [lock selects](../docs/architecture.md#locks). Direct-pin publication and upstream aliases remain deferred until [the native coverage
@@ -316,7 +316,7 @@ refusal.
   Upkeep, with no client that needs it until the gate does.
 - **[Collapse `name@ref` back to one node](ui/explorer-references.md)** — per-reference nodes are the
   useful default and the only behavior. The counts for the other reading already ride on every node.
-- **[Retain guarded submissions until native coverage is measured](api/dependency-submission.md)** -
+- **[Retain guarded submissions until native coverage is measured](api/dependency-submission.md)** —
   existing manual submission and its ledger remain built; new client modes, write grants and
   automation are deferred. Moving the existing submission's credential onto the App is
   [production credentials](api/production-credentials.md), not this expansion.
@@ -336,7 +336,7 @@ refusal.
   addable; those implementations are not in this plan. [Container
   inventory](db/container-inventory.md) owns container declarations,
   not image contents. The shared model remains unranked.
-- **[A report somebody can hand to somebody else](ui/printable-report.md)** - still blocked on
+- **[A report somebody can hand to somebody else](ui/printable-report.md)** — still blocked on
   [graph layout](ui/graph-layout.md), for a different reason than before. A drawing that was
   different every run cannot be printed, and that half is fixed: a placed scope is byte-identical
   across runs. What cannot be printed now is a **161:1** canvas, and a scope wide enough to be
