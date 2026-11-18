@@ -7,7 +7,8 @@ a row's repository; *What you own* (`scope=owned`) holds exactly that, and *Your
 (`scope=supply-chain`) is the closure. Settings asks `gh` on arrival, offers the accounts it can
 declare, and builds an include list from GitHub's own answer, or a property scope from the
 organization's custom properties. A repository administered inside an organization the operator
-does not own still cannot be declared, deliberately: see item 2.
+does not own still cannot be declared. That claim is
+[ownership claims](../api/ownership-claims.md), not a refinement of this plan.
 
 ## Why this exists
 
@@ -34,42 +35,18 @@ the operator both has the privilege to analyze and the responsibility to remedia
    already in scope, and never widens or narrows what is discovered. It is refused as a pattern for
    the same reason this one is — see the waiver rules in
    [`../../.github/instructions/architecture.instructions.md`](../../.github/instructions/architecture.instructions.md).
-2. **Deferred: a member declaring the repositories they administer.** In an organization where
-   the operator is only a member, the account as a whole is not declarable, and a repository they
-   administer there has no representation. Deferred because nothing could read what such a
-   declaration names, not for want of a picker. Measured with the operator's own token on
-   2026-10-06:
-   - **Every one checked is private**: `ps-resources/es-offerings-ops`, `ps-resources/github-msft`,
-     `TaxPilotAI/TaxLing`, `els-ai/ghas-guzzlers`. ABOM reads and fetches through its GitHub App,
-     and only an organization owner can install an App that asks for organization permissions,
-     which ABOM's does. A repository administrator may install only an App limited to repository
-     permissions, and only where the organization allows it. A declaration made today would be
-     listed and then never read.
-   - **Finding them costs a route choice, and the cheap one misses most.**
-     `GET /user/repos?affiliation=collaborator` is one call in 1.3 s and finds 11 outside owned
-     organizations (`github` 9, `TaxPilotAI` 1, `els-ai` 1), only direct grants. Team grants find
-     208 more (206 in `github`, 2 in `ps-resources`) at 31 teams and 172 s. Listing a whole
-     organization and keeping `permissions.admin` is complete and costs its size: `dsp-testing` is
-     4,454 repositories, 45 pages, 84 s.
-   - **`dsp-testing`'s 14 are all temporary GHSA advisory forks** (`…-ghsa-…`), granted through
-     advisory collaboration, which neither the collaborator nor the team route reports. They are
-     not repositories anyone should declare, so they are not the fixture they were taken for.
-
-   Resumes when one of these holds: the App is installed on the repositories in question (an owner
-   approves a request), or reading a member's declaration with the operator's own token is decided
-   as a credential the crawl may use. The owned tier and the pinning split already decide per
-   repository, so 11 declared repositories in `github` would be the owned tier and no other
-   `github` repository would join it; only Settings' owner-candidate mark stays account-level, and
-   it says *declared in part*. Enumeration still lists an include-only account whole before
-   filtering it, which for `github` is about 192 pages every full listing.
-
-   **Constraints this must keep:** membership still decides nothing on its own; listing is
-   read-only against GitHub and paid from the reader's own token, never the App's; every name
-   offered comes from GitHub's answer, never from the store.
-3. **The pre-flight does not check per-account permissions.** `gh` verification is recorded and
-   shown beside each declaration, and the gate asks only whether a scope is declared. Checking that
-   the operator holds the access each declaration claims is worth doing, and is not what stops a
-   crawl from being unbounded.
+2. **Who may declare, including a member's repositories, is not this plan.** The role rules,
+   the security-manager and maintainer checks, and the App-installation eligibility are
+   [ownership claims](../api/ownership-claims.md), which lands with
+   [production credentials](../api/production-credentials.md). The measurement that sized the
+   deferral — private repositories, the cheap listing missing team grants, advisory forks that
+   are not claims — lives there. This plan keeps the predicate those claims are saved into.
+   Membership still decides nothing on its own. The person's token is not a crawl credential.
+3. **The pre-flight role check is the same plan.** `gh` verification is recorded and shown beside
+   each declaration, and the gate asks only whether a scope is declared. Checking that the
+   recorded role still supports the claim is [ownership claims](../api/ownership-claims.md). It
+   is not what stops a crawl from being unbounded, and it is not a second reader of the honored
+   view.
 4. **No browser gate draws the declaration picker.** The e2e server's `gh` is a stub that answers
    as logged out (`ui/tests/e2e/stubs/gh`), so the declarable list never appears, and the fixture
    corpus declares `acme-corp` by property scope and the other three whole, with no include list,
