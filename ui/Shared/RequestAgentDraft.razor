@@ -98,7 +98,7 @@
         try
         {
             var (session, refusal) = await Api.StartDraftAsync(Asked.SourceRunId, QueryId, Asked.Evidence,
-                Accounts.Identity.Login);
+                Accounts.Identity.Actor);
             _refusal = refusal;
             if (session is not null)
             {

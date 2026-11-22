@@ -2,6 +2,7 @@ package toolchain
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -321,5 +322,30 @@ func TestAFixedToolchainOffersNoPathAndDescribesItsOwnCredential(t *testing.T) {
 	}
 	if err := tc.SetTool(context.Background(), "copilot", got[KeyCopilot].Path, "test"); err == nil {
 		t.Error("a fixed toolchain saved a tool path")
+	}
+}
+
+// Readiness says whether sessions will authenticate with an installation token or with gh, and
+// why one cannot be had, without ever printing the token itself.
+func TestReadinessNamesTheCredentialSessionsUse(t *testing.T) {
+	p := newPlace(t)
+	tc := p.chain(t)
+	if c := byKey(tc.Checks(context.Background(), false))[KeyToken]; c.Credential != CredentialGH || c.State != Ready {
+		t.Errorf("without an App the credential check reads %+v; want gh, ready", c)
+	}
+
+	tc.Credential = Credential{Kind: CredentialInstallation, Name: "Copilot credential",
+		Source: "GitHub App installation token for has-ghas", Remedy: "an owner of has-ghas approves Copilot requests"}
+	tc.Token = func(context.Context) error {
+		return errors.New("the App's installation on has-ghas has not granted organization_copilot_requests: read")
+	}
+	c := byKey(tc.Checks(context.Background(), false))[KeyToken]
+	if c.Credential != CredentialInstallation || c.State != Problem ||
+		!strings.Contains(c.Reason, "organization_copilot_requests") || !strings.Contains(c.Source, "has-ghas") {
+		t.Errorf("with an App the credential check reads %+v; want the installation token and the missing grant", c)
+	}
+	raw, _ := json.Marshal(c)
+	if !strings.Contains(string(raw), `"credential":"installation"`) {
+		t.Errorf("the check's JSON %s does not name the credential", raw)
 	}
 }

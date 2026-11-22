@@ -203,6 +203,17 @@ func TestAnOperatorsTargetIsBoundBeforeTheAgentStarts(t *testing.T) {
 	}
 }
 
+// The session row names the model that ran, as the gate learned it from the runtime.
+func TestASessionsRecordNamesTheModelThatRan(t *testing.T) {
+	b := newBench(t, stand(func(_ context.Context, s Setup) (string, error) {
+		return "done", s.Gate.ranOn("auto")
+	}))
+	b.query(t, "SelfHostedRunner", "acme/self-hosted-runner", true)
+	if got := b.finish(t, b.request(t, "acme/self-hosted-runner"), "operator"); got.Model != "auto" {
+		t.Errorf("the session ran on auto and records %q", got.Model)
+	}
+}
+
 func TestAQueryWithNoTestHasOneLaidOutBeforeTheAgentStarts(t *testing.T) {
 	var seen Setup
 	b := newBench(t, stand(func(_ context.Context, s Setup) (string, error) {

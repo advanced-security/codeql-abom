@@ -118,7 +118,7 @@
         _starting = true;
         try
         {
-            var (started, refusal) = await Api.StartComparisonAsync(Run.RowId, Accounts.Identity.Login);
+            var (started, refusal) = await Api.StartComparisonAsync(Run.RowId, Accounts.Identity.Actor);
             _refusal = refusal;
             if (started is not null)
             {

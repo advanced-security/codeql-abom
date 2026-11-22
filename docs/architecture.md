@@ -69,16 +69,31 @@ worded as that.
 local page that posts a manifest to GitHub; the operator creates the App there, and ABOM keeps its
 key and webhook secret as 0600 files beside the database, never in it. The App is created private,
 installable only on the account that owns it; letting other accounts install it is decided in
-GitHub's settings for the App, not by ABOM. The App asks only to read, and asks once for
-everything it uses: metadata, contents, code-scanning results, administration, actions, and the
-organization's custom properties and administration. Administration and actions are read because
+GitHub's settings for the App, not by ABOM. The App asks once for everything it uses: to read
+metadata, contents, code-scanning results, administration, actions, and the organization's custom
+properties and administration, and to make Copilot requests for authoring. It asks for no write: a
+dependency snapshot and default setup belong to the repository, which a lockfile and its own
+settings govern. Administration and actions are read because
 GitHub delivers protection, ruleset, security-and-analysis and workflow-run events only to an App
 holding them, and the organization's administration for its rulesets' events — each traced in code
-to the call or the event handler that needs it. An installed account is read with its installation's token; another
-account's public repositories with a designated installation's, never the person's; and writes,
-such as dependency snapshots, keep the person's credential. Installations are evidence recorded
-beside the declaration, never one, and an installation that cannot be read leaves its account
-unknown rather than empty. With no App configured, ABOM reads as the `gh` session does.
+to the call or the event handler that needs it.
+
+**Each call carries a token minted for it.** A crawl's token holds the reads its installation
+granted and nothing else; a Copilot session's holds Copilot requests alone, minted fresh for the
+session for the organization it is billed to, and handed to the CLI as its client token rather than
+through its environment. The CLI's token provider refuses an installation token for naming no
+account, and a client token is not refreshed, so a session ends a few minutes before its token's
+hour does. A permission an installation has not approved refuses its call, naming the
+grant, before GitHub is asked, and nothing falls back to another credential. An installed account is
+read with its installation's token, another account's public repositories with a designated
+installation's, and a Copilot session only with the named account's own. With an App, no call reads
+a person's token and nothing is written: a server given a snapshot or default setup target beside
+an App refuses to start. Nobody at the page has signed in either, so a request, a session or a tool
+path set there is recorded as the interface's, never the App's. Who may declare is where the App is installed, and the declaration picker
+lists what an installation includes. Installations are evidence recorded beside the
+declaration, never one, with the installer named when its delivery said who; an installation that
+cannot be read leaves its account unknown rather than empty, and marks nothing as outside it. With
+no App configured, ABOM reads, writes, authors and verifies as the `gh` session does.
 
 **Change arrives as events and polls, and the sweep stays behind both.** A signed webhook — from
 the App, or a repository or organization webhook — is verified before it is parsed, written to a
@@ -129,8 +144,15 @@ row that has failed eight times counts as stuck rather than holding a depth inco
 cannot be held off for good.
 
 **Ownership is declared, never inferred.** Nothing happens until an operator claims an account.
-Membership comes from an authenticated `gh` session and decides nothing on its own: holding an
-analyzed repository proves nothing about who can change it.
+Membership comes from an authenticated `gh` session, or the App's installations, and decides
+nothing on its own: holding an analyzed repository proves nothing about who can change it. A role
+makes an account eligible to be offered — an owner, an organization admin, its security manager, or
+an installation of the App — and a member who is none of these may declare, by name, the
+repositories they administer or maintain. The security manager role and a repository role are read
+apart from membership, and one that cannot be read is "cannot say", never "no". Beside each
+declaration ABOM says whether the role recorded behind it still supports it; that check changes
+nothing, and what is declared stays what bounds discovery. An include the App's installation does
+not cover is marked and read only if it is public.
 
 **A declaration covers an account whole, or only what it names.** A restricted organization covers
 its named repositories and, beside them, any repository carrying every term of one of its property
@@ -352,6 +374,10 @@ the audit distinguishes their observations from runtime calls identified by an e
 - Nothing the CLI would load from the machine is loaded.
 - A call that cannot be recorded is refused.
 
+A session runs the configured model where the runtime offers it to the session's credential, and the
+runtime's own choice where it does not — an App installation is offered far fewer models than a
+person — and records the model each call actually ran on.
+
 The session holds the machine-wide CodeQL lock for its lifetime, and is refused while discovery
 crawls. Its timeline, what it spent and every tree `PrintAST` printed are kept, append-only, and
 shown on the request. What the agent says it did is never a mark. Every step is re-derived from the
@@ -543,7 +569,10 @@ advanced, conflict, covered, add, enable, blocked by an enforced configuration, 
 refuses, no Actions code, or a state saying it was not read or crawled. The Inventory, the API and
 `codeql-abom code-scanning status` all read it.
 
-**ABOM's one write to code scanning adds `actions` to default setup, from an approved preview.** A
+**Code scanning's configuration is the repository owner's to change, outside ABOM.** What was built
+earlier to add `actions` to default setup from an approved preview remains for a server without an
+App, writing with the operator's own token, and is not extended; a server reading as the App refuses
+to start with a target for it. A
 preview asks GitHub nothing and records the body each write would send; an approval names the write
 token's owner. A batch writes one repository at a time in the `default setup` pool, reading each
 again first and skipping any whose setup changed. The body repeats every setting read and adds
@@ -632,7 +661,9 @@ from its own crawl, not an import of a SQLite database.
 | `abom_owned_property_clause`, `abom_owned_property_term` | Property scopes on a restricted organization, each the terms a repository must all carry; `abom_owned_property_clause_honored` is the view, derived from the recorded schema, of the ones that count |
 | `abom_property_schema`, `abom_property_schema_read` | Each organization's custom properties as last read whole — type, default, who may set the values — and when |
 | `abom_enumeration_state`, `abom_repository_absence` | When each account was last listed whole and read for changes, by which route and to which marks, and the declared repositories a full listing no longer names, since when |
-| `abom_account` | What `gh` reports about membership, with the token scopes that made the answer possible |
+| `abom_account` | What `gh` reports about membership, with the token scopes that made the answer possible and each member's security manager role; with an App, where it is installed |
+| `abom_repository_role` | The verified login's role on each repository a member declared, or why it could not be read |
+| `abom_app_installation`, `abom_app_installer` | The App's installations as last read, and who created each, from its delivery |
 | `repository` | Every repository seen, with `origin` recording how it entered |
 
 ### The queue

@@ -1,9 +1,9 @@
 # An address the enterprise can reach, an identity it granted, and readers GitHub authorizes
 
-**Status:** ABOM runs as a read-only GitHub App it creates through the manifest flow — private, so
-installable only on the account that owns it — minting an installation token per account and
-recording installations as evidence beside the declaration, re-read whenever an installation event
-arrives; deliveries reach a workstation through a relay, and a production address, readers signing
+**Status:** ABOM runs as a GitHub App it creates through the manifest flow — private, so
+installable only on the account that owns it — minting each call a token carrying only that call's
+permissions, and recording installations as evidence beside the declaration, re-read whenever an
+installation event arrives; deliveries reach a workstation through a relay, and a production address, readers signing
 in through the App, and workflow callers are not built. What the events the address receives do is
 in [`docs/architecture.md`](../../docs/architecture.md#the-pipeline).
 
@@ -44,7 +44,12 @@ operation.
    refused — so it is for testing, with the sweep behind it.
 2. **Readers authorized by GitHub.** Readers sign in through the App. Every read is filtered to the
    organizations and repositories GitHub says that reader can read, with the visibility held for a
-   bounded time and read again, never assumed from the last answer forever. Depends on 1.
+   bounded time and read again, never assumed from the last answer forever. Until a reader signs
+   in, an App-only server knows nobody at the page, so what the page does — a request, a session, a
+   run — is recorded as `interface`, never as the App's bot. A signed-in reader replaces that in one
+   place, `AccountIdentity.Actor`. A reader's user token is also the credential the Copilot CLI's token
+   provider was built for: it names an account and lasts hours, where an installation token names
+   none. Depends on 1.
 3. **Authenticate workflow callers and authorize individual operations.** Define short-lived,
    repository-scoped verdict-read grants for [abom-check.md](abom-check.md). Verify repository,
    workflow/event, base/head commits and expiry, and return evidence for those exact lock contexts.
@@ -81,9 +86,11 @@ this plan owns service identity, reader authorization, caller grants and deploym
 
 ## The constraints that must not be broken
 
-**The App asks for what ABOM's features read, built or planned, and only to read.** Audited against
-GitHub's permission tables: repository Metadata, Contents, Code scanning alerts, Administration and
-Actions, and organization Custom properties and Administration, all read, and no account permission.
+**The App asks for what ABOM's features read, built or planned, and only to read, beside Copilot
+requests for authoring.** Audited against GitHub's permission tables: repository Metadata, Contents,
+Code scanning alerts, Administration and Actions, and organization Custom properties and
+Administration, all read; organization Copilot requests; and no account permission. A dependency
+snapshot and default setup belong to the repository, by the operator's decision.
 Every installation must approve each new permission, so the operator grants the whole set once
 rather than one feature at a time. Actions read is for check 5's run logs and `workflow_run`.
 Organization Administration read is only for `repository_ruleset` events about organization
@@ -105,8 +112,8 @@ many findings a rule has. It is computed over what the reader can see, or report
 unnamed remainder — never with the remainder's names, paths or findings.
 
 **A credential that reads is not the credential that writes.** ABOM submits dependency snapshots and
-would create check runs, which are irreversible against a live repository. Those live behind a
-separate grant from the one that crawls. Client permission to request a submission is narrower than
+would create check runs, which are irreversible against a live repository. A server reading as the
+App performs neither, and refuses to start when given a target for one. Client permission to request a submission is narrower than
 the server's GitHub permission to perform it and is not planned for `abom-check`. Its verdict-read
 grant cannot invoke existing submission or arbitrary control routes.
 

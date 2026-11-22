@@ -133,3 +133,73 @@ func TestARevokedOrUnreadInstallationLeavesTheAccountUnknown(t *testing.T) {
 		t.Errorf("the declaration shrank to %+v after losing the App", scope)
 	}
 }
+
+// The installer is the installation delivery's sender: GitHub required an organization owner to
+// install an App asking for organization permissions. A delivery with no sender, or none at all,
+// leaves the installer unknown, which is not "nobody installed it".
+func TestTheInstallerIsTheDeliverysSenderAndUnknownWithoutOne(t *testing.T) {
+	s := newTestStore(t)
+	at := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+	for _, r := range []struct {
+		id           int64
+		owner, login string
+	}{{11, "has-ghas", "octocat"}, {13, "acme", ""}, {11, "has-ghas", "mallory"}} {
+		if err := s.RecordInstaller(r.id, r.owner, r.login, "d-"+r.login, at); err != nil {
+			t.Fatalf("RecordInstaller: %v", err)
+		}
+	}
+	recordSync(t, s, InstallationSync{AppID: 7, At: at, Installations: []AppInstallation{
+		{Owner: "has-ghas", Kind: "organization", InstallationID: 11, RepositorySelection: "all"},
+		{Owner: "advanced-security", Kind: "organization", InstallationID: 12, RepositorySelection: "all"},
+		{Owner: "acme", Kind: "organization", InstallationID: 13, RepositorySelection: "all"},
+	}})
+
+	got := installationEvidence(t, s, "has-ghas", "advanced-security", "acme")
+	if by := got["has-ghas"].InstalledBy; by == nil || *by != "octocat" {
+		t.Errorf("has-ghas installed by %v, want octocat, the first delivery's sender, not a replay's", by)
+	}
+	for _, owner := range []string{"advanced-security", "acme"} {
+		if by := got[owner].InstalledBy; by != nil {
+			t.Errorf("%s installed by %q, want unknown", owner, *by)
+		}
+	}
+
+	recordSync(t, s, InstallationSync{AppID: 7, At: at.Add(time.Hour), Installations: []AppInstallation{
+		{Owner: "has-ghas", Kind: "organization", InstallationID: 21, RepositorySelection: "all"},
+	}})
+	if by := installationEvidence(t, s, "has-ghas")["has-ghas"].InstalledBy; by != nil {
+		t.Errorf("a reinstallation is credited to %q, who installed the one it replaced", *by)
+	}
+}
+
+// An include is outside the installation only where the evidence says so: not installed, no longer
+// installed, suspended, or a selected list that was read and omits it. A listing or a repository
+// list that could not be read says nothing, and marking every include would turn a failed read into
+// a statement about access.
+func TestAnUnreadInstallationMarksNoIncludeAsOutsideIt(t *testing.T) {
+	s := newTestStore(t)
+	at := time.Date(2026, 11, 19, 0, 0, 0, 0, time.UTC)
+	recordSync(t, s, InstallationSync{AppID: 7, At: at, Installations: []AppInstallation{
+		{Owner: "listed", Kind: "organization", InstallationID: 11, RepositorySelection: "selected",
+			Repositories: []string{"kept"}},
+		{Owner: "unlisted", Kind: "organization", InstallationID: 12, RepositorySelection: "selected",
+			RepositoriesUnread: "listing the repositories installed on unlisted: GitHub answered 502"},
+		{Owner: "paused", Kind: "organization", InstallationID: 13, RepositorySelection: "all", Suspended: true},
+	}})
+	includes := []string{"kept", "other"}
+	got := installationEvidence(t, s, "listed", "unlisted", "paused", "absent")
+	for owner, want := range map[string][]string{
+		"listed": {"other"}, "unlisted": nil, "paused": {"kept", "other"}, "absent": {"kept", "other"},
+	} {
+		if marked := got[owner].Uncovered(includes); !slices.Equal(marked, want) || (want == nil) != (marked == nil) {
+			t.Errorf("%s marks %v, want %v", owner, marked, want)
+		}
+	}
+
+	recordSync(t, s, InstallationSync{AppID: 7, At: at.Add(time.Hour), Unread: "listing the App's installations: GitHub answered 500"})
+	for _, owner := range []string{"listed", "paused", "absent"} {
+		if marked := installationEvidence(t, s, owner)[owner].Uncovered(includes); marked != nil {
+			t.Errorf("after a listing that could not be read, %s marks %v; want cannot say", owner, marked)
+		}
+	}
+}

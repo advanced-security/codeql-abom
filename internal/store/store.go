@@ -144,6 +144,7 @@ var createTables = []struct {
 	{"the event delivery log", eventLogDDL},
 	{"the token pool tables", poolDDL},
 	{"the App installation tables", appInstallationDDL},
+	{"the repository role table", repositoryRoleDDL},
 	{"the workflow run table", workflowRunDDL},
 	{"the code scanning setup tables", setupDDL},
 	{"the default setup write tables", setupWriteDDL},

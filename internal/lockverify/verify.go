@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -93,6 +94,9 @@ type Runner struct {
 	// Git is the git binary the copy is committed with; empty means "git" from PATH.
 	Git     string
 	Timeout time.Duration
+	// Token is what the tool reads GitHub with for an owner's repository where an App is
+	// configured; nil runs it as the operator's gh session.
+	Token func(ctx context.Context, owner string) (string, error)
 }
 
 // report is the tool's JSON, the fields asked for.
@@ -111,16 +115,21 @@ type report struct {
 	} `json:"findings"`
 }
 
-// Verify runs the tool against a copy of tree in mode.
+// Verify runs the tool against a copy of owner's tree in mode.
 //
 // A copy, because the trees handed here are cached checkouts other work reads, and a tool that
 // wrote to one would change what a later analysis sees. A repository of its own at one commit,
 // because the tool reads `$/` actions through git and reports every one as unreadable otherwise.
-func (r Runner) Verify(ctx context.Context, tree, mode string) Result {
+func (r Runner) Verify(ctx context.Context, owner, tree, mode string) Result {
 	out := Result{Mode: mode, Findings: []Finding{}}
 	flag := map[string]string{ModeLocal: "--verify-local", ModeNetwork: "--verify"}[mode]
 	if flag == "" {
 		out.Outcome, out.Error = OutcomeError, fmt.Sprintf("no verification mode %q", mode)
+		return out
+	}
+	env, err := r.environment(ctx, owner, mode)
+	if err != nil {
+		out.Outcome, out.Error = OutcomeError, "no credential to verify with: "+err.Error()
 		return out
 	}
 	if r.Timeout > 0 {
@@ -141,7 +150,7 @@ func (r Runner) Verify(ctx context.Context, tree, mode string) Result {
 		return out
 	}
 
-	stdout, stderr, runErr := r.runActionsLock(ctx, work, flag)
+	stdout, stderr, runErr := r.runActionsLock(ctx, work, flag, env)
 	after, err := digestTree(work)
 	if err != nil {
 		out.Outcome, out.Error = OutcomeError, err.Error()
@@ -178,8 +187,35 @@ func (r Runner) verifyTree(ctx context.Context, tree string) (string, error) {
 	return work, nil
 }
 
+// tokenVariables are where gh would find a credential other than the one it is handed.
+var tokenVariables = []string{"GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"}
+
+// environment is the tool's: the operator's own without Token, or with Token none of the
+// operator's credentials and, for a network check, the token minted for owner.
+func (r Runner) environment(ctx context.Context, owner, mode string) ([]string, error) {
+	env := append(os.Environ(), "GH_PROMPT_DISABLED=1", "GIT_TERMINAL_PROMPT=0")
+	if r.Token == nil {
+		return env, nil
+	}
+	kept := env[:0:0]
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if !slices.Contains(tokenVariables, strings.ToUpper(name)) {
+			kept = append(kept, kv)
+		}
+	}
+	if mode != ModeNetwork {
+		return kept, nil
+	}
+	token, err := r.Token(ctx, owner)
+	if err != nil {
+		return nil, err
+	}
+	return append(kept, "GH_TOKEN="+token), nil
+}
+
 func (r Runner) runActionsLock(
-	ctx context.Context, work, flag string,
+	ctx context.Context, work, flag string, env []string,
 ) (bytes.Buffer, bytes.Buffer, error) {
 	gh := r.Gh
 	if gh == "" {
@@ -188,7 +224,7 @@ func (r Runner) runActionsLock(
 	cmd := exec.CommandContext(ctx, gh, "actions-lock", flag, "--no-fix", "--no-interactive",
 		"--json=valid,findings")
 	cmd.Dir = work
-	cmd.Env = append(os.Environ(), "GH_PROMPT_DISABLED=1", "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = env
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	runErr := cmd.Run()

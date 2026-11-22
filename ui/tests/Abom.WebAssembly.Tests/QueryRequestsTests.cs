@@ -9,6 +9,8 @@ public class QueryRequestsTests : AbomTestContext
 {
     private const string SignedIn = """{"authenticated":true,"login":"operator","accounts":[]}""";
     private const string SignedOut = """{"authenticated":false,"login":"","accounts":[]}""";
+    // Read as an App: the login is the App's bot, and nobody at the page has signed in.
+    private const string ByApp = """{"authenticated":true,"login":"abom-has-ghas[bot]","identityBy":"app","readByApp":true,"accounts":[]}""";
 
     private const string None = """
         {"requests":[],"kinds":["","missed","false-alarm","both"],
@@ -305,6 +307,36 @@ public class QueryRequestsTests : AbomTestContext
             Assert.Contains("\"nonCompliant\":\"runs-on: self-hosted\"", sent.Body);
             Assert.Contains("\"requestedBy\":\"operator\"", sent.Body);
         });
+    }
+
+    /// <summary>
+    /// Reading as an App, nobody at the page has signed in: a request or a session is the page's, and
+    /// crediting the App's own login with a person's choice would name an asker who asked nothing.
+    /// </summary>
+    [Fact]
+    public void ReadingAsAnAppNoActionIsCreditedToTheApp()
+    {
+        Answer("api/authoring/readiness", Ready);
+        Answer("api/query-requests/8/sessions", """{"sessions":[],"inFlight":[]}""");
+        Answer("api/query-requests/8/asts", """{"asts":[]}""");
+        var cut = Render(Targeted, ByApp);
+        cut.WaitForAssertion(() => Assert.False(cut.Find("[data-abom-request-agent]").HasAttribute("disabled")));
+        cut.Find("[data-abom-request-agent]").Click();
+        cut.Find("[data-abom-request-new]").Click();
+        Name(cut, "Self-hosted runner");
+        Write(cut, "description", "flag a self-hosted runner");
+        Write(cut, "compliant", "runs-on: ubuntu-latest");
+        Write(cut, "noncompliant", "runs-on: self-hosted");
+        cut.Find("[data-abom-request-save]").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            var filed = Assert.Single(Sent, r => r.Method == "POST" && r.Url.EndsWith("api/query-requests"));
+            Assert.Contains("\"requestedBy\":\"interface\"", filed.Body);
+            var started = Assert.Single(Sent, r => r.Method == "POST" && r.Url.EndsWith("api/query-requests/8/sessions"));
+            Assert.Contains("\"by\":\"interface\"", started.Body);
+        });
+        Assert.DoesNotContain(Sent, r => r.Body.Contains("[bot]"));
     }
 
     [Fact]

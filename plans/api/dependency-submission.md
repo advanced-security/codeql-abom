@@ -1,6 +1,8 @@
 # Submit the enriched Actions graph to GitHub
 
-**Status:** guarded manual submission is built; publication expansion is deferred pending native evidence.
+**Status:** guarded manual submission is built with the operator's token, and ABOM submits nothing new
+at this time by the operator's decision — the newer route is a repository adopting `actions.lock`;
+publication expansion is deferred pending native evidence, and a server reading as the App never submits.
 
 ## Why this exists
 

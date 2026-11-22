@@ -78,9 +78,10 @@ structurally blind to, and ABOM is what closes it.
 ABOM's coverage story and never becomes an ABOM verdict. ABOM does not re-implement what the audit
 already measures, and does not silently adopt its conclusions as its own.
 
-**One exception, by the operator's decision: `actions`.** GitHub cannot set default setup's
-languages organization-wide, so ABOM reads each owned repository's default setup and adds `actions`
-where an approved preview listed it, never over advanced setup and never removing a language.
+**Code scanning's configuration is the repository owner's, by the operator's decision.** ABOM
+reads each owned repository's default setup and says whether its Actions code is scanned; changing
+that is done outside ABOM. The earlier exception that added `actions` from an approved preview is
+withdrawn: what was built of it is not extended, and never runs as the App.
 
 ## A business unit is discovered, never configured by hand
 
@@ -309,8 +310,7 @@ get an exemption from them.
   and under the same rule.
 - **An absent measurement is not a measurement of zero.**
 - **A person chooses every alert.** Nothing writes to another repository's security surface on a
-  timer or by inference; ABOM's one write there, adding `actions` to default setup, needs an
-  approved preview.
+  timer or by inference, and ABOM does not change a repository's code scanning configuration.
 - **Say what was excluded.** A scoped view states what it left out.
 
 Four the vision adds:

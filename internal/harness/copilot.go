@@ -67,6 +67,9 @@ type Copilot struct {
 	Model string
 	// Token is the GitHub credential sessions authenticate with.
 	Token func(context.Context) (string, error)
+	// Mint replaces Token when an App is configured: an installation token minted fresh for each
+	// session's Copilot requests, never one inherited from this process's environment.
+	Mint func(ctx context.Context, refresh bool) (token string, expires time.Time, err error)
 	// QLMCP is the command line that starts ql-mcp.
 	QLMCP []string
 	// CodeQL is the CLI ql-mcp runs, the one ABOM runs; empty takes codeql from PATH.
@@ -79,34 +82,57 @@ type Copilot struct {
 
 // Run starts the CLI, works the session until the agent goes idle or ctx ends, and stops the CLI.
 func (c *Copilot) Run(ctx context.Context, s Setup) (string, error) {
-	if c.CLI == "" || len(c.QLMCP) == 0 || c.Token == nil {
+	if c.CLI == "" || len(c.QLMCP) == 0 || (c.Token == nil && c.Mint == nil) {
 		return "", ErrNoAgent
 	}
-	token, err := c.Token(ctx)
-	if err != nil {
-		return "", fmt.Errorf("reading the GitHub credential: %w", err)
+	var token string
+	if c.Mint != nil {
+		// Minted before the CLI starts, so a missing grant refuses the session rather than its first
+		// turn, and minted fresh, so the session has the token's whole hour rather than a cached remainder.
+		minted, expires, err := c.Mint(ctx, true)
+		if err != nil {
+			return "", fmt.Errorf("minting the session's Copilot token: %w", err)
+		}
+		token = minted
+		var cancel context.CancelFunc
+		ctx, cancel = untilExpiry(ctx, expires)
+		defer cancel()
+	} else {
+		var err error
+		if token, err = c.Token(ctx); err != nil {
+			return "", fmt.Errorf("reading the GitHub credential: %w", err)
+		}
 	}
-	client := copilot.NewClient(&copilot.ClientOptions{
-		Connection:       copilot.StdioConnection{Path: c.CLI},
-		Mode:             copilot.ModeEmpty,
-		BaseDirectory:    s.Home,
-		WorkingDirectory: s.Workspace,
-		GitHubToken:      token,
-		LogLevel:         "error",
-		ClientInfo:       &copilot.ClientInfo{ApplicationName: "codeql-abom"},
-	})
+	client := copilot.NewClient(c.clientOptions(s, token))
 	if err := client.Start(ctx); err != nil {
 		return "", fmt.Errorf("starting the Copilot CLI %s: %w", c.CLI, err)
 	}
 	defer func() { _ = client.Stop() }()
 
+	if s.Runtime == nil {
+		s.Runtime = map[string]string{}
+	}
 	if status, err := client.GetStatus(ctx); err == nil {
-		if s.Runtime == nil {
-			s.Runtime = map[string]string{}
-		}
 		s.Runtime["copilot-cli"] = status.Version
 	}
 	cfg := c.config(s)
+	var listed []string
+	models, listErr := client.ListModels(ctx)
+	for _, m := range models {
+		listed = append(listed, m.ID)
+	}
+	model, err := modelFor(cfg.Model, listed, listErr)
+	if err != nil {
+		return "", err
+	}
+	if model != cfg.Model {
+		_, why := chooseModel(cfg.Model, listed)
+		cfg.Model = model
+		s.Runtime["model"] = why
+		if err := s.Gate.ranOn(model); err != nil {
+			return "", fmt.Errorf("recording the session's model: %w", err)
+		}
+	}
 	if err := s.Gate.startPolicy(ctx, s, cfg, c); err != nil {
 		return "", err
 	}
@@ -159,6 +185,87 @@ func (c *Copilot) Run(ctx context.Context, s Setup) (string, error) {
 		}
 	}
 	return last, nil
+}
+
+// clientOptions starts the CLI with the operator's token, or, with Mint, with the installation token
+// minted for the session, no logged-in user and an environment holding no GitHub credential, so the
+// minted token is the only one the child can find.
+func (c *Copilot) clientOptions(s Setup, token string) *copilot.ClientOptions {
+	opts := &copilot.ClientOptions{
+		Connection:       copilot.StdioConnection{Path: c.CLI},
+		Mode:             copilot.ModeEmpty,
+		BaseDirectory:    s.Home,
+		WorkingDirectory: s.Workspace,
+		GitHubToken:      token,
+		LogLevel:         "error",
+		ClientInfo:       &copilot.ClientInfo{ApplicationName: "codeql-abom"},
+	}
+	if c.Mint != nil {
+		opts.UseLoggedInUser = copilot.Bool(false)
+		opts.Connection = copilot.StdioConnection{Path: c.CLI, Env: withoutGitHubTokens(os.Environ())}
+	}
+	return opts
+}
+
+// tokenMargin is how long before an installation token ends that a session working on it stops. The
+// CLI takes no refresh for a client token, and its token provider refuses an installation token for
+// naming no account, so a session lives inside the one hour the token minted for it is good.
+const tokenMargin = 5 * time.Minute
+
+// untilExpiry ends ctx a margin before the token the session started on expires.
+func untilExpiry(ctx context.Context, expires time.Time) (context.Context, context.CancelFunc) {
+	return context.WithDeadline(ctx, expires.Add(-tokenMargin))
+}
+
+// modelFor is the model a session runs on, from the list the runtime offers its credential. A list
+// that could not be read, or offers nothing, refuses the session: running the flag's model anyway is
+// exactly a model nobody said it may run.
+func modelFor(want string, listed []string, err error) (string, error) {
+	if err != nil {
+		return "", fmt.Errorf("reading the models this credential is offered: %w", err)
+	}
+	if len(listed) == 0 {
+		return "", errors.New("the Copilot runtime offers this credential no model")
+	}
+	model, _ := chooseModel(want, listed)
+	return model, nil
+}
+
+// autoModel is the runtime's own choice of model, offered to credentials that may use no other.
+const autoModel = "auto"
+
+// chooseModel runs the configured model where the runtime lists it, and otherwise its own choice
+// rather than refusing to start: an App installation is offered far fewer models than a person. why
+// says what was run instead, and is empty where the configured model runs or no list was read.
+func chooseModel(want string, listed []string) (model, why string) {
+	if slices.Contains(listed, want) {
+		return want, ""
+	}
+	model = listed[0]
+	if slices.Contains(listed, autoModel) {
+		model = autoModel
+	}
+	if want == "" {
+		return model, "no model is configured, so " + model + " ran"
+	}
+	return model, want + " is not offered to this credential, so " + model + " ran; offered: " + strings.Join(listed, ", ")
+}
+
+// gitHubTokenVariables are where the Copilot CLI, or gh beneath it, would find a credential to use.
+var gitHubTokenVariables = []string{
+	"COPILOT_GITHUB_TOKEN", "COPILOT_SDK_AUTH_TOKEN", "GH_TOKEN", "GITHUB_TOKEN",
+	"GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
+}
+
+func withoutGitHubTokens(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if !slices.ContainsFunc(gitHubTokenVariables, func(v string) bool { return strings.EqualFold(v, name) }) {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 // config is the session: the gate on every call, the loop's tools and nothing else, and none of

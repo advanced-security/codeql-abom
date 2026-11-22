@@ -89,6 +89,7 @@ func (s *Sessions) draft(run int64, queryID string, picked []Picked, by string) 
 		return s.Store.AddAuthoringSpend(id, store.AuthoringSpend{InputTokens: sp.InputTokens,
 			OutputTokens: sp.OutputTokens, NanoAIU: sp.NanoAIU})
 	})
+	gate.KeepModel(func(model string) error { return s.Store.SetAuthoringSessionModel(id, model) })
 	limit := s.limit()
 	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	gate.cancel = cancel

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -29,6 +30,7 @@ const membershipsJSON = `[
 // fakeGH answers the calls a test cares about and records what was asked, so a test can assert
 // on the arguments as well as the result.
 type fakeGH struct {
+	mu      sync.Mutex
 	replies map[string]reply
 	calls   [][]string
 }
@@ -39,6 +41,8 @@ type reply struct {
 }
 
 func (f *fakeGH) run(_ context.Context, name string, args ...string) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls = append(f.calls, append([]string{name}, args...))
 	r, ok := f.replies[strings.Join(args, " ")]
 	if !ok {
@@ -49,8 +53,12 @@ func (f *fakeGH) run(_ context.Context, name string, args ...string) ([]byte, er
 
 func working() *fakeGH {
 	return &fakeGH{replies: map[string]reply{
-		"api -i user":                          {out: withHeaders("gist, read:org, repo", userJSON)},
-		"api user/memberships/orgs --paginate": {out: []byte(membershipsJSON)},
+		"api -i user":                            {out: withHeaders("gist, read:org, repo", userJSON)},
+		"api user/memberships/orgs --paginate":   {out: []byte(membershipsJSON)},
+		"api user/teams?per_page=100 --paginate": {out: []byte(`[]`)},
+		"api orgs/another-org/organization-roles": {out: []byte(
+			`{"total_count":1,"roles":[{"id":7,"name":"security_manager"}]}`)},
+		"api orgs/another-org/organization-roles/7/users?per_page=100 --paginate": {out: []byte(`[]`)},
 	}}
 }
 
@@ -100,7 +108,8 @@ func TestVerifyReportsTheAuthenticatedAccountAndEveryOrgItBelongsTo(t *testing.T
 	want := []Account{
 		// The authenticated account comes first: it is the one membership that needs no lookup.
 		{Owner: "octocat", Kind: "user", Role: "owner"},
-		{Owner: "another-org", Kind: "organization", Role: "member"},
+		{Owner: "another-org", Kind: "organization", Role: "member", SecurityManager: SecurityManagerUnknown,
+			SecurityManagerReason: "the gh token lacks the admin:org scope, which reading who manages security in another-org needs (gh auth refresh -s admin:org)"},
 		{Owner: "octo-org", Kind: "organization", Role: "admin"},
 	}
 	if len(id.Accounts) != len(want) {
@@ -260,23 +269,27 @@ func TestBelongingToNoOrgIsAnAnswerRatherThanAFailure(t *testing.T) {
 }
 
 func TestNothingFromGitHubReachesTheCommandLine(t *testing.T) {
-	// Account names arrive from a remote API. They are read out of the response and never
-	// interpolated into an argument, so the calls are the same fixed ones every time.
+	// Account names arrive from a remote API. One reaches an argument only as a path segment
+	// GitHub could have issued as a login; anything else is never asked about.
 	gh := working()
-	if _, err := Verify(context.Background(), gh.run); err != nil {
+	gh.replies["api -i user"] = reply{out: withHeaders("admin:org, repo", userJSON)}
+	gh.replies["api user/memberships/orgs --paginate"] = reply{out: []byte(`[
+  {"state":"active","role":"member","organization":{"login":"--method=DELETE"}},
+  {"state":"active","role":"member","organization":{"login":"evil/../repos/x"}}
+]`)}
+	id, err := Verify(context.Background(), gh.run)
+	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
-
-	want := [][]string{
-		{"gh", "api", "-i", "user"},
-		{"gh", "api", "user/memberships/orgs", "--paginate"},
+	for _, c := range gh.calls {
+		joined := strings.Join(c, " ")
+		if strings.Contains(joined, "DELETE") || strings.Contains(joined, "evil") {
+			t.Errorf("a name from GitHub reached the command line: %v", c)
+		}
 	}
-	if len(gh.calls) != len(want) {
-		t.Fatalf("calls %v, want %v", gh.calls, want)
-	}
-	for i, c := range gh.calls {
-		if strings.Join(c, " ") != strings.Join(want[i], " ") {
-			t.Errorf("call %d is %v, want %v", i, c, want[i])
+	for _, a := range id.Accounts {
+		if a.Kind == KindOrganization && a.SecurityManager != SecurityManagerUnknown {
+			t.Errorf("%q = %+v; want cannot say for a name nobody asked about", a.Owner, a)
 		}
 	}
 }
@@ -297,5 +310,104 @@ func TestAnAnswerWithoutALoginIsRejected(t *testing.T) {
 
 	if _, err := Verify(context.Background(), gh.run); err == nil {
 		t.Error("an identity with no login was accepted")
+	}
+}
+
+// refusedAdminOrg is how gh reports a read the token's scopes cannot make, measured 2026-11-19
+// against organization roles and security managers with a read:org token.
+var refusedAdminOrg = reply{err: errors.New(`gh api: exit status 1: gh: Not Found (HTTP 404)
+gh: This API operation needs the "admin:org" scope. To request it, run:  gh auth refresh -h github.com -s admin:org`)}
+
+func withSecurityManagers() *fakeGH {
+	gh := working()
+	gh.replies["api -i user"] = reply{out: withHeaders("admin:org, repo", userJSON)}
+	gh.replies["api user/memberships/orgs --paginate"] = reply{out: []byte(`[
+  {"state":"active","role":"admin","organization":{"login":"octo-org"}},
+  {"state":"active","role":"member","organization":{"login":"another-org"}},
+  {"state":"active","role":"member","organization":{"login":"third-org"}},
+  {"state":"active","role":"member","organization":{"login":"blind-org"}}
+]`)}
+	gh.replies["api user/teams?per_page=100 --paginate"] = reply{out: []byte(
+		`[{"slug":"appsec","organization":{"login":"another-org"}},{"slug":"devs","organization":{"login":"third-org"}}]`)}
+	gh.replies["api orgs/another-org/organization-roles"] = refusedAdminOrg
+	gh.replies["api orgs/another-org/security-managers"] = reply{out: []byte(`[{"slug":"appsec"}]`)}
+	gh.replies["api orgs/third-org/organization-roles"] = reply{out: []byte(
+		`{"total_count":2,"roles":[{"id":5,"name":"all_repo_read"},{"id":7,"name":"security_manager"}]}`)}
+	gh.replies["api orgs/third-org/organization-roles/7/users?per_page=100 --paginate"] = reply{out: []byte(
+		`[{"login":"someone-else","assignment":"direct"}]`)}
+	gh.replies["api orgs/blind-org/organization-roles"] = refusedAdminOrg
+	gh.replies["api orgs/blind-org/security-managers"] = refusedAdminOrg
+	return gh
+}
+
+// memberships says "member" for a security manager, so the role is a second read; an owner or
+// admin is never asked, and a read that fails is "cannot say" with what would let it answer.
+func TestASecurityManagerIsReadSeparatelyFromMembership(t *testing.T) {
+	gh := withSecurityManagers()
+	id, err := Verify(context.Background(), gh.run)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	got := map[string]Account{}
+	for _, a := range id.Accounts {
+		got[a.Owner] = a
+	}
+	if a := got["octo-org"]; a.Role != "admin" || a.SecurityManager != "" {
+		t.Errorf("octo-org = %+v; an admin is not asked", a)
+	}
+	if a := got["another-org"]; a.Role != "member" || a.SecurityManager != SecurityManagerYes {
+		t.Errorf("another-org = %+v; want a member who is security manager through the appsec team", a)
+	}
+	if a := got["third-org"]; a.SecurityManager != SecurityManagerNo {
+		t.Errorf("third-org = %+v; want not a security manager, as the role's assignments say", a)
+	}
+	if a := got["blind-org"]; a.SecurityManager != SecurityManagerUnknown || !strings.Contains(a.SecurityManagerReason, "admin:org") {
+		t.Errorf("blind-org = %+v; want cannot say, naming the scope that would let it answer", a)
+	}
+	for _, call := range gh.calls {
+		if strings.Contains(strings.Join(call, " "), "octo-org/") {
+			t.Errorf("an admin's organization was asked about: %v", call)
+		}
+	}
+}
+
+// Without the user's teams a security-manager team cannot be matched, so a team list is no answer.
+func TestASecurityManagerTeamCannotBeMatchedWithoutTheUsersTeams(t *testing.T) {
+	gh := withSecurityManagers()
+	gh.replies["api user/teams?per_page=100 --paginate"] = refusedAdminOrg
+	id, err := Verify(context.Background(), gh.run)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	for _, a := range id.Accounts {
+		if a.Owner == "another-org" && a.SecurityManager != SecurityManagerUnknown {
+			t.Errorf("another-org = %+v; want cannot say when the user's teams could not be read", a)
+		}
+	}
+}
+
+// A classic token that reports its scopes and lacks admin:org is refused both security-manager
+// reads, as measured, so it is not spent asking: nineteen member organizations cost 38 refused calls
+// and five seconds. A token reporting no scopes cannot be judged that way and is still asked.
+func TestATokenThatCannotReadSecurityManagersIsNotSpentAsking(t *testing.T) {
+	gh := withSecurityManagers()
+	gh.replies["api -i user"] = reply{out: withHeaders("gist, read:org, repo", userJSON)}
+	id, err := Verify(context.Background(), gh.run)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if len(gh.calls) != 2 {
+		t.Errorf("calls %v, want the identity and memberships alone", gh.calls)
+	}
+	for _, a := range id.Accounts {
+		if a.Role == "member" && (a.SecurityManager != SecurityManagerUnknown || !strings.Contains(a.SecurityManagerReason, "admin:org")) {
+			t.Errorf("%s = %+v; want cannot say, naming the scope", a.Owner, a)
+		}
+	}
+
+	gh = withSecurityManagers()
+	gh.replies["api -i user"] = reply{out: withHeaders("", userJSON)}
+	if _, err := Verify(context.Background(), gh.run); err != nil || len(gh.calls) <= 2 {
+		t.Errorf("a token reporting no scopes was not asked (%d calls): %v", len(gh.calls), err)
 	}
 }

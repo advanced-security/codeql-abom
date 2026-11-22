@@ -211,6 +211,11 @@
         {
             return "Reading whether this server writes\u2026";
         }
+        if (!m.Writes && m.ReadsAsApp)
+        {
+            return "This server reads as a GitHub App, which writes nothing: previews show what a batch would do, " +
+                   "and default setup is the repository owner's to change.";
+        }
         if (!m.Writes)
         {
             return "This server writes nothing: previews show what a batch would do. Start it with " +

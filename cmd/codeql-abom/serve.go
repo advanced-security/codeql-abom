@@ -316,9 +316,11 @@ type serveConfig struct {
 	appPublicReads string
 	eventsRelay    string
 	// tokens is the App's token source once loaded, nil while reading as the operator.
-	tokens    ghapp.TokenSource
-	discovery discoveryOptions
-	authoring authoringOptions
+	tokens ghapp.TokenSource
+	// credentials chooses what each call carries: the App's tokens, or the operator's without one.
+	credentials githubCredentials
+	discovery   discoveryOptions
+	authoring   authoringOptions
 	// toolchain is what sessions need, nil where nothing checks it.
 	toolchain *toolchain.Toolchain
 }
@@ -362,6 +364,11 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) (res
 	}
 	tokens := readerTokens(app)
 	cfg.tokens = tokens
+	cfg.credentials = newCredentials(app, cfg.authoring.org)
+	if err := cfg.credentials.refuseWrites(cfg); err != nil {
+		return err
+	}
+	cfg.credentials.copilot(&cfg.authoring)
 	if cfg.webhookSecret, err = eventSecret(app, cfg.appDir, cfg.webhookSecret); err != nil {
 		return err
 	}
@@ -666,8 +673,13 @@ func newConfiguredServer(
 		return verifier.Request(ctx, repository, mode, "interface")
 	}
 	wireEnumeration(loop, srv, s, cfg.enumerateEvery)
-	wireSnapshots(srv, s, githubToken(ctx), splitTargets(cfg.submitTargets),
-		catalog.New(cfg.apiURL, githubToken(ctx), nil).HeadSHA)
+	submissions, headSHA := cfg.credentials.snapshotClient(ctx, cfg.apiURL, splitTargets(cfg.submitTargets))
+	wireSnapshots(srv, s, submissions, headSHA)
+	srv.Verify, srv.ReadRepositoryRole = cfg.credentials.verify(), cfg.credentials.roleReader()
+	if cfg.credentials.app != nil {
+		srv.IdentityBy = serve.IdentityByApp
+	}
+	srv.ListRepositories, srv.ReadProperties = cfg.credentials.picker()
 	if cfg.uiDir != "" {
 		srv.UI = os.DirFS(cfg.uiDir)
 	}

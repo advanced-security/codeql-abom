@@ -138,3 +138,81 @@ func TestAnAccountGhCannotSeeSaysSo(t *testing.T) {
 		t.Fatalf("err = %v, want a Problem saying gh cannot see the account", err)
 	}
 }
+
+// A member may declare a repository they administer or maintain, so each one carries the reader's
+// role on it as GitHub reported it; a temporary private fork made for a security advisory is never
+// a repository anyone should declare, so it is not offered at all.
+func TestEachRepositoryCarriesYourRoleAndAnAdvisoryForkIsNotOffered(t *testing.T) {
+	gh := &fakeGH{replies: map[string]reply{orgReposCall: {out: []byte(`[
+	  {"name":"admin-repo","owner":{"login":"has-ghas"},"permissions":{"admin":true,"maintain":true,"push":true,"triage":true,"pull":true}},
+	  {"name":"maintained","owner":{"login":"has-ghas"},"permissions":{"admin":false,"maintain":true,"push":true,"triage":true,"pull":true}},
+	  {"name":"written","owner":{"login":"has-ghas"},"permissions":{"admin":false,"maintain":false,"push":true,"triage":true,"pull":true}},
+	  {"name":"triaged","owner":{"login":"has-ghas"},"permissions":{"admin":false,"maintain":false,"push":false,"triage":true,"pull":true}},
+	  {"name":"read","owner":{"login":"has-ghas"},"permissions":{"pull":true}},
+	  {"name":"unreported","owner":{"login":"has-ghas"}},
+	  {"name":"service-ghsa-4f8h-9q2r-x7mw","private":true,"owner":{"login":"has-ghas"},"permissions":{"admin":true}}
+	]`)}}}
+
+	got, err := ListRepositories(context.Background(), gh.run, "has-ghas", false)
+	if err != nil {
+		t.Fatalf("ListRepositories: %v", err)
+	}
+	roles := map[string]string{}
+	for _, r := range got {
+		roles[r.Name] = r.Permission
+	}
+	want := map[string]string{"admin-repo": "admin", "maintained": "maintain", "written": "write",
+		"triaged": "triage", "read": "read", "unreported": ""}
+	if len(roles) != len(want) {
+		t.Errorf("offered %v, want %v and no advisory fork", roles, want)
+	}
+	for name, role := range want {
+		if got, ok := roles[name]; !ok || got != role {
+			t.Errorf("%s carries %q, want %q", name, got, role)
+		}
+	}
+}
+
+// The role behind a member's include is GitHub's role name on that repository; a token that cannot
+// see the repository cannot say, and a name GitHub could not issue is never asked about.
+func TestARepositoryRoleIsReadAsGitHubNamesIt(t *testing.T) {
+	gh := &fakeGH{replies: map[string]reply{
+		"api repos/has-ghas/service/collaborators/octocat/permission": {out: []byte(
+			`{"permission":"write","role_name":"maintain","user":{"login":"octocat"}}`)},
+		"api repos/has-ghas/hidden/collaborators/octocat/permission": {err: errors.New("gh: Not Found (HTTP 404)")},
+	}}
+	if role, err := ReadRepositoryRole(context.Background(), gh.run, "has-ghas", "service", "octocat"); err != nil || role != "maintain" {
+		t.Errorf("role = %q, %v; want maintain, GitHub's role name rather than its coarse permission", role, err)
+	}
+	if role, err := ReadRepositoryRole(context.Background(), gh.run, "has-ghas", "hidden", "octocat"); err == nil || role != "" ||
+		!strings.Contains(err.Error(), "has-ghas/hidden") {
+		t.Errorf("an unseen repository = %q, %v; want no role and a reason naming it", role, err)
+	}
+	for _, bad := range [][3]string{{"has-ghas", "../x", "octocat"}, {"--x", "service", "octocat"}, {"has-ghas", "service", "a/b"}} {
+		if _, err := ReadRepositoryRole(context.Background(), gh.run, bad[0], bad[1], bad[2]); err == nil {
+			t.Errorf("%v was asked about", bad)
+		}
+	}
+	if len(gh.calls) != 2 {
+		t.Errorf("calls %v, want the two valid reads alone", gh.calls)
+	}
+}
+
+// A custom repository role carries its own name, so the role is judged by what it permits — the
+// picker's own reading — and a name with nothing to judge it by is "cannot say", never "write".
+func TestACustomRepositoryRoleIsJudgedByWhatItPermits(t *testing.T) {
+	gh := &fakeGH{replies: map[string]reply{
+		"api repos/has-ghas/service/collaborators/octocat/permission": {out: []byte(
+			`{"permission":"write","role_name":"security-champion","user":{"login":"octocat",` +
+				`"permissions":{"admin":false,"maintain":true,"push":true,"triage":true,"pull":true}}}`)},
+		"api repos/has-ghas/opaque/collaborators/octocat/permission": {out: []byte(
+			`{"permission":"write","role_name":"release-captain","user":{"login":"octocat"}}`)},
+	}}
+	if role, err := ReadRepositoryRole(context.Background(), gh.run, "has-ghas", "service", "octocat"); err != nil || role != PermissionMaintain {
+		t.Errorf("a custom role built on maintain = %q, %v; want maintain", role, err)
+	}
+	if role, err := ReadRepositoryRole(context.Background(), gh.run, "has-ghas", "opaque", "octocat"); err == nil || role != "" ||
+		!strings.Contains(err.Error(), "release-captain") {
+		t.Errorf("a custom role with no permissions reported = %q, %v; want cannot say, naming it", role, err)
+	}
+}

@@ -5,8 +5,11 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,10 +17,13 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/advanced-security/codeql-abom/internal/expand"
 	"github.com/advanced-security/codeql-abom/internal/ghapp"
+	"github.com/advanced-security/codeql-abom/internal/ghauth"
 	"github.com/advanced-security/codeql-abom/internal/store"
+	"github.com/advanced-security/codeql-abom/internal/toolchain"
 )
 
 type lendingTokens struct{}
@@ -97,6 +103,9 @@ func TestWithoutAnAppEveryReaderKeepsTheOperatorsToken(t *testing.T) {
 	if fetcher.Tokens != nil || prober.Tokens != nil {
 		t.Error("git was given a token source with no App configured")
 	}
+	if lockVerifierWithPolicy(servedStore(t), nil, func(context.Context, string) error { return nil }, srv.URL).Runner.Token != nil {
+		t.Error("lock verification was given an installation token with no App configured")
+	}
 	if _, err := readerApp(dir, "advanced-security", ghapp.DefaultAPIURL); err == nil {
 		t.Error("naming an account for public reads with no App configured was accepted")
 	}
@@ -141,6 +150,13 @@ func TestWithAnAppEveryReaderReadsThroughItsInstallations(t *testing.T) {
 	if fetcher.Tokens == nil || prober.Tokens == nil {
 		t.Error("the expander's clone or the recheck's probe runs without the App's token source")
 	}
+	verifier := lockVerifierWithPolicy(servedStore(t), lendingTokens{}, func(context.Context, string) error { return nil }, srv.URL)
+	if verifier.Runner.Token == nil {
+		t.Fatal("lock verification reads GitHub as the person's gh session with an App configured")
+	}
+	if token, err := verifier.Runner.Token(context.Background(), "has-ghas"); err != nil || token != "lent-designated" {
+		t.Errorf("lock verification reads with %q, %v; want the App's token source", token, err)
+	}
 
 	if err := os.Chmod(ghapp.KeyFile(dir), 0o644); err != nil {
 		t.Fatal(err)
@@ -175,5 +191,145 @@ func TestServeRelaysToItsOwnReceiver(t *testing.T) {
 	cfg.webhookSecret = nil
 	if err := startRelay(context.Background(), cfg, io.Discard); err == nil {
 		t.Error("a relay with no webhook secret to verify its deliveries was started")
+	}
+}
+
+// installationsOnly is a GitHub that knows one App installed on has-ghas, and nothing about anyone.
+func installationsOnly(t *testing.T) (*ghapp.App, func(token string) map[string]string) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	carries := map[string]map[string]string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/app/installations":
+			_, _ = w.Write([]byte(`[{"id":11,"account":{"login":"has-ghas","type":"Organization"},` +
+				`"repository_selection":"all","permissions":{"metadata":"read","contents":"read",` +
+				`"administration":"read","organization_copilot_requests":"read"}}]`))
+		case r.Method == http.MethodPost && r.URL.Path == "/app/installations/11/access_tokens":
+			var body struct {
+				Permissions map[string]string `json:"permissions"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			token := fmt.Sprintf("ghs_%d", len(carries)+1)
+			carries[token] = body.Permissions
+			w.WriteHeader(http.StatusCreated)
+			_, _ = fmt.Fprintf(w, `{"token":%q,"expires_at":%q}`, token, time.Now().Add(time.Hour).Format(time.RFC3339))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	app := &ghapp.App{API: srv.URL, HTTP: srv.Client(), Credentials: ghapp.Credentials{AppID: 4242,
+		Slug: "abom-has-ghas", Owner: "has-ghas", OwnerKind: "organization", Key: key}}
+	return app, func(token string) map[string]string {
+		mu.Lock()
+		defer mu.Unlock()
+		return carries[token]
+	}
+}
+
+// A production pod has no gh session: with an App, no call it makes reads the person's token, and
+// each one carries a token minted for it.
+func TestWithAnAppNoCallReadsThePersonsToken(t *testing.T) {
+	app, carries := installationsOnly(t)
+	creds := newCredentials(app, "")
+	creds.operator = func(context.Context) string {
+		t.Error("the person's token was read with an App configured")
+		return "gho_person"
+	}
+	ctx := context.Background()
+
+	client, _ := creds.snapshotClient(ctx, app.API, []string{"has-ghas/test-repo-1"})
+	if client.Token != "" || len(client.Allowed) != 0 {
+		t.Errorf("with an App the snapshot client carries %q and approves %v; want no token and no target",
+			client.Token, client.Allowed)
+	}
+
+	var o authoringOptions
+	creds.copilot(&o)
+	if o.mint == nil || o.credential.Kind != toolchain.CredentialInstallation || !strings.Contains(o.credential.Source, "has-ghas") {
+		t.Fatalf("authoring with an App: mint=%v credential %+v; want an installation token for has-ghas", o.mint != nil, o.credential)
+	}
+	token, _, err := o.mint(ctx, false)
+	if want := map[string]string{"organization_copilot_requests": "read"}; err != nil || !maps.Equal(carries(token), want) {
+		t.Errorf("the Copilot token carries %v, %v; want %v", carries(token), err, want)
+	}
+
+	id, err := creds.verify()(ctx)
+	if err != nil || id.Login != "abom-has-ghas[bot]" || len(id.Accounts) != 1 || id.Accounts[0].Role != ghauth.RoleInstallation {
+		t.Errorf("identity with an App = %+v, %v; want the App's installations", id, err)
+	}
+	if list, read := creds.picker(); list == nil || read == nil {
+		t.Error("with an App the picker still lists through gh")
+	}
+	if role, err := creds.roleReader()(ctx, "has-ghas", "service", "octocat"); err == nil || role != "" {
+		t.Errorf("with an App a person's repository role was read: %q, %v", role, err)
+	}
+}
+
+// The App asks for no write, so a server reading as one writes nothing: a dependency snapshot and
+// default setup are the repository's own, and a write target named beside an App is refused at
+// startup rather than carried out with somebody else's token.
+func TestWithAnAppTheServerWritesNothing(t *testing.T) {
+	app, _ := installationsOnly(t)
+	for _, cfg := range []serveConfig{{submitTargets: "has-ghas/test-repo-1"}, {enableTargets: "has-ghas/test-repo-1"},
+		{enableAccounts: "has-ghas"}} {
+		err := newCredentials(app, "").refuseWrites(cfg)
+		if err == nil || !strings.Contains(err.Error(), "App") {
+			t.Errorf("write targets %q %q %q beside an App = %v; want the server refused",
+				cfg.submitTargets, cfg.enableTargets, cfg.enableAccounts, err)
+		}
+	}
+	if err := newCredentials(app, "").refuseWrites(serveConfig{}); err != nil {
+		t.Errorf("an App with no write targets was refused: %v", err)
+	}
+	if err := newCredentials(nil, "").refuseWrites(serveConfig{submitTargets: "x/y", enableTargets: "x/z"}); err != nil {
+		t.Errorf("without an App the operator's write targets were refused: %v", err)
+	}
+}
+
+// An App owned by a user has no organization to bill, so Copilot is refused with what to name.
+func TestAnAppOwnedByAUserNamesNoOrganizationToBill(t *testing.T) {
+	app, _ := installationsOnly(t)
+	app.Credentials.Owner, app.Credentials.OwnerKind = "data-douser", "user"
+	var o authoringOptions
+	newCredentials(app, "").copilot(&o)
+	if _, _, err := o.mint(context.Background(), false); err == nil || !strings.Contains(err.Error(), "--authoring-org") {
+		t.Errorf("minting with no organization to bill = %v; want a refusal naming --authoring-org", err)
+	}
+	if !strings.Contains(o.credential.Remedy, "--authoring-org") {
+		t.Errorf("readiness remedy %q does not say how to name the organization", o.credential.Remedy)
+	}
+}
+
+// Without an App, the local and development path keeps the operator's token for every call.
+func TestWithoutAnAppEveryCallKeepsTheOperatorsToken(t *testing.T) {
+	creds := newCredentials(nil, "")
+	reads := 0
+	creds.operator = func(context.Context) string { reads++; return "gho_person" }
+	ctx := context.Background()
+
+	if client, _ := creds.snapshotClient(ctx, ghapp.DefaultAPIURL, []string{"x/y"}); client.Token != "gho_person" || !client.Allowed["x/y"] {
+		t.Errorf("the snapshot client carries %q and approves %v; want the operator's token and target", client.Token, client.Allowed)
+	}
+	if p := creds.patcher(ctx, ghapp.DefaultAPIURL, nil); p.Token != "gho_person" {
+		t.Errorf("the default setup writer carries %q; want the operator's token", p.Token)
+	}
+	var o authoringOptions
+	creds.copilot(&o)
+	if o.mint != nil || o.credential.Kind != "" {
+		t.Errorf("authoring without an App mints (%v) or names %+v; want gh, as before", o.mint != nil, o.credential)
+	}
+	if list, read := creds.picker(); list != nil || read != nil {
+		t.Error("without an App the picker does not list through gh")
+	}
+	if reads == 0 {
+		t.Error("the operator's token was never read on the path that uses it")
 	}
 }

@@ -14,7 +14,19 @@ import (
 )
 
 // sourceOf locates the packages a Use may name.
-var sourceOf = map[string]string{"catalog": "../catalog", "expand": "../expand", "events": "../events"}
+var sourceOf = map[string]string{
+	"catalog": "../catalog", "expand": "../expand", "events": "../events", "harness": "../harness",
+}
+
+// writes reports whether a call, as the table names it, changes something on GitHub.
+func writes(calls string) bool {
+	for _, method := range []string{"POST ", "PATCH ", "PUT ", "DELETE "} {
+		if strings.HasPrefix(calls, method) {
+			return true
+		}
+	}
+	return false
+}
 
 func parsePackage(t *testing.T, name string) []*ast.File {
 	t.Helper()
@@ -143,7 +155,26 @@ var documentedWithoutPermission = map[string]bool{
 	"installation_target": true, "security_advisory": true, "meta": true,
 }
 
-// Each requested permission and event names an existing call that makes the request; none is a write or unneeded.
+// checkAccessIsWhatItsCallsDo holds a write grant to a call that writes, and a read grant to none.
+func checkAccessIsWhatItsCallsDo(t *testing.T, g Grant) {
+	t.Helper()
+	written := slices.ContainsFunc(g.Uses, func(u Use) bool { return writes(u.Calls) })
+	switch g.Access {
+	case "read":
+		if written {
+			t.Errorf("%s is requested to read, and a call it is traced to writes", g.Permission)
+		}
+	case "write":
+		if !written {
+			t.Errorf("%s: write requested, and no call it is traced to writes", g.Permission)
+		}
+	default:
+		t.Errorf("%s: %s requested; the App asks to read, or to write where a call writes", g.Permission, g.Access)
+	}
+}
+
+// Each requested permission and event names an existing call that makes the request; a write would be
+// requested only for a call that writes, and nothing is requested that no call needs.
 func TestEveryRequestedPermissionAndEventIsTracedToANamedCall(t *testing.T) {
 	requested := map[string]bool{}
 	neededByEvent := map[string]bool{}
@@ -156,10 +187,7 @@ func TestEveryRequestedPermissionAndEventIsTracedToANamedCall(t *testing.T) {
 			t.Errorf("%s is listed twice", g.Permission)
 		}
 		requested[g.Permission] = true
-		if g.Access != "read" {
-			t.Errorf("%s: %s requested; the App writes nothing, and writes keep the operator's token",
-				g.Permission, g.Access)
-		}
+		checkAccessIsWhatItsCallsDo(t, g)
 		if g.Doc == "" {
 			t.Errorf("%s names no GitHub documentation that says it covers its uses", g.Permission)
 		}
@@ -260,5 +288,37 @@ func TestEveryPathTheReaderBuildsIsCoveredByARequestedPermission(t *testing.T) {
 	}
 	if _, err := os.Stat(sourceOf["catalog"]); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A token can carry only what the manifest asked for, and a grant no token is minted with is
+// approved by every installation for nothing.
+func TestEveryMintedPermissionSetIsWithinTheManifestAndUsesAllOfIt(t *testing.T) {
+	manifest := map[string]string{}
+	for _, g := range Permissions {
+		manifest[g.Permission] = g.Access
+	}
+	sets := map[string]PermissionSet{"crawl": CrawlPermissions, "copilot": CopilotPermissions}
+	minted := map[string]string{}
+	for name, set := range sets {
+		if missing := set.missingFrom(manifest); len(missing) > 0 {
+			t.Errorf("the %s token asks for %v, which the manifest does not request", name, missing)
+		}
+		for permission, access := range set {
+			if accessLevel[access] > accessLevel[minted[permission]] {
+				minted[permission] = access
+			}
+		}
+	}
+	for permission, access := range manifest {
+		if minted[permission] != access {
+			t.Errorf("the manifest requests %s: %s, and no token is minted with it (highest: %q)",
+				permission, access, minted[permission])
+		}
+	}
+	for permission, access := range CrawlPermissions {
+		if access != "read" || permission == "organization_copilot_requests" {
+			t.Errorf("the crawl token carries %s: %s; it reads, and makes no Copilot requests", permission, access)
+		}
 	}
 }

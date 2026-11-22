@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -355,6 +356,24 @@ func TestWhatEachModelCallCostIsKeptAsItArrives(t *testing.T) {
 	g.Observe(copilot.SessionEvent{Data: &copilot.AssistantUsageData{Model: "claude-opus-5", InputTokens: &in}})
 	if g.Err() == nil {
 		t.Error("a cost that could not be kept did not fail the session")
+	}
+}
+
+// auto is the runtime's choice, so the record names the models its calls actually ran on, each once,
+// in the order they first ran, and keeps the record as it changes rather than once at the end.
+func TestTheModelsACallRanOnAreRecordedAsTheyArrive(t *testing.T) {
+	g, _, _ := newGate(t)
+	var kept []string
+	g.KeepModel(func(m string) error {
+		kept = append(kept, m)
+		return nil
+	})
+	for _, model := range []string{"gpt-5.3-codex", "gpt-5.3-codex", "", "gpt-5.4-mini", "gpt-5.3-codex"} {
+		g.Observe(copilot.SessionEvent{Data: &copilot.AssistantUsageData{Model: model}})
+	}
+	want := []string{"gpt-5.3-codex", "gpt-5.3-codex, gpt-5.4-mini"}
+	if !slices.Equal(kept, want) {
+		t.Errorf("recorded %q, want %q", kept, want)
 	}
 }
 

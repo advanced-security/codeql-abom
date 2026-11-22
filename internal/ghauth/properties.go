@@ -135,6 +135,9 @@ func propertyValues(name string, raw json.RawMessage) []PropertyValue {
 // propertyProblem says why an organization's custom properties could not be read. Single sign-on
 // and authentication are the listing's problems too; the rest are said of properties.
 func propertyProblem(owner string, err error) error {
+	if p := new(Problem); errors.As(err, &p) {
+		return p
+	}
 	text := err.Error()
 	switch {
 	case errors.Is(err, ErrNotInstalled), strings.Contains(text, "SAML enforcement"),

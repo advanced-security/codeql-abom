@@ -96,8 +96,10 @@ the same as paused. Collapsing either reads as a control that did nothing.
 **Ownership is declared, and the graph is its closure.** Nothing enters the graph that the owned set
 does not reach; the walk is inductive from declared roots. Four notions stay separate — `origin`
 (how a row entered), in-scope (holds a seed), `abom_owned_scope` (what the operator is answerable
-for) and `abom_account` (what `gh` reports). Only the third implies anyone can change anything, and
-only `owner` or `admin` roles are eligible to be declared. Belonging is not being answerable.
+for) and `abom_account` (what `gh`, or the App's installations, report). Only the third implies anyone
+can change anything. A role makes an account eligible to be declared — owner, admin, security
+manager or the App's installation, and a member for the repositories they administer or maintain —
+and never declares it. Belonging is not being answerable.
 
 **Only something owned can be included or excluded by a repository property.** A grouping is read
 from custom properties, which are collected for owned repositories and nowhere else, because the

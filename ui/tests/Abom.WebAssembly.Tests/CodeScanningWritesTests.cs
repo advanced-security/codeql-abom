@@ -71,6 +71,22 @@ public class CodeScanningWritesTests : AbomTestContext
         Assert.Contains(Sent, r => r.Url.Contains("api/code-scanning/readings?summary=true"));
     }
 
+    // A server reading as an App refuses the write flags at start, so the sentence must not offer them.
+    [Fact]
+    public void AServerReadingAsAnAppOffersNoFlagToWrite()
+    {
+        ReadingsAndViews(writes: false);
+        Answer("api/code-scanning/writes", """{"writes":false,"readsAsApp":true,"targets":[],"accounts":[]}""");
+        Answer("api/code-scanning/previews", "[]");
+        var cut = Render<Shared.CodeScanningWrites>();
+
+        cut.WaitForAssertion(() => Assert.Contains("App", cut.Find("[data-abom-setup-mode]").TextContent));
+        var mode = cut.Find("[data-abom-setup-mode]").TextContent;
+        Assert.Contains("writes nothing", mode);
+        Assert.DoesNotContain("--enable", mode);
+        Assert.DoesNotContain("your own token", mode);
+    }
+
     [Fact]
     public void APreviewIsOfferedEverywhereAndApprovalOnlyWhereTheServerWrites()
     {

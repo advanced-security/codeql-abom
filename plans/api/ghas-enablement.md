@@ -34,10 +34,11 @@ which repositories hold `.github/workflows/**`. That is the one language gap the
 4. **Enablement as something a policy may reference**, on the same footing as an advisory. The rule
    stays the operator's. Depends on 2, and on a predicate term the policy language can carry.
 
-ABOM closes the `actions` gap this plan once meant to contribute back itself, by the operator's
-decision: it reads each owned repository's default setup, because it must classify setup before it
-may add `actions` ([`docs/architecture.md`](../../docs/architecture.md) says how). The audit still
-owns execution, freshness and every other language.
+ABOM reports the `actions` gap this plan once meant to contribute back itself: it reads each owned
+repository's default setup and says whether its Actions code is scanned
+([`docs/architecture.md`](../../docs/architecture.md) says how). Enabling it is the repository
+owner's, outside ABOM, by the operator's decision. The audit still owns execution, freshness and
+every other language.
 
 ## The constraints that must not be broken
 
