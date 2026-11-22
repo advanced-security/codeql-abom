@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -18,6 +19,8 @@ import (
 type fakeRepo struct {
 	head string
 	refs map[string]string
+	// commits answer object(expression:) by prefix, as GitHub does for seven characters or more.
+	commits []string
 }
 
 func commitObject(oid string) string { return fmt.Sprintf(`{"__typename":"Commit","oid":%q}`, oid) }
@@ -28,7 +31,7 @@ func tagObject(oid, target string) string {
 
 var (
 	repoLine  = regexp.MustCompile(`(r\d+): repository\(owner: \$(o\d+), name: \$(n\d+)\)`)
-	fieldLine = regexp.MustCompile(`(\w+): (?:defaultBranchRef|ref\(qualifiedName: \$(\w+)\))`)
+	fieldLine = regexp.MustCompile(`(\w+): (?:defaultBranchRef|ref\(qualifiedName: \$(\w+)\)|object\(expression: \$(\w+)\))`)
 )
 
 // refServer answers ref queries from world, one repository per line of the query, and counts them.
@@ -61,6 +64,16 @@ func refServer(t *testing.T, world map[string]fakeRepo, cost int) (*Client, *ato
 			}
 			var fields []string
 			for _, f := range fieldLine.FindAllStringSubmatch(line[len(m[0]):], -1) {
+				if f[3] != "" {
+					prefix, found := req.Variables[f[3]], ""
+					for _, c := range repo.commits {
+						if len(prefix) >= 7 && strings.HasPrefix(c, prefix) {
+							found = commitObject(c)
+						}
+					}
+					fields = append(fields, fmt.Sprintf(`%q:%s`, f[1], cmp.Or(found, "null")))
+					continue
+				}
 				obj := repo.refs[req.Variables[f[2]]]
 				if f[2] == "" {
 					obj = commitObject(repo.head)
@@ -190,6 +203,37 @@ func TestAReferenceGitHubLookedForAndDidNotFindIsMissingNotMerelyUnread(t *testi
 	}
 	if a := batch.Answers[2]; a.Missing || a.Commit != commitA {
 		t.Errorf("a reference that resolved is not missing; got %+v", a)
+	}
+}
+
+// GitHub's own blob view names a commit by its first characters, so a link does too; a question that
+// asks for a commit resolves one there, in the same query, while a branch or tag of that name keeps
+// its meaning and a question that does not ask never treats a name as a commit.
+func TestAnAbbreviatedCommitResolvesWhereTheQuestionAsksForOne(t *testing.T) {
+	c, queries := refServer(t, map[string]fakeRepo{
+		"o/r": {head: commitC, commits: []string{commitB},
+			refs: map[string]string{"refs/heads/bbbbbbbb1": commitObject(commitA)}},
+	}, 1)
+	batch, err := c.ResolveRefs(context.Background(), []RefQuestion{
+		{Owner: "o", Repo: "r", Ref: "bbbbbbbb", OrCommit: true},
+		{Owner: "o", Repo: "r", Ref: "bbbbbbbb"},
+		{Owner: "o", Repo: "r", Ref: "bbbbbbbb1", OrCommit: true},
+		{Owner: "o", Repo: "r", Ref: "dddddddd", OrCommit: true},
+		{Owner: "o", Repo: "r", Ref: "bbbb", OrCommit: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range []struct {
+		commit  string
+		missing bool
+	}{{commitB, false}, {"", true}, {commitA, false}, {"", true}, {"", true}} {
+		if a := batch.Answers[i]; a.Commit != want.commit || a.Missing != want.missing {
+			t.Errorf("question %d answered %+v, want commit %q missing %v", i, a, want.commit, want.missing)
+		}
+	}
+	if n := queries.Load(); n != 1 {
+		t.Errorf("%d queries, want one for the batch", n)
 	}
 }
 
