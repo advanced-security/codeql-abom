@@ -88,6 +88,8 @@ public class HeldResultsTests : AbomTestContext
         var coverage = Words(cut.Find("[data-abom-run-coverage]").TextContent);
         Assert.Contains("1 had nothing to analyze: octo/docs.", coverage);
         Assert.Contains("Not covered: octo/broken —", coverage);
+        // Razor drops the space between one sentence's element and the next.
+        Assert.Contains("octo/docs. Not covered", coverage);
 
         cut.Find("[data-abom-results-all] input").Change(true);
         cut.WaitForAssertion(() =>

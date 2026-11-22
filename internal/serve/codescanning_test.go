@@ -157,3 +157,25 @@ func TestWritingIsControlledAndRefusedWhereTheServerWritesNothing(t *testing.T) 
 		t.Errorf("an empty ledger answered %d %q, want no steps of none", rec.Code, rec.Body.String())
 	}
 }
+
+// A server reading as an App refuses to start with anything to write, so pointing its reader at
+// --enable-targets is a remedy that cannot be followed: it says why it writes nothing instead.
+func TestAServerReadingAsAnAppSaysItWritesNothingAndOffersNoFlag(t *testing.T) {
+	srv, _ := writesServer(t)
+	srv.IdentityBy = IdentityByApp
+	created := decode[struct {
+		ID int64 `json:"id"`
+	}](t, control(t, srv, "/api/code-scanning/previews", `{}`))
+	rec := control(t, srv, fmt.Sprintf("/api/code-scanning/previews/%d/approve", created.ID), ``)
+	if rec.Code != http.StatusConflict || strings.Contains(rec.Body.String(), "--enable") ||
+		!strings.Contains(rec.Body.String(), "App") {
+		t.Errorf("approving as an App answered %d %s, want a refusal naming the App and no flag", rec.Code, rec.Body.String())
+	}
+	mode := decode[struct {
+		Writes     bool  `json:"writes"`
+		ReadsAsApp *bool `json:"readsAsApp"`
+	}](t, get(t, srv, "/api/code-scanning/writes"))
+	if mode.Writes || mode.ReadsAsApp == nil || !*mode.ReadsAsApp {
+		t.Errorf("the write mode as an App is %+v, want no writes and readsAsApp", mode)
+	}
+}

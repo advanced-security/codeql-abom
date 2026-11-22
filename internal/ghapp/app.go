@@ -1,6 +1,7 @@
 package ghapp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -46,7 +47,14 @@ type App struct {
 	byOwner  map[string]int64
 	listed   []installation
 	listedAt time.Time
-	tokens   map[int64]minted
+	tokens   map[tokenKey]minted
+}
+
+// tokenKey caches a token per installation and permission set: one per installation would hand
+// whichever call minted first's permissions to every other.
+type tokenKey struct {
+	id    int64
+	perms string
 }
 
 type minted struct {
@@ -60,8 +68,9 @@ type installation struct {
 		Login string `json:"login"`
 		Type  string `json:"type"`
 	} `json:"account"`
-	RepositorySelection string  `json:"repository_selection"`
-	SuspendedAt         *string `json:"suspended_at"`
+	RepositorySelection string            `json:"repository_selection"`
+	SuspendedAt         *string           `json:"suspended_at"`
+	Permissions         map[string]string `json:"permissions"`
 }
 
 // statusError is GitHub refusing a request, with whatever it said about why.
@@ -175,45 +184,70 @@ func (a *App) remember(list []installation) {
 		a.byOwner[strings.ToLower(inst.Account.Login)] = inst.ID
 		listed[inst.ID] = true
 	}
-	for id := range a.tokens {
-		if !listed[id] {
-			delete(a.tokens, id)
+	for key := range a.tokens {
+		if !listed[key.id] {
+			delete(a.tokens, key)
 		}
 	}
 	a.listedAt = a.now()
 }
 
+// tokenFor is installation id's crawl token: every read it granted, and nothing else.
 func (a *App) tokenFor(ctx context.Context, id int64, owner string) (string, error) {
-	if t, ok := a.tokens[id]; ok && a.now().Before(t.expires.Add(-refreshBefore)) {
-		return t.token, nil
+	t, err := a.mint(ctx, id, owner, a.crawlSet(id), false)
+	return t.token, err
+}
+
+// mint reuses id's cached token carrying exactly perms until near expiry, unless fresh.
+func (a *App) mint(ctx context.Context, id int64, owner string, perms PermissionSet, fresh bool) (minted, error) {
+	key := tokenKey{id: id, perms: perms.key()}
+	if t, ok := a.tokens[key]; ok && !fresh && a.now().Before(t.expires.Add(-refreshBefore)) {
+		return t, nil
 	}
 	jwt, err := signJWT(a.Credentials.Key, a.issuer(), a.now())
 	if err != nil {
-		return "", err
+		return minted{}, err
 	}
 	var out struct {
 		Token     string    `json:"token"`
 		ExpiresAt time.Time `json:"expires_at"`
 	}
-	err = a.call(ctx, http.MethodPost, fmt.Sprintf("/app/installations/%d/access_tokens", id), jwt, &out)
-	if refused := new(statusError); errors.As(err, &refused) && refused.Status == http.StatusNotFound {
-		delete(a.byOwner, strings.ToLower(owner))
-		delete(a.tokens, id)
-		// The listing still names it, so the next lookup reads a fresh one.
-		a.listedAt = time.Time{}
-		return "", fmt.Errorf("%w: %s (installation %d is gone)", ErrNotInstalled, owner, id)
+	body := map[string]any{"permissions": perms}
+	err = a.send(ctx, http.MethodPost, fmt.Sprintf("/app/installations/%d/access_tokens", id), jwt, body, &out)
+	if refused := new(statusError); errors.As(err, &refused) {
+		switch refused.Status {
+		case http.StatusNotFound:
+			a.forget(id, owner)
+			return minted{}, fmt.Errorf("%w: %s (installation %d is gone)", ErrNotInstalled, owner, id)
+		case http.StatusUnprocessableEntity:
+			// The listing reported an approval GitHub no longer holds, so the next request reads it again.
+			a.forget(id, owner)
+			return minted{}, &NotGrantedError{Owner: owner, Missing: perms.missingFrom(nil)}
+		}
 	}
 	if err != nil {
-		return "", fmt.Errorf("minting a token for %s: %w", owner, err)
+		return minted{}, fmt.Errorf("minting a token for %s: %w", owner, err)
 	}
 	if out.Token == "" || out.ExpiresAt.IsZero() {
-		return "", fmt.Errorf("minting a token for %s: GitHub answered without a token or its expiry", owner)
+		return minted{}, fmt.Errorf("minting a token for %s: GitHub answered without a token or its expiry", owner)
 	}
 	if a.tokens == nil {
-		a.tokens = map[int64]minted{}
+		a.tokens = map[tokenKey]minted{}
 	}
-	a.tokens[id] = minted{token: out.Token, expires: out.ExpiresAt}
-	return out.Token, nil
+	t := minted{token: out.Token, expires: out.ExpiresAt}
+	a.tokens[key] = t
+	return t, nil
+}
+
+// forget drops what is cached about id, and marks the listing stale so the next lookup reads a fresh one.
+func (a *App) forget(id int64, owner string) {
+	delete(a.byOwner, strings.ToLower(owner))
+	for key := range a.tokens {
+		if key.id == id {
+			delete(a.tokens, key)
+		}
+	}
+	a.listedAt = time.Time{}
 }
 
 func (a *App) listInstallations(ctx context.Context) ([]installation, error) {
@@ -310,16 +344,48 @@ func (a *App) installationRepositories(ctx context.Context, id int64, owner stri
 
 // call makes one request whose errors carry neither the bearer, anything in hide, nor the URL.
 func (a *App) call(ctx context.Context, method, path, bearer string, into any, hide ...string) error {
-	base := strings.TrimSuffix(a.API, "/")
-	if base == "" {
-		base = DefaultAPIURL
+	return a.send(ctx, method, path, bearer, nil, into, hide...)
+}
+
+// send is call with a JSON body; nil sends none.
+func (a *App) send(ctx context.Context, method, path, bearer string, body, into any, hide ...string) error {
+	answer, _, err := a.exchange(ctx, method, path, bearer, body, hide...)
+	if err != nil || into == nil {
+		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, method, base+path, nil)
+	if err := json.Unmarshal(answer, into); err != nil {
+		return fmt.Errorf("decoding GitHub's answer: %w", err)
+	}
+	return nil
+}
+
+// base is the configured REST API, GitHub.com's when none is.
+func (a *App) base() string {
+	if base := strings.TrimSuffix(a.API, "/"); base != "" {
+		return base
+	}
+	return DefaultAPIURL
+}
+
+// exchange makes one request and returns GitHub's answer and headers, a refusal as a statusError.
+func (a *App) exchange(ctx context.Context, method, path, bearer string, body any, hide ...string) ([]byte, http.Header, error) {
+	var payload io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			return nil, nil, fmt.Errorf("encoding a request to GitHub: %w", err)
+		}
+		payload = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, a.base()+path, payload)
 	if err != nil {
-		return fmt.Errorf("building a request to GitHub: %w", withoutURL(err))
+		return nil, nil, fmt.Errorf("building a request to GitHub: %w", withoutURL(err))
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", apiVersion)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	if bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
@@ -329,24 +395,19 @@ func (a *App) call(ctx context.Context, method, path, bearer string, into any, h
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return withoutURL(err)
+		return nil, nil, withoutURL(err)
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxAnswer))
+	answer, err := io.ReadAll(io.LimitReader(resp.Body, maxAnswer))
 	if err != nil {
-		return fmt.Errorf("reading GitHub's answer: %w", err)
+		return nil, nil, fmt.Errorf("reading GitHub's answer: %w", err)
 	}
 	if resp.StatusCode/100 != 2 {
 		// Scrubbed before it is shortened, or a credential cut in half survives the scrub.
-		return &statusError{Status: resp.StatusCode, Message: messageOf([]byte(scrub(string(body), append(hide, bearer)...)))}
+		return nil, nil, &statusError{Status: resp.StatusCode,
+			Message: messageOf([]byte(scrub(string(answer), append(hide, bearer)...)))}
 	}
-	if into == nil {
-		return nil
-	}
-	if err := json.Unmarshal(body, into); err != nil {
-		return fmt.Errorf("decoding GitHub's answer: %w", err)
-	}
-	return nil
+	return answer, resp.Header, nil
 }
 
 // messageOf is GitHub's own explanation, bounded so an unexpected page cannot flood a log.

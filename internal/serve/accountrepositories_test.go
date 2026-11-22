@@ -168,3 +168,50 @@ func TestANameThatIsNotAnAccountIsRefused(t *testing.T) {
 		t.Errorf("gh was asked %+v", *calls)
 	}
 }
+
+// A member may declare only the repositories they administer or maintain, and the server says which
+// rather than leaving the browser to read the role: an organization that may be declared whole may
+// have any of its repositories included.
+func TestTheServerSaysWhichRepositoriesTheReaderMayInclude(t *testing.T) {
+	srv, s, _ := listingServer(t, func(string) ([]ghauth.Repository, error) {
+		return []ghauth.Repository{{Name: "administered", Permission: ghauth.PermissionAdmin},
+			{Name: "maintained", Permission: ghauth.PermissionMaintain}, {Name: "written", Permission: ghauth.PermissionWrite},
+			{Name: "triaged", Permission: ghauth.PermissionTriage}, {Name: "unreported"}}, nil
+	})
+	if err := s.ReplaceAccounts(store.Verification{Login: "octocat", Host: "github.com", VerifiedAt: time.Now(),
+		Accounts: []store.Account{
+			{Owner: "member-org", Kind: store.AccountOrganization, Role: store.RoleMember, SecurityManager: "no"},
+			{Owner: "admin-org", Kind: store.AccountOrganization, Role: store.RoleAdmin},
+		}}); err != nil {
+		t.Fatal(err)
+	}
+	declarable := func(owner string) map[string]bool {
+		rec := postControl(t, srv, "/api/accounts/"+owner+"/repositories")
+		var out struct {
+			Repositories []struct {
+				Name       string `json:"name"`
+				Declarable bool   `json:"declarable"`
+			} `json:"repositories"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decoding %s: %v", rec.Body, err)
+		}
+		got := map[string]bool{}
+		for _, r := range out.Repositories {
+			got[r.Name] = r.Declarable
+		}
+		return got
+	}
+	member := declarable("member-org")
+	for name, want := range map[string]bool{"administered": true, "maintained": true, "written": false,
+		"triaged": false, "unreported": false} {
+		if member[name] != want {
+			t.Errorf("member-org/%s declarable %v, want %v", name, member[name], want)
+		}
+	}
+	for name, ok := range declarable("admin-org") {
+		if !ok {
+			t.Errorf("admin-org/%s is not declarable, and its organization may be declared whole", name)
+		}
+	}
+}

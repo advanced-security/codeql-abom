@@ -103,7 +103,7 @@ exchange runs both ways: GitHub's language statistics do not report `actions`, s
 one gap that audit cannot see. `plans/api/ghas-enablement.md`
 
 ABOM now closes that gap itself: it shows whether each owned repository's Actions code is scanned,
-and adds `actions` to default setup from an approved preview. `docs/architecture.md`
+and leaves enabling it to the repository's owner. `docs/architecture.md`
 
 ## Two shapes of database, answering two different questions
 

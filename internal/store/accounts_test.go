@@ -1,6 +1,8 @@
 package store
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -253,5 +255,52 @@ func TestDeclarationsFromAnOlderDatabaseAreNotCarriedForward(t *testing.T) {
 	}
 	if verified, _ := s.Verified(); verified {
 		t.Error("a migrated declaration reports as a verified identity")
+	}
+}
+
+// Memberships call a security manager a member, so the role is read apart and kept beside the
+// membership; it, an admin, an owner and an App's installation may declare an account whole, and a
+// member who may not can still declare the repositories they administer or maintain.
+func TestASecurityManagerMayDeclareAndAMemberMayOnlyInclude(t *testing.T) {
+	s := newTestStore(t)
+	accounts := []Account{
+		{Owner: "admin-org", Kind: AccountOrganization, Role: RoleAdmin},
+		{Owner: "managed-org", Kind: AccountOrganization, Role: "member", SecurityManager: "yes"},
+		{Owner: "member-org", Kind: AccountOrganization, Role: "member", SecurityManager: "no"},
+		{Owner: "blind-org", Kind: AccountOrganization, Role: "member", SecurityManager: "unknown",
+			SecurityManagerReason: "gh cannot read who manages security in blind-org without the admin:org scope"},
+		{Owner: "installed-org", Kind: AccountOrganization, Role: RoleInstallation},
+	}
+	if err := s.ReplaceAccounts(Verification{Login: "octocat", Host: "github.com", VerifiedAt: time.Now().UTC(),
+		Accounts: accounts, Scopes: []string{"read:org"}}); err != nil {
+		t.Fatalf("ReplaceAccounts: %v", err)
+	}
+	v, err := s.Accounts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]Account{}
+	for _, a := range v.Accounts {
+		got[a.Owner] = a
+	}
+	for _, want := range accounts {
+		if got[want.Owner] != want {
+			t.Errorf("%s read back as %+v, want %+v", want.Owner, got[want.Owner], want)
+		}
+	}
+	for owner, want := range map[string][2]bool{
+		"admin-org": {true, false}, "managed-org": {true, false}, "member-org": {false, true},
+		"blind-org": {false, true}, "installed-org": {true, false},
+	} {
+		a := got[owner]
+		if a.CanDeclare() != want[0] || a.CanInclude() != want[1] {
+			t.Errorf("%s: may declare %v and include %v, want %v and %v", owner, a.CanDeclare(), a.CanInclude(), want[0], want[1])
+		}
+	}
+	raw, _ := json.Marshal(got["blind-org"])
+	for _, field := range []string{`"canDeclare":false`, `"canInclude":true`, `"securityManager":"unknown"`, "admin:org"} {
+		if !strings.Contains(string(raw), field) {
+			t.Errorf("%s lacks %s", raw, field)
+		}
 	}
 }

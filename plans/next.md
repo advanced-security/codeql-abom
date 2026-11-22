@@ -84,21 +84,21 @@ The checks still unbuilt live in
 the plans that own what they depend on, and `codeql-abom check` names each one's plan. Declaring
 ownership by repository property, which the operator ranked ahead of them, is built.
 
-1. **[A production instance does not need a person's token](api/production-credentials.md), and
-   [an ownership claim names the role that made it](api/ownership-claims.md)** — one
-   implementation, not two PRs. Reads already use the App. Copilot, the declaration check,
-   dependency snapshots and the default-setup language add still use a person's token, and the
-   only roles that may declare are personal owner and organization admin. A production pod has
-   no `gh auth` session, so a credential split that still cannot say who may declare has not
-   closed the hole. Ranked here, above Demo, because the operator named it the highest priority
-   and will implement the two together. Everything previously ranked keeps its relative order
-   beneath them.
+1. **[A production instance does not need a person's token](api/production-credentials.md)** —
+   built, with who may declare, and measured live on `has-ghas` with no `gh` reachable: the accounts
+   check, enumeration, a linked example, two Copilot authoring sessions and a run over 32 owned
+   repositories all ran on the App's tokens alone, and a request reached 7 of 7. The CLI takes an
+   installation token only as its client token, an installation is offered `auto` and
+   `gpt-5.3-codex`, and a GPT model writes with `apply_patch`. Left: what GitHub answers when an
+   organization refuses App Copilot requests, and a security manager's own `admin:org` token. Kept
+   first, by the operator's ranking, until those two are measured.
 2. **[A failed authoring session resumes from the step on screen](api/qlaas-loop.md)** — the
-   loop is built as far as `review`. A session home is deleted when the run ends, the model is a
-   flag, and ql-mcp calls outside six tools are refused by name. `codeql_lsp_diagnostics` is
-   already offered and refuses the workspace path the server documents. Local `gh auth` sessions
-   can land before the credential split; the production model list is the organization's, once
-   that split mints the Copilot token.
+   loop is built as far as `review`. A session home is deleted when the run ends; ql-mcp's test,
+   query, metadata and language-server tools are offered behind a relay that hands it one call at a
+   time, and its other tools are refused by name. A session already runs on the runtime's model
+   list, falling back to `auto` and recording what ran; the picker is left. Fifteen requests from
+   the zizmor gap analysis reached 7 of 7 through it, and asked for two things it lacks: lists in
+   data extensions, and fixtures checked as Actions rather than as YAML.
 3. **[Practice safely in a startup-only Demo instance](tools/demo-mode.md)** — a marked Demo
    now serves fictional repositories from a loopback-only simulated GitHub, builds real CodeQL
    databases and results from them, and enables Copilot authoring only behind an egress allowlist;
@@ -245,9 +245,9 @@ endpoint. [Exclusions and exceptions](db/exclusions-and-exceptions.md) is what r
 refactoring: a named scope already means the same thing on every surface, each of its terms
 applied or refused by name, and every Inventory unit's columns and actions are its own.
 
-**The ordering is a decision, not drift.** Production credentials and ownership claims lead, as
-one implementation, by the operator's decision: a production instance cannot serve without a
-person's token, and a credential split that still cannot say who may declare has not closed that.
+**The ordering is a decision, not drift.** Production credentials lead, by the operator's decision,
+until what was built is measured against GitHub: a credential split nobody has watched mint a
+Copilot token has not shown that a production instance authors without a person.
 That displaces [Demo](tools/demo-mode.md), which an earlier decision put first so first-release
 safe practice would extend the [Tutorial experience](../docs/tutorials.md). Demo stays immediately
 beneath the QLaaS loop, and everything that was already ranked keeps its relative order.
@@ -304,9 +304,10 @@ refusal.
   retained database is build logs nothing reads.
 - **[An address the enterprise can reach, an identity it granted, and readers GitHub
   authorizes](api/enterprise-server.md)** — ABOM runs as a private GitHub App with installation
-  tokens and installations as evidence, re-read on installation events; a workstation receives its
-  deliveries through a relay, verified end to end on `has-ghas`. The grants that stop being
-  read-only are [production credentials](api/production-credentials.md), not this deferral.
+  tokens minted per call and installations as evidence, re-read on installation events; a
+  workstation receives its deliveries through a relay, verified end to end on `has-ghas`. It writes
+  nothing, and measuring its Copilot grant is [production credentials](api/production-credentials.md),
+  not this deferral.
   Deferred: a production address needs ingress this workstation lacks, and readers signing in
   through the App and workflow callers wait on it. Installing on a second account waits on a
   decision the plan names: a private App installs only on its owner.
@@ -317,9 +318,11 @@ refusal.
 - **[Collapse `name@ref` back to one node](ui/explorer-references.md)** — per-reference nodes are the
   useful default and the only behavior. The counts for the other reading already ride on every node.
 - **[Retain guarded submissions until native coverage is measured](api/dependency-submission.md)** —
-  existing manual submission and its ledger remain built; new client modes, write grants and
-  automation are deferred. Moving the existing submission's credential onto the App is
-  [production credentials](api/production-credentials.md), not this expansion.
+  ABOM submits no dependency snapshots at this time, by the operator's decision: the newer route is
+  a repository adopting `actions.lock` itself, which [the native coverage
+  crosscheck](api/dependency-graph-crosscheck.md) measures. The guarded operator-token submission and
+  its ledger stay as built and unextended; new client modes, write grants and automation are
+  deferred, and a server reading as the App submits nothing.
   [The native coverage crosscheck](api/dependency-graph-crosscheck.md)
   must demonstrate a residual gap before expansion is reopened.
   Native replacement would require a deliberate release of historical snapshots on approved
@@ -371,13 +374,23 @@ measurement makes it urgent.
 | [db/data-efficiency.md](db/data-efficiency.md) | the standing cost review; one endpoint is still linear in rows |
 | [db/declaration-provenance.md](db/declaration-provenance.md) | how a declaration arrived, and what contradicts it |
 | [db/observations.md](db/observations.md) | the fact table's keys and its readers |
-| [db/owned-scope.md](db/owned-scope.md) | a browser gate that never draws the declaration picker, and a failed declaration read shown as nothing declared. Who may declare, including a member's repositories, is [ownership claims](api/ownership-claims.md) |
+| [db/owned-scope.md](db/owned-scope.md) | a browser gate that never draws the declaration picker, and a failed declaration read shown as nothing declared |
 | [db/pruning.md](db/pruning.md) | tombstones, compaction and what a delta reports |
 | [db/ref-provenance.md](db/ref-provenance.md) | requested refs, governing locks and analyzed commits through the ledger |
 | [db/supply-chain.md](db/supply-chain.md) | classification over the reachable dependency closure |
 | [ui/closure-figure.md](ui/closure-figure.md) | the Explorer's terms on a details page's figure, and precomputing figures if drawing them on arrival stops being cheap |
 | [ui/theme.md](ui/theme.md) | whether a color still names the same thing after a theme toggle |
 | [ui/tier-suites.md](ui/tier-suites.md) | per-tier suite binding, its precedence, and cost guidance for a tier's re-analysis |
+
+## Not doing, and why
+
+- **ABOM does not change a repository's code scanning configuration.** By the operator's decision,
+  default setup and its languages are the repository owner's to change outside ABOM, so the App asks
+  for no administration write and a server reading as it refuses to start with a write target. This
+  withdraws the earlier `actions` exception [`docs/vision.md`](../docs/vision.md) recorded: the
+  operator-token batch writer built for it is not extended, and its live verification — an enable on
+  a test target, which GitHub's enforced configuration blocked — is not pursued. ABOM still reads and
+  reports whether each owned repository's Actions code is scanned.
 
 ## Gaps with a decision to make
 
@@ -387,15 +400,6 @@ measurement makes it urgent.
   nothing to GitHub; its classification would be a suggestion beside the rule's, never evidence.
   Every disagreement the checker has found so far was explained by reading two queries. **The
   decision is whether the volume of disagreements ever outruns the people reading them.**
-- **Enabling default setup has never run live on a test target.** Adding `actions` has: a batch on
-  has-ghas/test-repo-2, under the enforced "GitHub recommended" configuration, sent one write and
-  read back every earlier language plus `actions`. Every test repository sits under that
-  configuration, and GitHub refuses a change to default setup's state there with a 422, so none can
-  be turned off to exercise enable. Detaching one needs `write:org`, which the operator's token does
-  not carry. The same blocker leaves open what GitHub detects where the only Actions code is
-  `.github/actions/**` or a root `action.yml`; the classification refuses to write either way. **The
-  decision is whether to detach a test repository for it, or to let the first real enable, which is
-  read back like every write, be its verification.**
 - **A change can refuse a skip without being able to select the work it made stale.**
   `expand.pendingWork` now reads repository, commit, query id, pack digest, CodeQL version and the
   sparse filter the database was built from — but a refusal only moves work that is **queued**, and

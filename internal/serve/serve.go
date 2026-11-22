@@ -7,6 +7,7 @@ package serve
 
 import (
 	"bytes"
+	"cmp"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -53,6 +54,11 @@ type Server struct {
 	// ReadProperties reads an organization's property schema and current values with the
 	// operator's token, for the property scope picker. Nil asks the gh CLI.
 	ReadProperties func(ctx context.Context, owner string) ([]ghauth.PropertyDefinition, []ghauth.RepositoryProperties, error)
+	// IdentityBy is what a refresh asks: IdentityByApp where an App is configured, else gh.
+	IdentityBy string
+	// ReadRepositoryRole reads the verified login's role on a repository a member declared, when the
+	// accounts are refreshed. Nil asks the gh CLI.
+	ReadRepositoryRole func(ctx context.Context, owner, repo, login string) (string, error)
 	// Discovery is the expansion loop. Nil answers that discovery is unavailable here.
 	Discovery Discovery
 	// InvalidateSources refreshes remote eligibility when the operator retries unavailable work.
@@ -884,6 +890,23 @@ type accountsView struct {
 	// blind token looks exactly like `gh` never having answered, and the remedy offered is to ask
 	// again — a loop that cannot terminate.
 	CanReadMemberships bool `json:"canReadMemberships"`
+	// IdentityBy is what a refresh asks, so the page can name it: the App's installations, or gh.
+	IdentityBy string `json:"identityBy"`
+	// ReadByApp is whether the identity on record came from the App's installations; a person's
+	// verification read before an App was configured stays theirs until the next check.
+	ReadByApp bool `json:"readByApp"`
+}
+
+// What establishes the identity a refresh records.
+const (
+	IdentityByGh  = "gh"
+	IdentityByApp = "app"
+)
+
+func (s *Server) view(v store.Verification, problem *ghauth.Problem) accountsView {
+	out := view(v, problem)
+	out.IdentityBy = cmp.Or(s.IdentityBy, IdentityByGh)
+	return out
 }
 
 func view(v store.Verification, problem *ghauth.Problem) accountsView {
@@ -894,6 +917,7 @@ func view(v store.Verification, problem *ghauth.Problem) accountsView {
 		Accounts:           v.Accounts,
 		Problem:            problem,
 		CanReadMemberships: v.CanReadMemberships(),
+		ReadByApp:          v.ByApp(),
 	}
 	if out.Accounts == nil {
 		out.Accounts = []store.Account{}
@@ -906,7 +930,7 @@ func view(v store.Verification, problem *ghauth.Problem) accountsView {
 
 func (s *Server) accounts(w http.ResponseWriter, r *http.Request) {
 	stored, err := s.Store.Accounts()
-	writeJSON(w, view(stored, nil), err)
+	writeJSON(w, s.view(stored, nil), err)
 }
 
 // declaredAccountView is a declaration with what `gh` has to say about it.
@@ -922,6 +946,11 @@ type declaredAccountView struct {
 	Enumeration store.EnumerationMarks `json:"enumeration"`
 	// Installation is evidence beside the declaration, never a reason to change it; null when unread.
 	Installation *store.InstallationEvidence `json:"installation"`
+	// Check is whether the recorded role still supports the declaration. It changes nothing.
+	Check store.ClaimCheck `json:"check"`
+	// NotInstalled names includes the App's installation does not cover, which stay declared and
+	// are read only if public; null where no installation was read.
+	NotInstalled []string `json:"notInstalled"`
 }
 
 // ownedScope serves what the operator has declared is theirs, which is what discovery is bounded
@@ -940,6 +969,8 @@ func (s *Server) ownedScope(w http.ResponseWriter, r *http.Request) {
 		owners = append(owners, a.Owner)
 	}
 	installations, installationsErr := s.Store.InstallationEvidence(owners)
+	// Unreadable roles leave every include's check unknown, which is what they are.
+	roles, _ := s.Store.RepositoryRoles()
 
 	out := make([]declaredAccountView, 0, len(declared))
 	for _, a := range declared {
@@ -962,7 +993,8 @@ func (s *Server) ownedScope(w http.ResponseWriter, r *http.Request) {
 			}
 			a.Properties[j].Matching = n
 		}
-		out = append(out, declaredAccountView{a, store.DeclarationState(a, verified), marks, installation})
+		out = append(out, declaredAccountView{a, store.DeclarationState(a, verified), marks, installation,
+			store.CheckClaim(a, verified, roles), installation.Uncovered(a.Includes)})
 	}
 	writeJSON(w, out, nil)
 }
@@ -1189,7 +1221,7 @@ func (s *Server) refreshAccounts(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		stored, readErr := s.Store.Accounts()
-		writeJSON(w, view(stored, p), readErr)
+		writeJSON(w, s.view(stored, p), readErr)
 		return
 	}
 
@@ -1197,8 +1229,51 @@ func (s *Server) refreshAccounts(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, nil, err)
 		return
 	}
+	read := s.ReadRepositoryRole
+	if read == nil {
+		read = func(ctx context.Context, owner, repo, login string) (string, error) {
+			return ghauth.ReadRepositoryRole(ctx, ghauth.Exec, owner, repo, login)
+		}
+	}
+	if err := ReadDeclaredRoles(r.Context(), s.Store, read); err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
 	stored, err := s.Store.Accounts()
-	writeJSON(w, view(stored, nil), err)
+	writeJSON(w, s.view(stored, nil), err)
+}
+
+// ReadDeclaredRoles reads the verified login's role on each repository declared in an organization
+// it may not declare whole, and records every answer, a failed read as unread rather than as no role.
+func ReadDeclaredRoles(ctx context.Context, s store.Backend,
+	read func(ctx context.Context, owner, repo, login string) (string, error)) error {
+	verified, err := s.Accounts()
+	if err != nil || verified.Login == "" {
+		return err
+	}
+	declared, err := s.OwnedScope()
+	if err != nil {
+		return err
+	}
+	includable := map[string]bool{}
+	for _, a := range verified.Accounts {
+		includable[strings.ToLower(a.Owner)] = a.CanInclude()
+	}
+	roles := []store.RepositoryRole{}
+	for _, a := range declared {
+		if !a.IncludesOnly || !includable[strings.ToLower(a.Owner)] {
+			continue
+		}
+		for _, repo := range a.Includes {
+			role, err := read(ctx, a.Owner, repo, verified.Login)
+			r := store.RepositoryRole{Owner: a.Owner, Repo: repo, Role: role}
+			if err != nil {
+				r.Role, r.Unread = "", err.Error()
+			}
+			roles = append(roles, r)
+		}
+	}
+	return s.RecordRepositoryRoles(verified.Login, time.Now(), roles)
 }
 
 // verification maps what gh established onto what the store records. The two types are kept
@@ -1208,9 +1283,15 @@ func verification(id ghauth.Identity) store.Verification {
 		Login: id.Login, Host: id.Host, VerifiedAt: id.VerifiedAt, Scopes: id.Scopes,
 	}
 	for _, a := range id.Accounts {
-		v.Accounts = append(v.Accounts, store.Account{Owner: a.Owner, Kind: a.Kind, Role: a.Role})
+		v.Accounts = append(v.Accounts, StoreAccount(a))
 	}
 	return v
+}
+
+// StoreAccount is what one verified account establishes, as the store records it.
+func StoreAccount(a ghauth.Account) store.Account {
+	return store.Account{Owner: a.Owner, Kind: a.Kind, Role: a.Role,
+		SecurityManager: a.SecurityManager, SecurityManagerReason: a.SecurityManagerReason}
 }
 
 func (s *Server) ownerCandidates(w http.ResponseWriter, r *http.Request) {

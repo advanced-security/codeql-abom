@@ -201,7 +201,7 @@
         _busy = true;
         try
         {
-            var (_, refusal) = await Api.StartAuthoringSessionAsync(Request.RowId, Accounts.Identity.Login);
+            var (_, refusal) = await Api.StartAuthoringSessionAsync(Request.RowId, Accounts.Identity.Actor);
             _refusal = refusal;
             await Load();
         }

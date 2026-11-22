@@ -33,16 +33,27 @@ func (s *Server) codeScanningReadings(w http.ResponseWriter, r *http.Request) {
 func (s *Server) codeScanningWrites(w http.ResponseWriter, _ *http.Request) {
 	sv := s.CodeScanningWrites
 	out := struct {
-		Writes   bool     `json:"writes"`
-		Targets  []string `json:"targets"`
-		Accounts []string `json:"accounts"`
-	}{Targets: []string{}, Accounts: []string{}}
+		Writes bool `json:"writes"`
+		// ReadsAsApp is a server that refuses every write flag at start, so none is a remedy.
+		ReadsAsApp bool     `json:"readsAsApp"`
+		Targets    []string `json:"targets"`
+		Accounts   []string `json:"accounts"`
+	}{ReadsAsApp: s.IdentityBy == IdentityByApp, Targets: []string{}, Accounts: []string{}}
 	if sv != nil {
 		out.Writes = sv.Writes()
 		out.Targets = append(out.Targets, sv.Targets...)
 		out.Accounts = append(out.Accounts, sv.Accounts...)
 	}
 	writeJSON(w, out, nil)
+}
+
+// writeRemedy is what would let this server write: a flag, unless it reads as an App, which
+// refuses every write flag because default setup is the repository owner's to change.
+func (s *Server) writeRemedy() string {
+	if s.IdentityBy == IdentityByApp {
+		return "it reads as a GitHub App, which writes nothing: default setup is the repository owner's to change"
+	}
+	return "start it with --enable-targets or --enable-accounts to write"
 }
 
 // createPreview classifies a view's repositories as a batch from it would write, asking GitHub
@@ -160,8 +171,7 @@ func (s *Server) approvePreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.CodeScanningWrites.Writes() {
-		writeError(w, http.StatusConflict, "this server writes nothing, so it approves nothing; start it with "+
-			"--enable-targets or --enable-accounts to write")
+		writeError(w, http.StatusConflict, "this server writes nothing, so it approves nothing; "+s.writeRemedy())
 		return
 	}
 	if err := s.CodeScanningWrites.Approve(r.Context(), id); err != nil {

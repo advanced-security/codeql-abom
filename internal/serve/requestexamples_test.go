@@ -123,6 +123,26 @@ func TestALinkedExampleIsReadAtTheCommitItsRefNamesNow(t *testing.T) {
 	}
 }
 
+// GitHub's blob view links a commit by its first eight characters, and a link pasted from it was
+// refused as naming nothing; the resolver is asked to read such a name as a commit, too.
+func TestALinkNamingAShortenedCommitIsReadAtThatCommit(t *testing.T) {
+	s, f := filesServer(t)
+	f.refs["octo/app@1111111"] = branchSHA
+	link := "https://github.com/octo/app/blob/1111111/.github/workflows/ci.yml#L2-L3"
+	w := postRequest(s, linkedBody(t, store.RequestExample{Side: store.ExampleNonCompliant, URL: link}))
+	if w.Code != http.StatusOK {
+		t.Fatalf("answered %d: %s", w.Code, w.Body.String())
+	}
+	if got := readRequests(t, s).Requests[0].Examples[1]; got.Commit != branchSHA || got.Ref != "1111111" {
+		t.Errorf("kept %+v, want it read at %s", got, branchSHA)
+	}
+	for _, q := range f.refCalls[0] {
+		if !q.OrCommit {
+			t.Errorf("%+v was not asked as a commit as well", q)
+		}
+	}
+}
+
 // ABOM never fetches an arbitrary address: only a GitHub blob link is read, and anything else is
 // refused before GitHub is asked.
 func TestOnlyAGitHubBlobLinkIsRead(t *testing.T) {

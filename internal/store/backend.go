@@ -245,6 +245,9 @@ type OwnershipStore interface {
 	Verified() (bool, error)
 	OwnerCandidates() ([]OwnerCandidate, error)
 	RecordInstallationSync(sync InstallationSync) error
+	RecordInstaller(installationID int64, owner, login, deliveryID string, at time.Time) error
+	RecordRepositoryRoles(login string, at time.Time, roles []RepositoryRole) error
+	RepositoryRoles() (map[string]RepositoryRole, error)
 	InstallationEvidence(owners []string) (map[string]*InstallationEvidence, error)
 	SetDefaultBranch(fullName, branch string) error
 	DefaultBranch(fullName string) (string, bool, error)
@@ -313,6 +316,7 @@ type QueryStore interface {
 	AuthoringSessions(request int64) ([]AuthoringSession, error)
 	RunningAuthoringSessions() (map[int64]int64, error)
 	AddAuthoringSpend(session int64, spent AuthoringSpend) error
+	SetAuthoringSessionModel(session int64, model string) error
 	RecordAuthoringEvent(e AuthoringEvent) (int64, error)
 	AuthoringEvents(session, after int64, limit int) ([]AuthoringEvent, error)
 	AuditEvents(filter AuditFilter) (AuditPage, error)

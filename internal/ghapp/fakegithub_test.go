@@ -70,6 +70,19 @@ type fakeInstallation struct {
 	Selection string
 	Repos     []string
 	Suspended bool
+	// Granted is what the installation approved; nil is everything the manifest asks for.
+	Granted map[string]string
+}
+
+func (i fakeInstallation) granted() map[string]string {
+	if i.Granted != nil {
+		return i.Granted
+	}
+	all := map[string]string{}
+	for _, g := range Permissions {
+		all[g.Permission] = g.Access
+	}
+	return all
 }
 
 // fakeGitHub answers the App endpoints ABOM calls, checking each JWT the way GitHub does.
@@ -84,10 +97,12 @@ type fakeGitHub struct {
 	installations []fakeInstallation
 	calls         map[string]int
 	tokens        map[string]int64
-	minted        int
-	listStatus    int
-	mintStatus    map[int64]int
-	reposStatus   map[int64]int
+	// carries is the permissions GitHub gave each token: what was asked for, or everything granted.
+	carries     map[string]map[string]string
+	minted      int
+	listStatus  int
+	mintStatus  map[int64]int
+	reposStatus map[int64]int
 	// echo makes every failure repeat the request's Authorization header, as a careless server might.
 	echo       bool
 	conversion map[string]any
@@ -96,9 +111,12 @@ type fakeGitHub struct {
 const testAppID = 4242
 const testClientID = "Iv23liTESTCLIENT"
 
+// level orders access the way GitHub does: write includes read.
+var level = map[string]int{"read": 1, "write": 2, "admin": 3}
+
 func newFakeGitHub(t *testing.T, key *rsa.PrivateKey, now func() time.Time, inst ...fakeInstallation) *fakeGitHub {
 	f := &fakeGitHub{t: t, key: key, appID: testAppID, now: now, installations: inst,
-		calls: map[string]int{}, tokens: map[string]int64{},
+		calls: map[string]int{}, tokens: map[string]int64{}, carries: map[string]map[string]string{},
 		mintStatus: map[int64]int{}, reposStatus: map[int64]int{}}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
@@ -189,6 +207,18 @@ func (f *fakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 	mux.HandleFunc("GET /app/installations", f.asApp(f.listInstallations))
 	mux.HandleFunc("POST /app/installations/{id}/access_tokens", f.asApp(f.mint))
 	mux.HandleFunc("GET /installation/repositories", f.repositories)
+	mux.HandleFunc("GET /orgs/{org}/properties/schema", f.asInstallation(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]any{{"property_name": "team", "value_type": "string",
+			"values_editable_by": "org_actors"}})
+	}))
+	mux.HandleFunc("GET /orgs/{org}/properties/values", f.asInstallation(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("page") != "2" {
+			w.Header().Set("Link", "<"+f.srv.URL+r.URL.Path+"?per_page=1&page=2>; rel=\"next\"")
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"repository_full_name": r.PathValue("org") + "/one"}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode([]map[string]any{{"repository_full_name": r.PathValue("org") + "/two"}})
+	}))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { f.fail(w, r, http.StatusNotFound, "Not Found") })
 	mux.ServeHTTP(w, r)
 }
@@ -200,6 +230,25 @@ func (f *fakeGitHub) asApp(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		next(w, r)
+	}
+}
+
+// asInstallation answers only a token minted for the installation on the account the path names.
+func (f *fakeGitHub) asInstallation(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		bearer, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		id, ok := f.tokens[bearer]
+		if !ok {
+			f.fail(w, r, http.StatusUnauthorized, "Bad credentials")
+			return
+		}
+		for _, inst := range f.installations {
+			if inst.ID == id && strings.EqualFold(inst.Login, r.PathValue("org")) {
+				next(w, r)
+				return
+			}
+		}
+		f.fail(w, r, http.StatusNotFound, "Not Found")
 	}
 }
 
@@ -225,7 +274,7 @@ func (f *fakeGitHub) listInstallations(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		item := map[string]any{"id": inst.ID, "repository_selection": inst.Selection,
-			"account": map[string]any{"login": inst.Login, "type": inst.Type}}
+			"account": map[string]any{"login": inst.Login, "type": inst.Type}, "permissions": inst.granted()}
 		if inst.Suspended {
 			item["suspended_at"] = "2026-10-04T00:00:00Z"
 		}
@@ -240,13 +289,36 @@ func (f *fakeGitHub) mint(w http.ResponseWriter, r *http.Request) {
 		f.fail(w, r, status, "minting refused")
 		return
 	}
-	if !slices.ContainsFunc(f.installations, func(i fakeInstallation) bool { return i.ID == id }) {
+	at := slices.IndexFunc(f.installations, func(i fakeInstallation) bool { return i.ID == id })
+	if at < 0 {
 		f.fail(w, r, http.StatusNotFound, "Not Found")
 		return
+	}
+	granted := f.installations[at].granted()
+	var body struct {
+		Permissions map[string]string `json:"permissions"`
+	}
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			f.fail(w, r, http.StatusBadRequest, "Problems parsing JSON")
+			return
+		}
+	}
+	carries := granted
+	if body.Permissions != nil {
+		// GitHub refuses a token asking for more than the installation approved, rather than trimming it.
+		for name, access := range body.Permissions {
+			if level[granted[name]] < level[access] {
+				f.fail(w, r, http.StatusUnprocessableEntity, "The permissions requested are not granted to this installation.")
+				return
+			}
+		}
+		carries = body.Permissions
 	}
 	f.minted++
 	token := fmt.Sprintf("ghs_test_%d_%d", id, f.minted)
 	f.tokens[token] = id
+	f.carries[token] = carries
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(map[string]any{"token": token,
 		"expires_at": f.now().Add(time.Hour).Format(time.RFC3339)})
@@ -267,7 +339,9 @@ func (f *fakeGitHub) repositories(w http.ResponseWriter, r *http.Request) {
 	for _, inst := range f.installations {
 		if inst.ID == id {
 			for _, name := range inst.Repos {
-				repos = append(repos, map[string]any{"name": name, "full_name": inst.Login + "/" + name})
+				repos = append(repos, map[string]any{"name": name, "full_name": inst.Login + "/" + name,
+					"private": true, "archived": name == "archived", "fork": false,
+					"owner": map[string]any{"login": inst.Login}})
 			}
 		}
 	}

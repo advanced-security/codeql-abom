@@ -69,16 +69,31 @@ worded as that.
 local page that posts a manifest to GitHub; the operator creates the App there, and ABOM keeps its
 key and webhook secret as 0600 files beside the database, never in it. The App is created private,
 installable only on the account that owns it; letting other accounts install it is decided in
-GitHub's settings for the App, not by ABOM. The App asks only to read, and asks once for
-everything it uses: metadata, contents, code-scanning results, administration, actions, and the
-organization's custom properties and administration. Administration and actions are read because
+GitHub's settings for the App, not by ABOM. The App asks once for everything it uses: to read
+metadata, contents, code-scanning results, administration, actions, and the organization's custom
+properties and administration, and to make Copilot requests for authoring. It asks for no write: a
+dependency snapshot and default setup belong to the repository, which a lockfile and its own
+settings govern. Administration and actions are read because
 GitHub delivers protection, ruleset, security-and-analysis and workflow-run events only to an App
 holding them, and the organization's administration for its rulesets' events — each traced in code
-to the call or the event handler that needs it. An installed account is read with its installation's token; another
-account's public repositories with a designated installation's, never the person's; and writes,
-such as dependency snapshots, keep the person's credential. Installations are evidence recorded
-beside the declaration, never one, and an installation that cannot be read leaves its account
-unknown rather than empty. With no App configured, ABOM reads as the `gh` session does.
+to the call or the event handler that needs it.
+
+**Each call carries a token minted for it.** A crawl's token holds the reads its installation
+granted and nothing else; a Copilot session's holds Copilot requests alone, minted fresh for the
+session for the organization it is billed to, and handed to the CLI as its client token rather than
+through its environment. The CLI's token provider refuses an installation token for naming no
+account, and a client token is not refreshed, so a session ends a few minutes before its token's
+hour does. A permission an installation has not approved refuses its call, naming the
+grant, before GitHub is asked, and nothing falls back to another credential. An installed account is
+read with its installation's token, another account's public repositories with a designated
+installation's, and a Copilot session only with the named account's own. With an App, no call reads
+a person's token and nothing is written: a server given a snapshot or default setup target beside
+an App refuses to start. Nobody at the page has signed in either, so a request, a session or a tool
+path set there is recorded as the interface's, never the App's. Who may declare is where the App is installed, and the declaration picker
+lists what an installation includes. Installations are evidence recorded beside the
+declaration, never one, with the installer named when its delivery said who; an installation that
+cannot be read leaves its account unknown rather than empty, and marks nothing as outside it. With
+no App configured, ABOM reads, writes, authors and verifies as the `gh` session does.
 
 **Change arrives as events and polls, and the sweep stays behind both.** A signed webhook — from
 the App, or a repository or organization webhook — is verified before it is parsed, written to a
@@ -129,8 +144,15 @@ row that has failed eight times counts as stuck rather than holding a depth inco
 cannot be held off for good.
 
 **Ownership is declared, never inferred.** Nothing happens until an operator claims an account.
-Membership comes from an authenticated `gh` session and decides nothing on its own: holding an
-analyzed repository proves nothing about who can change it.
+Membership comes from an authenticated `gh` session, or the App's installations, and decides
+nothing on its own: holding an analyzed repository proves nothing about who can change it. A role
+makes an account eligible to be offered — an owner, an organization admin, its security manager, or
+an installation of the App — and a member who is none of these may declare, by name, the
+repositories they administer or maintain. The security manager role and a repository role are read
+apart from membership, and one that cannot be read is "cannot say", never "no". Beside each
+declaration ABOM says whether the role recorded behind it still supports it; that check changes
+nothing, and what is declared stays what bounds discovery. An include the App's installation does
+not cover is marked and read only if it is public.
 
 **A declaration covers an account whole, or only what it names.** A restricted organization covers
 its named repositories and, beside them, any repository carrying every term of one of its property
@@ -282,7 +304,10 @@ through the inline-expectations postprocess, so `# $ Alert` on a fixture line is
 marked line the query does not report is a missing result, and an unmarked one it reports is
 unexpected. The stub ABOM scaffolds reports nothing, so its first run fails on the marks. The tests
 step passes only once an earlier version failed on a marked result over the same fixtures, and a
-session's first edit to its query waits for that run. An `.expected` that lists failed expectations
+session's first edit to its query waits for that run. A run that missed marked results keeps
+counting while every marked fixture it ran over is unchanged: fixtures added beside them, marked or
+not, only add to what the tests catch. Changing or removing one of those fixtures needs another
+failure, and a session told so is asked to show one, never to make passing tests pass. An `.expected` that lists failed expectations
 fails its step: the CLI compares text, so it would make the test pass.
 
 ```mermaid
@@ -310,8 +335,12 @@ wherever either has no `codeql-pack.lock.yml`:
   a pack digest covers;
 - when a session starts, before the agent has control, since a session cannot install packs.
 
-It holds the CodeQL lock while it installs. It never replaces a lock file or runs `pack upgrade`:
-a lock file is the operator's to move. Where both exist it does nothing and does not wait for
+It holds the CodeQL lock while it installs. It never runs `pack upgrade`, and a lock file under a
+version the operator pinned is theirs to move. One exception: a pack whose manifest still says
+`codeql/actions-all: "*"`, as ABOM's older scaffold wrote, holds a lock ABOM's own install wrote
+for whatever was newest — nobody chose either. Where that lock is not the `codeql/actions-all`
+ABOM's queries run, ABOM pins its version in the manifest and drops the lock, under the CodeQL lock,
+and the install writes it again. Where both locks exist and agree it does nothing and does not wait for
 CodeQL, so a Test never queues behind a crawl to learn that nothing was needed. A failed install
 is the answer, with the CLI's reason: a Test answers with it, a round stops with it as discovery's
 last error, a run is refused with it before any member is analyzed, and a
@@ -322,6 +351,8 @@ flowchart LR
     ACT["Test, run,<br/>round, session"] --> Q{"a lock in the pack<br/>and its test pack?"}
     Q -->|"both"| GO["compile"]
     Q -->|"either missing"| INS["codeql pack install<br/>under the CodeQL lock"]
+    Q -->|"a pack nobody pinned,<br/>locked to another library"| PIN["pin ABOM's version,<br/>drop its lock"]
+    PIN --> INS
     INS -->|"installed"| GO
     INS -->|"failed"| WHY["the CLI's reason<br/>is the answer"]
     Q -. "never" .-> UP["pack upgrade"]
@@ -334,8 +365,9 @@ finding that should not have fired, or a repository where nothing fired that sho
 checked against the run and the query when it is filed.
 
 **A linked example is read once, at save, at a commit.** Only a GitHub blob URL is accepted,
-optionally naming lines; ABOM never fetches any other address. Its ref resolves to a commit, the
-file is read at that commit, and the text a client sends for a link is never trusted. A request
+optionally naming lines; ABOM never fetches any other address. Its ref resolves to a commit — a
+branch, a tag, or a commit named in full or by its first seven characters or more, as GitHub's blob
+view links one — the file is read at that commit, and the text a client sends for a link is never trusted. A request
 that any session names is never deleted, because the timeline is not rewritten; it is resubmitted
 as a copy and declined. A closed request keeps the progress it was closed on, so a later request
 for the same query does not repaint it.
@@ -345,10 +377,33 @@ session from the request. ABOM drives the Copilot CLI through the Copilot SDK, w
 only tool server. ABOM registers the pinned SDK's lifecycle hooks and separate permission callback;
 the audit distinguishes their observations from runtime calls identified by an exact call ID.
 
-- Writes are confined to the target's source, help and test fixtures.
+- Writes are confined to the target's source, help and test fixtures, whichever tools the model
+  writes with: Claude's `create` and `edit`, or a GPT model's `apply_patch`, judged by every file the
+  patch names and refused if it deletes or moves one.
+- A ql-mcp call whose meaning is plain but whose form the server would not take is corrected, not
+  refused: the dataset folder inside the test database, the test directory around it, fixture files
+  as a list, a tool query with no language, a compile naming no query, one test path where a list is
+  taken. The call is forwarded corrected, the agent is told the form to use, and the timeline keeps
+  what it sent beside what was corrected. A form that could mean more than one thing is refused,
+  and so is a run naming no database: which database a query reads is never assumed. A bound
+  session's rules name each shape, so a correction is the exception.
+- Confirming the chosen target answers with it; only another query is refused.
+- A session reads the pack and the CodeQL package cache, and is pointed at the libraries the pack's
+  lock resolves, at their versions: the cache holds every language at every version, and a search of
+  all of it times out. The language server's definition, references, completion and symbol tools
+  are offered with the pack as their workspace, given as a path or a file URI.
+- ql-mcp is started behind ABOM's relay, `codeql-abom serialize-mcp`, which hands it one tool call
+  at a time and everything else as it comes. ql-mcp queues CodeQL commands on one CLI server that
+  exits on its first query run, since that server's pack cache is empty, and a call queued behind
+  the failing one is never answered; one evaluation at a time is also what the session's
+  machine-wide lock assumes.
 - There is no shell.
 - Nothing the CLI would load from the machine is loaded.
 - A call that cannot be recorded is refused.
+
+A session runs the configured model where the runtime offers it to the session's credential, and the
+runtime's own choice where it does not — an App installation is offered far fewer models than a
+person — and records the model each call actually ran on.
 
 The session holds the machine-wide CodeQL lock for its lifetime, and is refused while discovery
 crawls. Its timeline, what it spent and every tree `PrintAST` printed are kept, append-only, and
@@ -420,7 +475,11 @@ remedy, and starting is held back with the first problem. Settings can name the 
 executables; a saved path is run before it is kept, and is used ahead of the flag or environment
 variable that names the default. It must be an absolute path to a file of the tool's own name, which
 no other account can change: the server runs it as itself, so a page that anyone reaching the
-server can submit chooses which copy of a tool runs, never which program.
+server can submit chooses which copy of a tool runs, never which program. A saved path that no
+longer exists — an editor's update moves the CLI it installed — is forgotten at start and the
+default used, and with no Copilot CLI named at all the one VS Code installed is used; the server says
+which. Path flags are named from where the server started. Session state is kept under
+`--work-dir`, or, where that lies inside the pack, in a directory of ABOM's own outside it.
 
 **ABOM prints a query's tree itself, so a query written by hand can earn every step.** A custom
 catalog row's AST mark runs `PrintAST` from `advanced-security/ql-mcp-actions-tools-src` 2.27.1,
@@ -541,7 +600,10 @@ advanced, conflict, covered, add, enable, blocked by an enforced configuration, 
 refuses, no Actions code, or a state saying it was not read or crawled. The Inventory, the API and
 `codeql-abom code-scanning status` all read it.
 
-**ABOM's one write to code scanning adds `actions` to default setup, from an approved preview.** A
+**Code scanning's configuration is the repository owner's to change, outside ABOM.** What was built
+earlier to add `actions` to default setup from an approved preview remains for a server without an
+App, writing with the operator's own token, and is not extended; a server reading as the App refuses
+to start with a target for it. A
 preview asks GitHub nothing and records the body each write would send; an approval names the write
 token's owner. A batch writes one repository at a time in the `default setup` pool, reading each
 again first and skipping any whose setup changed. The body repeats every setting read and adds
@@ -630,7 +692,9 @@ from its own crawl, not an import of a SQLite database.
 | `abom_owned_property_clause`, `abom_owned_property_term` | Property scopes on a restricted organization, each the terms a repository must all carry; `abom_owned_property_clause_honored` is the view, derived from the recorded schema, of the ones that count |
 | `abom_property_schema`, `abom_property_schema_read` | Each organization's custom properties as last read whole — type, default, who may set the values — and when |
 | `abom_enumeration_state`, `abom_repository_absence` | When each account was last listed whole and read for changes, by which route and to which marks, and the declared repositories a full listing no longer names, since when |
-| `abom_account` | What `gh` reports about membership, with the token scopes that made the answer possible |
+| `abom_account` | What `gh` reports about membership, with the token scopes that made the answer possible and each member's security manager role; with an App, where it is installed |
+| `abom_repository_role` | The verified login's role on each repository a member declared, or why it could not be read |
+| `abom_app_installation`, `abom_app_installer` | The App's installations as last read, and who created each, from its delivery |
 | `repository` | Every repository seen, with `origin` recording how it entered |
 
 ### The queue
@@ -649,7 +713,10 @@ no repository, such as one built from an expression, is never put back.
 
 An owned repository whose tree holds no workflow and no action manifest, or that has no commit, is
 `nothing`: read in full, recorded at the commit it was read at, settled, and never counted as
-analyzed. No run is recorded for it, because CodeQL builds no database from no Actions source, and
+analyzed. A workflow and an action manifest are what the actions extractor indexes by default — a
+YAML file directly under `.github/workflows`, one under `.github/reusable_workflows`, an
+`action.yml` anywhere — so a `.github` holding only secret scanning, code scanning or Dependabot
+configuration is nothing to analyze rather than a build that exits 32. No run is recorded for it, because CodeQL builds no database from no Actions source, and
 a push to it is compared with that commit like any other. A dependency in the same state stays
 `unavailable`, since what a workflow names there cannot run.
 

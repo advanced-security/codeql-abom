@@ -3,10 +3,12 @@
 package toolchain
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,6 +39,9 @@ const (
 // SourceSettings names a path an operator set in the interface.
 const SourceSettings = "Settings"
 
+// SourceVSCode names the Copilot CLI VS Code installed, used where nothing else names one.
+const SourceVSCode = "VS Code"
+
 // DefaultTimeout bounds a version probe. A VS Code shim answers no flag and waits for input.
 const DefaultTimeout = 15 * time.Second
 
@@ -63,6 +68,8 @@ type Check struct {
 	// Saved is a path set in Settings that this process is not running yet.
 	Saved    string `json:"saved"`
 	Settable bool   `json:"settable"`
+	// Credential is the kind of credential a session authenticates with, on the token check alone.
+	Credential string `json:"credential,omitempty"`
 }
 
 // Tool is the executable a tool runs and where that choice came from.
@@ -73,10 +80,18 @@ type Tool struct {
 
 // Credential names a token source other than gh, and how a reader supplies it.
 type Credential struct {
+	Kind   string
 	Name   string
 	Source string
 	Remedy string
 }
+
+// Kinds of credential a session authenticates with.
+const (
+	CredentialGH           = "gh"
+	CredentialInstallation = "installation"
+	CredentialSupplied     = "supplied"
+)
 
 // Toolchain checks and changes what sessions run on.
 type Toolchain struct {
@@ -108,22 +123,47 @@ type probed struct {
 	err     error
 }
 
-// Load puts a path saved in Settings ahead of the flag or environment that chose the default.
-func (t *Toolchain) Load() error {
+// Load puts a path saved in Settings ahead of the flag or environment that chose the default. A
+// saved path that no longer exists — an editor's update moves the CLI it installed — is forgotten
+// and the default used instead; what Load did is returned, a sentence each, for the server to say.
+func (t *Toolchain) Load() ([]string, error) {
 	saved, err := t.Store.ToolPaths()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.rememberDefaults()
-	if p, ok := saved[store.ToolCodeQL]; ok {
-		t.CodeQL = Tool{Path: p.Path, Source: SourceSettings}
+	var said []string
+	for _, tool := range []struct {
+		name string
+		into *Tool
+	}{{store.ToolCodeQL, &t.CodeQL}, {store.ToolCopilot, &t.Copilot}} {
+		p, ok := saved[tool.name]
+		if !ok || p.Path == "" {
+			continue
+		}
+		if _, err := os.Stat(p.Path); errors.Is(err, fs.ErrNotExist) {
+			if err := t.Store.SetToolPath(tool.name, "", "abom"); err != nil {
+				return said, err
+			}
+			instead := "nothing is named in its place"
+			if d := t.defaults[tool.name]; d.Path != "" {
+				instead = d.Path + ", from " + d.Source + ", is used instead"
+			}
+			said = append(said, fmt.Sprintf("the %s path saved in Settings, %s, no longer exists, so it was "+
+				"forgotten and %s", tool.name, p.Path, instead))
+			continue
+		}
+		*tool.into = Tool{Path: p.Path, Source: SourceSettings}
 	}
-	if p, ok := saved[store.ToolCopilot]; ok {
-		t.Copilot = Tool{Path: p.Path, Source: SourceSettings}
+	if t.Copilot.Path == "" {
+		if found := vscodeCopilot(); found != "" && ownedHere(found) == nil {
+			t.Copilot = Tool{Path: found, Source: SourceVSCode}
+			said = append(said, "no Copilot CLI is named, so the one VS Code installed, "+found+", is used")
+		}
 	}
-	return nil
+	return said, nil
 }
 
 func (t *Toolchain) rememberDefaults() {
@@ -247,9 +287,9 @@ func (t *Toolchain) qlmcpCheck() Check {
 }
 
 func (t *Toolchain) tokenCheck(ctx context.Context) Check {
-	c := Check{Key: KeyToken, Name: "GitHub sign-in", Source: "gh auth token"}
+	c := Check{Key: KeyToken, Name: "GitHub sign-in", Source: "gh auth token", Credential: CredentialGH}
 	if cred := t.Credential; cred.Source != "" {
-		c.Name, c.Source = cred.Name, cred.Source
+		c.Name, c.Source, c.Credential = cred.Name, cred.Source, cmp.Or(cred.Kind, CredentialSupplied)
 		if t.Token == nil {
 			return c.problem("this server has no way to read its credential", cred.Remedy)
 		}

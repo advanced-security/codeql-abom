@@ -46,10 +46,11 @@ func TestEachMeasuredIterationSurvivesTheLatestTestUpsert(t *testing.T) {
 	}
 }
 
-// A recorded run is evidence only with what it ran under: the CodeQL, the tests, the fixtures and
-// what its expectations said.
+// A recorded run is evidence only with what it ran under: the CodeQL, the tests, the fixtures, the
+// marked ones among them, and what its expectations said.
 func TestARecordedRunNamesItsCodeQLFixturesAndExpectations(t *testing.T) {
 	root := workspace(t, map[string]string{"A": "acme/a"})
+	write(t, root, "test/A/.github/workflows/ci.yml", "on: push\njobs:\n  a: # $ Alert\n    runs-on: x\n")
 	q, digest := mustVersion(t, root, "acme/a")
 	fixtures, err := DigestFixtures(root, q.Tests)
 	if err != nil {
@@ -72,6 +73,9 @@ func TestARecordedRunNamesItsCodeQLFixturesAndExpectations(t *testing.T) {
 	if got.TestDigest != digest || got.FixturesDigest != fixtures || got.Missing == nil ||
 		*got.Missing != 1 || got.Unexpected == nil || *got.Unexpected != 0 {
 		t.Errorf("recorded %+v", got)
+	}
+	if _, ok := got.MarkedFixtures["test/A/.github/workflows/ci.yml"]; !ok || len(got.MarkedFixtures) != 1 {
+		t.Errorf("recorded marked fixtures %v, want the one marked workflow", got.MarkedFixtures)
 	}
 }
 

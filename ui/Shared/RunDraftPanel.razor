@@ -292,7 +292,7 @@
         try
         {
             var (run, refusal) = await Api.StartAnalysisRunAsync(
-                Predicate, Draft.Queries, Accounts.Identity.Login, held: !_findings);
+                Predicate, Draft.Queries, Accounts.Identity.Actor, held: !_findings);
             if (run is null)
             {
                 _runRefusal = refusal ?? Api.LastError;

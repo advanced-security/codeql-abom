@@ -139,11 +139,11 @@ func offeredValues(d ghauth.PropertyDefinition, carried map[string]int) []Proper
 	return out
 }
 
-var readPropertiesWithGh = readPropertiesWith(ghauth.Exec)
+var readPropertiesWithGh = ReadPropertiesWith(ghauth.Exec)
 
-// readPropertiesWith reads an organization's schema and what its repositories carry, leaving out
+// ReadPropertiesWith reads an organization's schema and what its repositories carry, leaving out
 // the archived ones: no listing records them, so no scope can own them.
-func readPropertiesWith(run ghauth.Runner) func(context.Context, string) ([]ghauth.PropertyDefinition, []ghauth.RepositoryProperties, error) {
+func ReadPropertiesWith(run ghauth.Runner) func(context.Context, string) ([]ghauth.PropertyDefinition, []ghauth.RepositoryProperties, error) {
 	return func(ctx context.Context, owner string) ([]ghauth.PropertyDefinition, []ghauth.RepositoryProperties, error) {
 		defs, err := ghauth.ReadPropertySchema(ctx, run, owner)
 		if err != nil {

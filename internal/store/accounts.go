@@ -14,21 +14,45 @@ type Account struct {
 	Owner string `json:"owner"`
 	// Kind is "user" for the operator's own account, "organization" otherwise.
 	Kind string `json:"kind"`
-	// Role is "owner" for their own account, and GitHub's "admin" or "member" for an org.
+	// Role is "owner" for their own account, and GitHub's "admin" or "member" for an org; with an
+	// App, "installation" for an account it is installed on.
 	Role string `json:"role"`
+	// SecurityManager is a member's security manager role, read apart from membership: yes, no, or
+	// unknown with its reason; empty where nobody asked.
+	SecurityManager       string `json:"securityManager,omitempty"`
+	SecurityManagerReason string `json:"securityManagerReason,omitempty"`
 }
 
-// The roles that carry enough access to answer for an account.
-//
-// Deliberately coarse: read-only membership is not enough to make an operator responsible for an
-// account. Finer roles belong with scoped-token support.
+// The roles an account is recorded with. Membership alone is not enough to make an operator
+// responsible for an account; belonging is not being answerable.
 const (
-	RoleOwner = "owner"
-	RoleAdmin = "admin"
+	RoleOwner  = "owner"
+	RoleAdmin  = "admin"
+	RoleMember = "member"
+	// RoleInstallation is an account the App is installed on, which only an owner of it could do.
+	RoleInstallation = "installation"
 )
 
-// CanDeclare reports whether this role carries enough access to be responsible for the account.
-func (a Account) CanDeclare() bool { return a.Role == RoleOwner || a.Role == RoleAdmin }
+// SecurityManagerYes is the one reading of the security manager role that makes a member eligible.
+const SecurityManagerYes = "yes"
+
+// CanDeclare reports whether this role carries enough access to be responsible for the account:
+// an owner, an organization admin, its security manager, or the App's installation on it.
+func (a Account) CanDeclare() bool {
+	switch a.Role {
+	case RoleOwner, RoleAdmin, RoleInstallation:
+		return true
+	case RoleMember:
+		return a.Kind == AccountOrganization && a.SecurityManager == SecurityManagerYes
+	}
+	return false
+}
+
+// CanInclude reports whether a member who may not declare an organization whole may declare the
+// repositories in it they administer or maintain, as an include list.
+func (a Account) CanInclude() bool {
+	return a.Kind == AccountOrganization && a.Role == RoleMember && !a.CanDeclare()
+}
 
 // MarshalJSON carries the derived eligibility to the interface rather than leaving it to read the
 // role and reach its own conclusion, which is the second derivation this exists to prevent.
@@ -37,7 +61,8 @@ func (a Account) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		account
 		CanDeclare bool `json:"canDeclare"`
-	}{account(a), a.CanDeclare()})
+		CanInclude bool `json:"canInclude"`
+	}{account(a), a.CanDeclare(), a.CanInclude()})
 }
 
 // Verification is a completed identity check and the accounts it established.
@@ -71,6 +96,12 @@ func (v Verification) CanReadMemberships() bool {
 	return false
 }
 
+// ByApp reports whether an App's installations were read rather than a person's memberships. An
+// App's identity is its bot login, which ends in "[bot]"; brackets are never in a person's login.
+func (v Verification) ByApp() bool {
+	return strings.HasSuffix(v.Login, "[bot]")
+}
+
 // ReplaceAccounts records a verification wholesale, discarding whatever preceded it.
 //
 // Replacement rather than merge: losing access to an organization has to remove it.
@@ -101,9 +132,11 @@ func (s *Store) ReplaceAccounts(v Verification) error {
 		}
 		seen[strings.ToLower(owner)] = true
 		if _, err := tx.Exec(`
-			INSERT INTO abom_account (owner, kind, role, host, verified_as, verified_at, scopes)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			owner, a.Kind, a.Role, v.Host, v.Login, at, scopes); err != nil {
+			INSERT INTO abom_account (owner, kind, role, host, verified_as, verified_at, scopes,
+			  security_manager, security_manager_reason)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			owner, a.Kind, a.Role, v.Host, v.Login, at, scopes,
+			nullable(a.SecurityManager), nullable(a.SecurityManagerReason)); err != nil {
 			return fmt.Errorf("recording verified account %s: %w", owner, err)
 		}
 	}
@@ -116,10 +149,11 @@ func (s *Store) Accounts() (Verification, error) {
 	accounts, err := queryAll(s, "reading verified accounts", func(r *sql.Rows) (Account, error) {
 		var a Account
 		var host, login, at string
-		var scopes sql.NullString
-		if err := r.Scan(&a.Owner, &a.Kind, &a.Role, &host, &login, &at, &scopes); err != nil {
+		var scopes, manager, managerReason sql.NullString
+		if err := r.Scan(&a.Owner, &a.Kind, &a.Role, &host, &login, &at, &scopes, &manager, &managerReason); err != nil {
 			return a, err
 		}
+		a.SecurityManager, a.SecurityManagerReason = manager.String, managerReason.String
 		// Every row carries the same verification, so the last one read settles the provenance.
 		v.Host, v.Login = host, login
 		v.VerifiedAt, _ = time.Parse(time.RFC3339, at)
@@ -128,7 +162,8 @@ func (s *Store) Accounts() (Verification, error) {
 			v.Scopes = strings.Split(scopes.String, ",")
 		}
 		return a, nil
-	}, `SELECT owner, kind, role, host, verified_as, verified_at, scopes
+	}, `SELECT owner, kind, role, host, verified_as, verified_at, scopes,
+	           security_manager, security_manager_reason
 	      FROM abom_account ORDER BY kind DESC, owner`)
 	if err != nil {
 		return v, err

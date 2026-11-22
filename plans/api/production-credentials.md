@@ -1,100 +1,64 @@
 # A production instance does not need a person's token
 
-**Status:** Reads of an installed account use the App. Copilot, the declaration check, dependency
-snapshots and the default-setup language add still use a person's token. Lands in one
-implementation with [ownership-claims.md](ownership-claims.md): a pod that can read and still
-cannot say who may declare has not stopped needing a person.
+**Status:** Built and measured live on `has-ghas`: with only the App's credentials, a crawl's reads,
+the accounts check, linked request examples and Copilot authoring sessions all run, and nothing reads
+a person's token or writes. What GitHub answers when an organization's policy refuses App Copilot
+requests, and a security manager's own token, are not yet measured.
 
 ## Why this exists
 
-A production pod has no `gh auth` session. The server still will not author, will not say who may
-declare, and will not perform the two writes it already performs, without one.
+A production pod has no `gh auth` session. What it does instead is in
+[`docs/architecture.md`](../../docs/architecture.md): each call is minted a token holding only its
+own permissions, a permission an installation has not approved refuses its call by name before
+GitHub is asked, and nothing falls back to another credential. What is left is measuring it against
+GitHub, which needs an owner's approval this plan cannot give itself.
 
-`githubToken` in [discover.go](../../cmd/codeql-abom/discover.go) is `GITHUB_TOKEN`, then
-`GH_TOKEN`, then `gh auth token`. It is what [serve.go](../../cmd/codeql-abom/serve.go) hands to
-dependency submission and to the `HeadSHA` that submission resolves, and what
-[codescanningstatus.go](../../cmd/codeql-abom/codescanningstatus.go) hands to the default-setup
-write. [authoring.go](../../cmd/codeql-abom/authoring.go) asks `ghauth.Token` for every Copilot
-session and for the readiness probe. [accounts.go](../../cmd/codeql-abom/accounts.go) and the
-serve default for `Verify` shell out to `gh api`. With no App, [newReader](../../cmd/codeql-abom/credentials.go)
-and the advisory client use the same person's token; with an App, those two already do not.
+**Copilot through the installation, measured on Copilot CLI 1.0.88 and SDK v1.0.14** (2026-11-19),
+the server run with no `gh` reachable (a stub on `PATH` that records and refuses every call), no
+`GITHUB_TOKEN` or `GH_TOKEN`, and git's system and global configuration hidden — the keychain held a
+person's github.com credential that git would otherwise have used. The CLI's session-level token
+provider refuses an installation token three ways, each only visible against the real runtime: it
+names the host as `https://github.com`, it requires more than 3600 s left where an installation
+token lives 3600 s at most, and it refuses any credential "without a stable account identity",
+which an installation token is. The same token as the client token authenticates (`type: token`, no
+login), and the `has-ghas` installation is offered two models: `auto` and `gpt-5.3-codex`. A GPT
+model searches with `rg` and writes with `apply_patch`, so a loop offering Claude's `grep`, `create`
+and `edit` alone left the agent unable to write. With both families offered and confined, sessions
+on request 4 (`acme/insecure-workflow-commands`, filed from zizmor's `insecure-commands` audit) ran
+through the App, metered in AI credits, with the model each call ran on recorded.
 
-`tokenFor` in [app.go](../../internal/ghapp/app.go) posts to
-`/app/installations/{id}/access_tokens` with no `permissions` body, and caches one token per
-installation. GitHub then returns every permission the installation holds. After this plan adds
-write grants, that cache would hand a crawl the write token, or a write the Copilot token,
-whichever was minted first.
-
-GitHub's server-to-server path for Copilot is an installation token (`ghs_`) with organization
-permission `organization_copilot_requests: read`, passed explicitly, with logged-in-user fallback
-off. It is billed to the installing organization. It needs that organization's policy allowing
-Copilot requests from GitHub App installations. It expires in one hour. It is not a user
-subscription, and a classic `ghp_` token is not a supported Copilot credential. The pinned SDK
-(`github.com/github/copilot-sdk/go` v1.0.14) already takes `GitHubToken` and
-`GitHubTokenProvider`, and defaults `UseLoggedInUser` to false when a token is set.
-
-## Pending
-
-1. **Mint a token for the call, not for the installation.** The cache key is the installation plus
-   the permission set. `POST /app/installations/{id}/access_tokens` sends a `permissions` body that
-   is a subset of what the installation was granted. A crawl token carries the existing read set
-   and nothing else. A snapshot token carries `contents: write` and the reads that snapshot needs,
-   not Copilot. A default-setup write carries `administration: write`, not Copilot and not
-   `contents: write`. A Copilot token carries `organization_copilot_requests: read` and nothing
-   else. A permission the installation has not granted yet refuses that call, with that reason. It
-   does not borrow another token, and it does not fall back to `GITHUB_TOKEN`, `GH_TOKEN`, or
-   `gh`. Depends on nothing.
-2. **Copilot uses the App when one is configured.** The session's `GitHubTokenProvider` mints on
-   `initial` and on `refresh`, through the call in 1, for the organization the session is billed
-   to. `UseLoggedInUser` is false. The child process does not inherit `GH_TOKEN` or
-   `GITHUB_TOKEN`. When no App is configured, the session keeps `ghauth.Token`, which is the local
-   and development path. A missing Copilot grant, or GitHub's refusal that App installation tokens
-   are not enabled for that organization, refuses the session and is what readiness says. It is
-   not "no agent" and not a 403 discovered mid-turn. Depends on 1.
-3. **The two existing writes use the App when one is configured.** Dependency submission, including
-   the `HeadSHA` it resolves, uses the snapshot token from 1. The default-setup language add uses
-   the administration-write token from 1. Both stay explicitly requested, ledgered, and bounded to
-   approved targets. This is not a new publisher, not a timer, and not a workflow grant — those
-   stay deferred in [dependency-submission.md](dependency-submission.md). When no App is
-   configured, both keep the person's token. Depends on 1.
-4. **Add the three grants to the manifest, traced to the call that needs each.**
-   `organization_copilot_requests: read` to the Copilot session.
-   `contents: write` to the existing snapshot submission — the current contents grant is read, and
-   the dependency submission API requires write.
-   `administration: write` to `PATCH /repos/{owner}/{repo}/code-scanning/default-setup` — the
-   current administration grant is read, which covers the GET. An already-installed App that has
-   not been re-approved reports the missing grant as in 1, rather than calling and reading the 403
-   as a product failure. The manifest trace test still fails a grant no call needs. Depends on 1.
-5. **Declaration checks do not shell out to `gh` for the server to run.** When an App is
-   configured, identity and the declaration picker use the App, as
-   [ownership-claims.md](ownership-claims.md) specifies. When no App is configured, `ghauth.Verify`
-   stays. A production process with an App and no `gh` does not record "you belong to nothing".
-   Depends on 1. The role rules are the other plan's; this one only stops the missing CLI from
-   being the answer.
-6. **Readiness names the credential.** `GET /api/authoring/readiness` says whether authoring will
-   use an installation token or `gh`, and the org-policy refusal when that is the reason it cannot.
-   It does not print a token. Analysis workers still receive neither the Copilot token nor a write
-   token; [deployment.md](../tools/deployment.md) keeps that separation, and the token they would
-   receive is an installation token, not a PAT. Depends on 2.
-7. **Say what the system does, once the grants exist.** The architecture sentence that writes keep
-   the person's credential, and [enterprise-server.md](enterprise-server.md)'s status line that the
-   App is read-only, move to what this plan made true. Not before the grants land.
+Measured on the crawled organization (2026-11-19), serving a copy with the App beside it: readiness
+names the installation token and refuses Copilot with `organization_copilot_requests: read` not
+granted on `has-ghas`; the identity is the App's one installation, in 0.43 s, and the declaration it
+does not cover reads *cannot be checked*, not contradicted; every graph total, the owned set and
+both declarations' honored state are unchanged. The App's registration, read the same day, asks for
+every read plus `organization_copilot_requests: read` and no write. Once the `has-ghas`
+installation accepted it, readiness turned from that refusal to ready on the same copy, with no
+change to any graph total.
 
 ## Decided
 
-**One App, three tokens.** The owner re-approves the registration once. A second App is not
-required. The separation enterprise-server requires — a credential that reads is not the
-credential that writes — is the minted token's permission set, not a second registration.
-[github-hosts.md](github-hosts.md) still chooses the host. This plan does not send a token minted
-for one host to another, and does not invent a second router.
+**The App writes nothing.** A dependency snapshot and default setup belong to the repository: the
+newer route is that a repository adopts `actions.lock` itself, and its code scanning configuration is
+its owner's, outside ABOM. So the App asks for no write, a server reading as it refuses to start when
+given `--submit-targets`, `--enable-targets` or `--enable-accounts`, and its snapshot client approves
+nothing. Without an App, the existing operator-token writes and their guards are as they were.
 
-**No person's token is a production requirement.** Local and development runs with no App keep
-`gh auth token` for reads, Copilot, declaration checks and the two writes. Production with an App
-never consults it. An empty environment is not an empty identity.
+## Pending
 
-**Copilot is billed to the installing organization.** There is no user subscription on that path,
-and the model list that path returns is the organization's. The user's list is the no-App path,
-which [qlaas-loop.md](qlaas-loop.md) renders. Same control, different credential.
+1. **An organization that refuses App Copilot requests.** `has-ghas` allows them, so what GitHub
+   answers when an organization's policy does not — at the mint, at client start, or at the first
+   turn — is unmeasured, and readiness reports only a refused mint. Measure it on an organization
+   whose owner turns the policy off, and make readiness say that refusal in its own words. Depends
+   on nothing.
+2. **A security manager's own token.** On the operator's `read:org` token every one of 19 member
+   organizations reads *security manager: cannot say*, because both readings — the organization
+   roles and the security managers teams GitHub says are closing down — need `admin:org` of a
+   classic token, and a token reporting scopes without it is not spent asking. Measure a token
+   carrying `admin:org` held by an actual security manager: that the role reads *yes*, that the
+   picker then offers the organization, and that the security managers endpoint still answers. If
+   it has gone, the organization roles reading is the only one, and a security manager whose token
+   cannot read roles cannot be confirmed at all. Depends on nothing.
 
 ## The constraint that must not be broken
 
@@ -103,24 +67,26 @@ no `gh` starts and reads. It authors, or it says which grant or org policy is mi
 fall back to an ambient token, and it does not record that the operator belongs to nothing because
 the CLI was absent.
 
-**A token is never stored, logged, or written into an event.** The App's key stays a 0600 file
-beside the database, as it is now. The Copilot child receives the installation token as the SDK's
-explicit credential and not as an inherited environment variable.
+**A token is never stored, logged, or written into an event.** The Copilot child receives the
+installation token minted for its session as the client token, inherits no GitHub token from the
+server's environment, and has no logged-in user to fall back to.
 
-**A write stays irreversible and explicit.** Moving the existing snapshot and default-setup writes
-onto an installation token does not add a timer, a first submission, or a client that submits.
-[dependency-submission.md](dependency-submission.md) still defers those. A write whose grant is
-absent is refused before GitHub is asked.
+**An installation token is not refreshed under a session.** The client token is the only route
+the CLI accepts for it, and that route takes no refresh, so a session ends a few minutes before the
+hour its token was minted for. A longer `--authoring-limit` is cut to that hour rather than failing
+mid-turn. The user-token route — readers signing in through the App, in
+[enterprise-server.md](enterprise-server.md) — is what the provider was built for.
+
+**A server reading as the App writes nothing.** Not with the App, which asks for no write, and not
+with the operator's token, which a production pod does not have. A write target named beside an App
+stops the server rather than being ignored. [dependency-submission.md](dependency-submission.md)
+still defers any new publisher.
+
+**A role makes an account eligible; it never declares it.** A security manager or maintainer role,
+and an App installation, are evidence about access. One that cannot be read is *cannot say*, never
+*no*, and a check that a role no longer supports a declaration changes nothing about it.
 
 ## Verification
 
-- A process with no `gh`, no `GITHUB_TOKEN` and no `GH_TOKEN`, and an App configured, serves and
-  reads an installed account. A Copilot session is offered a `ghs_` token minted for that call. A
-  refresh mints another. The crawl's token does not carry `contents: write` or
-  `organization_copilot_requests`. The snapshot token does not carry Copilot.
-- A process with no App still uses `gh auth token` for those same calls. The two paths are tested
-  by which credential function runs, not by elapsed time.
-- An installation that has not re-approved the new grants refuses the session and the write with
-  the missing permission named. It does not attempt the person's token.
-- No token appears in a log line, an authoring event, or the database. The readiness body names the
-  credential kind and the refusal, not the secret.
+- Items 1 and 2 each state their expectation before the session or the read, and record what
+  GitHub answered beside it.

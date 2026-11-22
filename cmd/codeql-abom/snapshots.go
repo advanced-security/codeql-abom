@@ -17,10 +17,10 @@ import (
 //
 // The allow-list is required because a submitted snapshot cannot be withdrawn; no targets means
 // preview only.
-func wireSnapshots(srv *serve.Server, s store.Backend, token string, targets []string,
+func wireSnapshots(srv *serve.Server, s store.Backend, client *submit.Client,
 	headSHA func(context.Context, string) (string, error)) {
 
-	w := snapshotWiring{s: s, client: submit.NewClient(token, targets), headSHA: headSHA}
+	w := snapshotWiring{s: s, client: client, headSHA: headSHA}
 	srv.ApprovedTargets = w.approvedTargets
 	srv.SnapshotPreview = w.preview
 	srv.SnapshotSubmit = w.submit

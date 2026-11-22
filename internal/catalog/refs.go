@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -18,7 +19,14 @@ import (
 // RefQuestion asks where one reference of one repository points now; an empty Ref is the default branch.
 type RefQuestion struct {
 	Owner, Repo, Ref string
+	// OrCommit also reads a Ref of seven or more hex digits as a commit, after a branch or tag of
+	// that name, as GitHub's blob view does. Actions refuses a shortened SHA in uses:, so a question
+	// about a uses reference never sets it.
+	OrCommit bool
 }
+
+// abbreviated is a commit as a link may name it: seven hex digits or more.
+var abbreviated = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 
 // RefAnswer is the commit a reference pointed at when GitHub was asked.
 type RefAnswer struct {
@@ -48,6 +56,8 @@ const peelFragment = `fragment peel on GitObject { __typename oid ... on Tag { t
 // refAlias is where one question's answer sits: its repository's alias, the field asked first, and the fallback.
 type refAlias struct {
 	repo, first, second string
+	// commit is where a Ref read as a commit is answered, empty where it is not asked.
+	commit string
 }
 
 // refQuery passes every name as a variable, because a reference is whatever a workflow wrote.
@@ -87,6 +97,12 @@ func refQuery(qs []RefQuestion) (string, map[string]any, []refAlias) {
 			// A name that is both is the branch, as `git clone --branch` takes it.
 			a.first = ask("h"+strconv.Itoa(i), "refs/heads/"+q.Ref)
 			a.second = ask("t"+strconv.Itoa(i), "refs/tags/"+q.Ref)
+			if q.OrCommit && abbreviated.MatchString(q.Ref) {
+				a.commit = "c" + strconv.Itoa(i)
+				vars[a.commit] = q.Ref
+				decls = append(decls, "$"+a.commit+": String!")
+				fields[r] = append(fields[r], a.commit+": object(expression: $"+a.commit+") { ...peel }")
+			}
 		}
 		asked[i] = a
 	}
@@ -134,21 +150,27 @@ func (c *Client) ResolveRefs(ctx context.Context, qs []RefQuestion) (RefBatch, e
 
 func answerFor(q RefQuestion, a refAlias, data map[string]json.RawMessage, errs []refError) RefAnswer {
 	name := q.Owner + "/" + q.Repo
-	var fields map[string]*refField
+	var fields map[string]json.RawMessage
 	if raw := data[a.repo]; len(raw) == 0 || string(raw) == "null" {
 		return RefAnswer{Unread: cmp.Or(reasonAt(errs, a.repo, ""), "GitHub answered nothing for "+name)}
 	} else if err := json.Unmarshal(raw, &fields); err != nil {
 		return RefAnswer{Unread: fmt.Sprintf("decoding the answer for %s: %v", name, err)}
 	}
-	for _, alias := range []string{a.first, a.second} {
+	for _, alias := range []string{a.first, a.second, a.commit} {
 		if alias == "" {
 			continue
 		}
 		if why := reasonAt(errs, a.repo, alias); why != "" {
 			return RefAnswer{Unread: why}
 		}
-		f := fields[alias]
-		if f == nil || f.Target == nil {
+		// A ref answers with the object it targets; an expression answers with the object itself.
+		var f refField
+		if alias == a.commit {
+			f.Target = new(gitObject)
+			if err := json.Unmarshal(fields[alias], f.Target); err != nil || f.Target.OID == "" {
+				continue
+			}
+		} else if err := json.Unmarshal(fields[alias], &f); err != nil || f.Target == nil {
 			continue
 		}
 		obj := f.Target
@@ -162,6 +184,9 @@ func answerFor(q RefQuestion, a refAlias, data map[string]json.RawMessage, errs 
 	}
 	if q.Ref == "" {
 		return RefAnswer{Unread: name + " has no default branch", Missing: true}
+	}
+	if a.commit != "" {
+		return RefAnswer{Unread: fmt.Sprintf("%s has no branch, tag or commit named %s", name, q.Ref), Missing: true}
 	}
 	return RefAnswer{Unread: fmt.Sprintf("%s has no branch or tag named %s", name, q.Ref), Missing: true}
 }

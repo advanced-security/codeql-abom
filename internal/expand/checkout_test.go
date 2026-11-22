@@ -168,6 +168,36 @@ func TestFetchReportsNothingToAnalyze(t *testing.T) {
 	}
 }
 
+// Actions content is what the extractor indexes, not any file under .github: a repository holding
+// only secret scanning or code scanning configuration there made `codeql database create` exit 32,
+// "detected code written in GitHub Actions but could not process any of it", and read as a failure.
+func TestOnlyWhatTheExtractorIndexesIsActionsContent(t *testing.T) {
+	for name, c := range map[string]struct {
+		files map[string]string
+		want  bool
+	}{
+		"secret scanning configuration": {map[string]string{".github/secret_scanning.yml": "paths-ignore: []\n"}, false},
+		"code scanning configuration":   {map[string]string{".github/codeql-config.yml": "name: x\n"}, false},
+		"Dependabot and owners":         {map[string]string{".github/dependabot.yml": "version: 2\n", ".github/CODEOWNERS": "* @o\n"}, false},
+		"a workflow below workflows":    {map[string]string{".github/workflows/nested/ci.yml": "on: push\n"}, false},
+		"a workflow":                    {map[string]string{".github/workflows/ci.yml": "on: push\n"}, true},
+		"a .yaml workflow":              {map[string]string{".github/workflows/ci.yaml": "on: push\n"}, true},
+		"a reusable workflow":           {map[string]string{".github/reusable_workflows/o/r/w.yml": "on: workflow_call\n"}, true},
+		"an action in .github":          {map[string]string{".github/actions/setup/action.yml": "runs:\n  using: composite\n"}, true},
+		"an action at the root":         {map[string]string{"action.yaml": "runs:\n  using: node20\n"}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			origin := originRepo(t, c.files)
+			_, err := newCheckout(t, origin).Fetch(context.Background(), filepath.Join(t.TempDir(), "work"),
+				"", filepath.Base(origin), "")
+			var nothing *NothingToAnalyze
+			if got := !errors.As(err, &nothing); got != c.want || (c.want && err != nil) {
+				t.Errorf("err = %v, want actions content %v", err, c.want)
+			}
+		})
+	}
+}
+
 func headOf(t *testing.T, repo string) string {
 	t.Helper()
 	cmd := exec.Command("git", "rev-parse", "HEAD")
@@ -200,6 +230,10 @@ func TestFetchReportsARepositoryWithNoCommitAsUnavailable(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no commit") {
 		t.Errorf("reason = %q, want it to say the default branch has no commit", err)
+	}
+	// An answer, not a failure, so it does not repeat git's "fatal:" at the reader.
+	if strings.Contains(err.Error(), "fatal") {
+		t.Errorf("reason = %q, which carries git's own error for a known answer", err)
 	}
 	// Nothing to analyze, and no commit to say it of.
 	var nothing *NothingToAnalyze

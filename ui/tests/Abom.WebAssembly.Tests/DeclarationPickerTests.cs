@@ -38,9 +38,9 @@ public class DeclarationPickerTests : AbomTestContext
 
     private const string OpsTeamRepositories = """
         {"owner":"ops-team","problem":null,"repositories":[
-          {"name":"service","private":true,"archived":false,"fork":false},
-          {"name":"tooling","private":false,"archived":false,"fork":false},
-          {"name":"old-site","private":false,"archived":true,"fork":false}]}
+          {"name":"service","private":true,"archived":false,"fork":false,"declarable":true},
+          {"name":"tooling","private":false,"archived":false,"fork":false,"declarable":true},
+          {"name":"old-site","private":false,"archived":true,"fork":false,"declarable":true}]}
         """;
 
     private const string NoImpact = """
@@ -342,7 +342,7 @@ public class DeclarationPickerTests : AbomTestContext
     [Fact]
     public void ALongListSaysHowManyMoreMatch()
     {
-        var many = string.Join(",", Enumerable.Range(0, 80).Select(i => $$"""{"name":"repo-{{i:000}}"}"""));
+        var many = string.Join(",", Enumerable.Range(0, 80).Select(i => $$"""{"name":"repo-{{i:000}}","declarable":true}"""));
         Serve(Identity, DeclaresRestricted);
         AnswerWrite("api/accounts/ops-team/repositories",
             $$"""{"owner":"ops-team","problem":null,"repositories":[{{many}}]}""");

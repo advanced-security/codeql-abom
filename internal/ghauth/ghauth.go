@@ -33,9 +33,21 @@ type Account struct {
 	Owner string `json:"owner"`
 	// Kind is "user" for the operator's own account, "organization" otherwise.
 	Kind string `json:"kind"`
-	// Role is "owner" for their own account, and GitHub's "admin" or "member" for an org.
+	// Role is "owner" for their own account, and GitHub's "admin" or "member" for an org; with an
+	// App, "installation" for an account it is installed on.
 	Role string `json:"role"`
+	// SecurityManager is whether a member holds the organization's security manager role, read
+	// apart from membership: yes, no, or unknown with the reason. Empty where nobody asked.
+	SecurityManager       string `json:"securityManager,omitempty"`
+	SecurityManagerReason string `json:"securityManagerReason,omitempty"`
 }
+
+// Account kinds, and the role an App's installation is recorded with.
+const (
+	KindUser         = "user"
+	KindOrganization = "organization"
+	RoleInstallation = "installation"
+)
 
 // Identity is who gh is authenticated as, and what that account belongs to.
 type Identity struct {
@@ -149,6 +161,7 @@ func Verify(ctx context.Context, run Runner) (Identity, error) {
 	if err != nil {
 		return id, err
 	}
+	readSecurityManagers(ctx, run, id.Login, id.Scopes, orgs)
 	id.Accounts = append(id.Accounts, orgs...)
 	return id, nil
 }
@@ -199,6 +212,9 @@ func hostOf(htmlURL string) string {
 // unrecognized is still surfaced verbatim rather than being flattened into "no accounts", which
 // would report a broken setup as a measurement.
 func problemFor(err error) error {
+	if p := new(Problem); errors.As(err, &p) {
+		return p
+	}
 	if errors.Is(err, ErrNotInstalled) {
 		return &Problem{
 			Reason: "The gh CLI is not installed, so there is no way to confirm which accounts are yours.",

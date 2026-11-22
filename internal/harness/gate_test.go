@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -90,6 +91,29 @@ func TestARefusedAttemptIsKeptWithWhatWasAttempted(t *testing.T) {
 	e := j.all()[0]
 	if e.Decision != DecisionRefused || !strings.Contains(e.Detail, "rm -rf ~") {
 		t.Errorf("refused shell recorded as %+v", e)
+	}
+}
+
+// A corrected call reaches the runtime as the arguments ABOM forwards, with the agent told why, and
+// the timeline keeps both what the agent sent and what was corrected.
+func TestACorrectedCallIsForwardedCorrectedAndRecordedAsSent(t *testing.T) {
+	g, j, _ := newGate(t)
+	db := g.Bounds().database()
+	sent := map[string]any{"database": filepath.Join(db, "db-actions"), "queryName": "PrintAST",
+		"queryLanguage": "actions", "sourceFiles": []any{".github/workflows/checkout.yml"}}
+	out, err := g.PreToolUse(copilot.PreToolUseHookInput{ToolName: Server + "-codeql_query_run", ToolArgs: sent},
+		copilot.HookInvocation{})
+	if err != nil || out == nil || out.PermissionDecision == "deny" {
+		t.Fatalf("corrected call: %+v %v, want it allowed", out, err)
+	}
+	forwarded, _ := out.ModifiedArgs.(map[string]any)
+	if forwarded["database"] != db || forwarded["sourceFiles"] != ".github/workflows/checkout.yml" ||
+		!strings.Contains(out.AdditionalContext, "corrected") {
+		t.Errorf("forwarded %v with %q", out.ModifiedArgs, out.AdditionalContext)
+	}
+	e := j.all()[0]
+	if e.Decision != DecisionAllowed || !strings.Contains(e.Reason, "corrected") || !strings.Contains(e.Subject, "db-actions") {
+		t.Errorf("recorded %+v, want allowed with the correction and the agent's own arguments", e)
 	}
 }
 
@@ -355,6 +379,24 @@ func TestWhatEachModelCallCostIsKeptAsItArrives(t *testing.T) {
 	g.Observe(copilot.SessionEvent{Data: &copilot.AssistantUsageData{Model: "claude-opus-5", InputTokens: &in}})
 	if g.Err() == nil {
 		t.Error("a cost that could not be kept did not fail the session")
+	}
+}
+
+// auto is the runtime's choice, so the record names the models its calls actually ran on, each once,
+// in the order they first ran, and keeps the record as it changes rather than once at the end.
+func TestTheModelsACallRanOnAreRecordedAsTheyArrive(t *testing.T) {
+	g, _, _ := newGate(t)
+	var kept []string
+	g.KeepModel(func(m string) error {
+		kept = append(kept, m)
+		return nil
+	})
+	for _, model := range []string{"gpt-5.3-codex", "gpt-5.3-codex", "", "gpt-5.4-mini", "gpt-5.3-codex"} {
+		g.Observe(copilot.SessionEvent{Data: &copilot.AssistantUsageData{Model: model}})
+	}
+	want := []string{"gpt-5.3-codex", "gpt-5.3-codex, gpt-5.4-mini"}
+	if !slices.Equal(kept, want) {
+		t.Errorf("recorded %q, want %q", kept, want)
 	}
 }
 

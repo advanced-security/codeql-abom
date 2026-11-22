@@ -421,7 +421,10 @@ CREATE TABLE IF NOT EXISTS abom_account (
   role        TEXT NOT NULL,
   host        TEXT NOT NULL,
   verified_as TEXT NOT NULL,
-  verified_at TEXT NOT NULL
+  verified_at TEXT NOT NULL,
+  -- A member's security manager role, read apart from membership; NULL where nobody asked.
+  security_manager        TEXT,
+  security_manager_reason TEXT
 );
 
 -- The upstream discovery queue. Expanding a dependency reveals further dependencies, so this
@@ -861,6 +864,8 @@ var addedColumns = []struct{ table, column, decl string }{
 	// What the token could see when the accounts were read. NULL means nobody asked, which must
 	// not be read as "carried none": one is an unanswered question, the other an answer.
 	{"abom_account", "scopes", "TEXT"},
+	{"abom_account", "security_manager", "TEXT"},
+	{"abom_account", "security_manager_reason", "TEXT"},
 	{"abom_finding", "result_hash", "TEXT"},
 	// Which producer made the claim. Nullable on purpose: rows recorded before this column say
 	// nothing about their producer, and back-filling one would attest to things nobody checked.
@@ -913,6 +918,9 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"abom_query_test", "fixtures_digest", "TEXT"},
 	{"abom_query_test", "missing", "INTEGER"},
 	{"abom_query_test", "unexpected", "INTEGER"},
+	// Nullable: a run recorded before these were kept names no marked fixture, which is not a run
+	// over none.
+	{"abom_query_test", "marked_fixtures", "TEXT"},
 	// Nullable: a request kept before targets were attributed says nobody is recorded as choosing
 	// it, which must not read as the operator having chosen it.
 	{"abom_query_request", "target_source", "TEXT"},

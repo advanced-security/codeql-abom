@@ -56,7 +56,9 @@ const (
 	docEvents      = "https://docs.github.com/en/webhooks/webhook-events-and-payloads"
 )
 
-// Permissions is everything the App requests; submission, ABOM's only write, keeps the operator's token.
+// Permissions is everything the App requests: reads, and Copilot requests for authoring. Each call is
+// minted a token carrying only the subset it needs, so a crawl never holds Copilot. The App writes
+// nothing to a repository: a dependency snapshot and default setup are the repository's own to change.
 var Permissions = []Grant{
 	{Permission: "metadata", Access: "read",
 		Doc: docPermissions + `#repository-permissions-for-metadata (GitHub grants it to every App)`,
@@ -126,6 +128,12 @@ var Permissions = []Grant{
 			{"catalog.Client.ActionsPermissions", "GET /repos/{owner}/{repo}/actions/permissions",
 				"/actions/permissions"},
 		}},
+	// Copilot requests from an installation token are billed to the installing organization.
+	{Permission: "organization_copilot_requests", Access: "read",
+		Doc: "https://docs.github.com/en/copilot/how-tos/copilot-sdk/auth/server-to-server-tokens",
+		Uses: []Use{
+			{"harness.Copilot.Run", "Copilot requests from an authoring session", "Copilot token"},
+		}},
 }
 
 // Events omits installation, installation_repositories and ping, which every App gets unasked.
@@ -153,7 +161,8 @@ var Events = []Subscription{
 func NewManifest(name, homepage, webhookURL, redirectURL string) Manifest {
 	m := Manifest{
 		Name: name, URL: homepage, RedirectURL: redirectURL,
-		Description:        "Reads repositories for codeql-abom, the Actions Bill of Materials. Requests read access only.",
+		Description: "Reads repositories for codeql-abom, the Actions Bill of Materials, and makes " +
+			"Copilot requests for query authoring. Requests no write access.",
 		HookAttributes:     HookAttributes{URL: webhookURL, Active: true},
 		DefaultPermissions: map[string]string{},
 		DefaultEvents:      []string{},

@@ -290,6 +290,19 @@ func reported(n sql.NullInt64) *int64 {
 	return &n.Int64
 }
 
+// SetAuthoringSessionModel records the models a session's calls ran on, which the runtime chose
+// where it did not offer the one asked for.
+func (s *Store) SetAuthoringSessionModel(session int64, model string) error {
+	res, err := s.db.Exec(`UPDATE abom_authoring_session SET model = ? WHERE row_id = ?`, model, session)
+	if err != nil {
+		return fmt.Errorf("recording session %d's model: %w", session, err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n == 0 {
+		return fmt.Errorf("recording session %d's model: there is no such session", session)
+	}
+	return nil
+}
+
 // AddAuthoringSpend adds one model call's cost to its session as it arrives, so a session stopped
 // part way still says what it cost. A figure the call did not report leaves the total as it was.
 func (s *Store) AddAuthoringSpend(session int64, spent AuthoringSpend) error {

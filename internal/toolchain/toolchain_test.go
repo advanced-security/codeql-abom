@@ -2,6 +2,7 @@ package toolchain
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -290,7 +291,7 @@ func TestLoadPutsASavedPathAheadOfFlagsAndEnvironment(t *testing.T) {
 	if err := p.store.SetToolPath(store.ToolCopilot, saved, "alice"); err != nil {
 		t.Fatal(err)
 	}
-	if err := tc.Load(); err != nil {
+	if _, err := tc.Load(); err != nil {
 		t.Fatal(err)
 	}
 	if tc.Copilot.Path != saved || tc.Copilot.Source != SourceSettings {
@@ -298,6 +299,67 @@ func TestLoadPutsASavedPathAheadOfFlagsAndEnvironment(t *testing.T) {
 	}
 	if tc.CodeQL.Source != "--codeql" {
 		t.Errorf("a tool nobody set in Settings changed: %+v", tc.CodeQL)
+	}
+}
+
+// An editor that updates its Copilot extension moves the CLI it installed, so a path saved in
+// Settings can stop existing while the flag or environment still names one that runs. Nobody has
+// to repair that: the saved path is forgotten, the default is used, and the server says so.
+func TestASavedPathThatNoLongerExistsGivesWayToTheDefault(t *testing.T) {
+	p := newPlace(t)
+	tc := p.chain(t)
+	fallback := tc.Copilot
+	gone := filepath.Join(p.dir, "gone", "copilot")
+	if err := p.store.SetToolPath(store.ToolCopilot, gone, "alice"); err != nil {
+		t.Fatal(err)
+	}
+	said, err := tc.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tc.Copilot != fallback {
+		t.Errorf("after loading a path that is gone, Copilot is %+v, want %+v", tc.Copilot, fallback)
+	}
+	if saved, _ := p.store.ToolPaths(); saved[store.ToolCopilot].Path != "" {
+		t.Errorf("the path that is gone is still saved: %+v", saved[store.ToolCopilot])
+	}
+	if len(said) != 1 || !strings.Contains(said[0], gone) || !strings.Contains(said[0], fallback.Path) {
+		t.Errorf("loading said %q, want the path that is gone and the one used instead", said)
+	}
+	if c := byKey(tc.Checks(context.Background(), true))[KeyCopilot]; c.State != Ready || c.Saved != "" {
+		t.Errorf("readiness after the fallback is %+v, want ready with nothing pending", c)
+	}
+}
+
+// With no Copilot CLI named anywhere, the one VS Code installed is used rather than offered as advice.
+func TestWithNoCopilotCLINamedTheOneVSCodeInstalledIsUsed(t *testing.T) {
+	p := newPlace(t)
+	home := filepath.Join(p.dir, "home")
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	config, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	installed := p.at(t, filepath.Join(strings.TrimPrefix(config, p.dir+string(filepath.Separator)),
+		"Code", "User", "globalStorage", "github.copilot-chat", "copilotCli"), "copilot", "1.0.88")
+	tc := p.chain(t)
+	tc.Copilot = Tool{}
+	// A whole-suite run can starve one probe past the bench's half second; this test is about the choice.
+	tc.Timeout = 10 * time.Second
+
+	said, err := tc.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tc.Copilot.Path != installed || tc.Copilot.Source != SourceVSCode {
+		t.Errorf("with nothing named, Copilot is %+v, want %s from VS Code", tc.Copilot, installed)
+	}
+	if len(said) != 1 || !strings.Contains(said[0], installed) {
+		t.Errorf("loading said %q, want the CLI it chose", said)
+	}
+	if c := byKey(tc.Checks(context.Background(), true))[KeyCopilot]; c.State != Ready {
+		t.Errorf("readiness with VS Code's CLI is %+v", c)
 	}
 }
 
@@ -321,5 +383,30 @@ func TestAFixedToolchainOffersNoPathAndDescribesItsOwnCredential(t *testing.T) {
 	}
 	if err := tc.SetTool(context.Background(), "copilot", got[KeyCopilot].Path, "test"); err == nil {
 		t.Error("a fixed toolchain saved a tool path")
+	}
+}
+
+// Readiness says whether sessions will authenticate with an installation token or with gh, and
+// why one cannot be had, without ever printing the token itself.
+func TestReadinessNamesTheCredentialSessionsUse(t *testing.T) {
+	p := newPlace(t)
+	tc := p.chain(t)
+	if c := byKey(tc.Checks(context.Background(), false))[KeyToken]; c.Credential != CredentialGH || c.State != Ready {
+		t.Errorf("without an App the credential check reads %+v; want gh, ready", c)
+	}
+
+	tc.Credential = Credential{Kind: CredentialInstallation, Name: "Copilot credential",
+		Source: "GitHub App installation token for has-ghas", Remedy: "an owner of has-ghas approves Copilot requests"}
+	tc.Token = func(context.Context) error {
+		return errors.New("the App's installation on has-ghas has not granted organization_copilot_requests: read")
+	}
+	c := byKey(tc.Checks(context.Background(), false))[KeyToken]
+	if c.Credential != CredentialInstallation || c.State != Problem ||
+		!strings.Contains(c.Reason, "organization_copilot_requests") || !strings.Contains(c.Source, "has-ghas") {
+		t.Errorf("with an App the credential check reads %+v; want the installation token and the missing grant", c)
+	}
+	raw, _ := json.Marshal(c)
+	if !strings.Contains(string(raw), `"credential":"installation"`) {
+		t.Errorf("the check's JSON %s does not name the credential", raw)
 	}
 }

@@ -14,7 +14,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -238,7 +237,7 @@ func (c *Checkout) checkout(ctx context.Context, dest, repo, ref string) error {
 	if out, err := c.run(ctx, dest, "checkout"); err != nil {
 		if unbornBranch(out) {
 			return &NothingToAnalyze{Tree: Tree{Ref: analyzedRef(ref)},
-				Why: fmt.Sprintf("%s has no commit on its default branch: %s", repo, out)}
+				Why: repo + " has no commit on its default branch"}
 		}
 		return fmt.Errorf("checking out %s: %s", repo, out)
 	}
@@ -251,35 +250,12 @@ func unbornBranch(out string) bool {
 		strings.Contains(out, "does not have any commits yet")
 }
 
-// hasActionsContent reports whether anything survived the sparse filter.
+// hasActionsContent reports whether the tree holds anything the actions extractor indexes by
+// default. Other YAML under .github — secret scanning, code scanning or Dependabot configuration —
+// is not, and building from it alone makes `codeql database create` exit 32 as if extraction failed.
 func hasActionsContent(dir string) bool {
-	if _, err := os.Stat(filepath.Join(dir, ".github")); err == nil {
-		return true
-	}
-	found := false
-	// The walk's own error is deliberately discarded: an unreadable tree means nothing was
-	// found, which is exactly what the zero value says.
-	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			// An unreadable subtree is not actions content. Skipping it is the answer; abandoning
-			// the walk would report the rest of the tree as empty.
-			return nil //nolint:nilerr
-		}
-		if found {
-			return filepath.SkipAll
-		}
-		if d.IsDir() {
-			if d.Name() == ".git" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if d.Name() == "action.yml" || d.Name() == "action.yaml" {
-			found = true
-		}
-		return nil
-	})
-	return found
+	files, _ := indexedByDefault(dir)
+	return len(files) > 0
 }
 
 func (c *Checkout) run(ctx context.Context, dir string, args ...string) (string, error) {

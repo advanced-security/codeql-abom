@@ -6,9 +6,10 @@ declared organization by organization. Every surface says *owned* only where the
 a row's repository; *What you own* (`scope=owned`) holds exactly that, and *Yours and what it runs*
 (`scope=supply-chain`) is the closure. Settings asks `gh` on arrival, offers the accounts it can
 declare, and builds an include list from GitHub's own answer, or a property scope from the
-organization's custom properties. A repository administered inside an organization the operator
-does not own still cannot be declared. That claim is
-[ownership claims](../api/ownership-claims.md), not a refinement of this plan.
+organization's custom properties. Who may declare — an owner, an admin, a security manager, an App
+installation, and a member for the repositories they administer or maintain — and the check beside
+each declaration of the role behind it are in [`docs/architecture.md`](../../docs/architecture.md);
+what is left of them to measure is [production credentials](../api/production-credentials.md).
 
 ## Why this exists
 
@@ -35,19 +36,7 @@ the operator both has the privilege to analyze and the responsibility to remedia
    already in scope, and never widens or narrows what is discovered. It is refused as a pattern for
    the same reason this one is — see the waiver rules in
    [`../../.github/instructions/architecture.instructions.md`](../../.github/instructions/architecture.instructions.md).
-2. **Who may declare, including a member's repositories, is not this plan.** The role rules,
-   the security-manager and maintainer checks, and the App-installation eligibility are
-   [ownership claims](../api/ownership-claims.md), which lands with
-   [production credentials](../api/production-credentials.md). The measurement that sized the
-   deferral — private repositories, the cheap listing missing team grants, advisory forks that
-   are not claims — lives there. This plan keeps the predicate those claims are saved into.
-   Membership still decides nothing on its own. The person's token is not a crawl credential.
-3. **The pre-flight role check is deferred to the ownership plan.** `gh` verification is recorded and shown beside
-   each declaration, and the gate asks only whether a scope is declared. Checking that the
-   recorded role still supports the claim is [ownership claims](../api/ownership-claims.md). It
-   is not what stops a crawl from being unbounded, and it is not a second reader of the honored
-   view.
-4. **No browser gate draws the declaration picker.** The e2e server's `gh` is a stub that answers
+2. **No browser gate draws the declaration picker.** The e2e server's `gh` is a stub that answers
    as logged out (`ui/tests/e2e/stubs/gh`), so the declarable list never appears, and the fixture
    corpus declares `acme-corp` by property scope and the other three whole, with no include list,
    so neither an include chip, the chooser nor the property scope editor is drawn by `make e2e` or
@@ -57,7 +46,7 @@ the operator both has the privilege to analyze and the responsibility to remedia
    one `orgs/{o}/repos` from fixtures, and one corpus account declared with an include list. The
    stub must stay a recording, never a pass-through to the real `gh`: without it, opening Settings
    wrote whoever ran the suite into the store under test (33 identity rows).
-5. **A declaration that could not be read is shown as no declaration.** `GetOwnedScopeAsync`
+3. **A declaration that could not be read is shown as no declaration.** `GetOwnedScopeAsync`
    answers a failed read with an empty list, so `AccountService` (and through it Settings' "Nothing
    is declared, so discovery will not start" and every `ScopeDeclared` reader), `DiscoveryControls`
    and `PruneControl` report a transport failure as an empty declaration. The Explorer reads
@@ -98,7 +87,8 @@ and marked rather than dropped.
   nothing.
 - A declaration `gh` cannot confirm is kept and flagged, never dropped. You can be responsible for
   something you have just lost access to.
-- **Item 2, when it resumes:** a member's administered repository is offered only in an
-  organization gh reports a member role for, is saved as an include list there, and is read by
-  enumeration and fetched by the crawl; an owned-tier count taken before and after declaring one
-  repository in a large member organization moves by that repository alone.
+- A member's administered repository is offered only in an organization gh reports a member role
+  for, is saved as an include list there, and is read by enumeration and fetched by the crawl; an
+  owned-tier count taken before and after declaring one repository in a large member organization
+  moves by that repository alone. Nobody has measured this on the crawl, which declares only two
+  organizations its operator administers.

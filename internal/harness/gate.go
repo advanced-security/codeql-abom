@@ -106,6 +106,10 @@ type Gate struct {
 
 	// keepSpend keeps what each model call cost.
 	keepSpend func(Spend) error
+	// keepModel records the model a session ran on, where the runtime offered another than asked.
+	keepModel func(string) error
+	// ranModels are the models the session's calls ran on, in the order each first ran.
+	ranModels []string
 
 	// call and request decide, as fields so a test can break them.
 	call       func(Bounds, string, any) Verdict
@@ -190,6 +194,9 @@ func (g *Gate) PreToolUse(in copilot.PreToolUseHookInput, _ copilot.HookInvocati
 	v := decide(func() Verdict { return g.call(b, in.ToolName, in.ToolArgs) })
 	if err := g.keep(e, v); err != nil {
 		return deny(unrecorded(err)), nil
+	}
+	if v.Allowed && v.Args != nil {
+		return &copilot.PreToolUseHookOutput{ModifiedArgs: v.Args, AdditionalContext: v.Reason}, nil
 	}
 	if v.Allowed {
 		return nil, nil
@@ -426,7 +433,44 @@ func (g *Gate) KeepSpend(keep func(Spend) error) {
 	g.keepSpend = keep
 }
 
+// KeepModel records the model a session runs on when it is not the one configured.
+func (g *Gate) KeepModel(keep func(string) error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.keepModel = keep
+}
+
+func (g *Gate) ranOn(model string) error {
+	if g == nil {
+		return nil
+	}
+	g.mu.Lock()
+	keep := g.keepModel
+	g.mu.Unlock()
+	if keep == nil {
+		return nil
+	}
+	return keep(model)
+}
+
+// ranCall records a model a call ran on the first time it appears: auto is the runtime's choice, so
+// only its calls say which models the session actually ran.
+func (g *Gate) ranCall(model string) {
+	g.mu.Lock()
+	if model == "" || slices.Contains(g.ranModels, model) {
+		g.mu.Unlock()
+		return
+	}
+	g.ranModels = append(g.ranModels, model)
+	ran := strings.Join(g.ranModels, ", ")
+	g.mu.Unlock()
+	if err := g.ranOn(ran); err != nil {
+		_ = g.fail(fmt.Errorf("recording the session's model failed"))
+	}
+}
+
 func (g *Gate) spent(d *copilot.AssistantUsageData) {
+	g.ranCall(d.Model)
 	g.mu.Lock()
 	keep := g.keepSpend
 	g.mu.Unlock()
@@ -573,7 +617,17 @@ func (b Bounds) subject(tool string, args any) string {
 	switch {
 	case tool == "view" || tool == "create" || tool == "edit":
 		return pick("path")
-	case tool == "glob" || tool == "grep":
+	case tool == "apply_patch":
+		var named []string
+		for _, line := range strings.Split(patchText(args), "\n") {
+			for _, op := range []string{"*** Add File: ", "*** Update File: ", "*** Delete File: ", "*** Move to: "} {
+				if path, ok := strings.CutPrefix(strings.TrimRight(line, "\r"), op); ok {
+					named = append(named, b.name(strings.TrimSpace(path)))
+				}
+			}
+		}
+		return strings.Join(named, ", ")
+	case tool == "glob" || tool == "grep" || tool == "rg":
 		pattern, _ := fields["pattern"].(string)
 		return strings.TrimSpace(pick("paths") + " " + pattern)
 	case tool == "bash":
@@ -583,7 +637,7 @@ func (b Bounds) subject(tool string, args any) string {
 		if name, ok := fields["queryName"].(string); ok {
 			return name + " on " + pick("database")
 		}
-		return pick("tests", "query", "database", "basePath", "workspace_uri")
+		return pick("tests", "query", "database", "basePath", "file_path", "workspace_uri")
 	}
 	return ""
 }

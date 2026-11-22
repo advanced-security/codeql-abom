@@ -58,10 +58,15 @@ func failedFirstOver(t *testing.T, root, id string) store.QueryTest {
 	if err != nil {
 		t.Fatal(err)
 	}
+	marked, err := MarkedFixtures(root, q.Tests)
+	if err != nil {
+		t.Fatal(err)
+	}
 	one, none := int64(1), int64(0)
 	return store.QueryTest{QueryID: id, QueryVersion: "the-stub", Total: 1, Failed: 1,
-		FailureStage: "RESULT", FixturesDigest: fixtures, Missing: &one, Unexpected: &none,
-		RanAt: "2026-09-24T09:00:00Z", Detail: "0 of 1 passed; 1 expected result missing, nothing unexpected"}
+		FailureStage: "RESULT", FixturesDigest: fixtures, MarkedFixtures: marked, Missing: &one,
+		Unexpected: &none, RanAt: "2026-09-24T09:00:00Z",
+		Detail: "0 of 1 passed; 1 expected result missing, nothing unexpected"}
 }
 
 func mustVersion(t *testing.T, root, id string) (Query, string) {
@@ -282,6 +287,57 @@ func TestAPassIsEvidenceOnlyOnceTheSameFixturesWereSeenFailingForAMarkedResult(t
 		{"failed first on a marked result", []store.QueryTest{first}, Passing, "the-stub failed first"},
 	} {
 		got := progressOf(t, root, "acme/a", append(c.before, pass)...)["tests"]
+		if got.State != c.want || !strings.Contains(got.Detail, c.says) {
+			t.Errorf("%s: %+v, want %s saying %q", c.name, got, c.want, c.says)
+		}
+	}
+}
+
+// A failure on missing results shows the tests catch a query that misses those marks, and they
+// still do however many fixtures are added beside them. A live session added one compliant
+// fixture after its tests passed, was told nothing showed they could fail, and broke its own
+// query to show it. Changing or removing a fixture the failure was seen on still needs another.
+func TestAFailureOnMarksHoldsWhileEveryMarkedFixtureItRanOverIsUnchanged(t *testing.T) {
+	const marked = "on: push\njobs:\n  a: # $ Alert\n    runs-on: x\n"
+	for _, c := range []struct {
+		name   string
+		change func(root string)
+		only   bool
+		want   State
+		says   string
+	}{
+		{"nothing changed", func(string) {}, false, Passing, "failed first"},
+		{"a compliant fixture added", func(root string) {
+			write(t, root, "test/A/.github/workflows/ok.yml", "on: push\n")
+		}, false, Passing, "failed first"},
+		{"a marked fixture added", func(root string) {
+			write(t, root, "test/A/.github/workflows/b.yml", marked)
+		}, false, Passing, "failed first"},
+		{"the marked fixture it missed changed", func(root string) {
+			write(t, root, "test/A/.github/workflows/ci.yml", marked+"  b: # $ Alert\n    runs-on: y\n")
+		}, false, Warning, "changed since"},
+		{"the marked fixture it missed removed", func(root string) {
+			write(t, root, "test/A/.github/workflows/b.yml", marked)
+			if err := os.Remove(filepath.Join(root, "test/A/.github/workflows/ci.yml")); err != nil {
+				t.Fatal(err)
+			}
+		}, false, Warning, "changed since"},
+		{"failed only on an unexpected result, then a fixture added", func(root string) {
+			write(t, root, "test/A/.github/workflows/ok.yml", "on: push\n")
+		}, true, Warning, "changed since"},
+	} {
+		root := workspace(t, map[string]string{"A": "acme/a"})
+		write(t, root, "test/A/.github/workflows/ci.yml", marked)
+		first := failedFirstOver(t, root, "acme/a")
+		if c.only {
+			none, one := int64(0), int64(1)
+			first.Missing, first.Unexpected = &none, &one
+		}
+		c.change(root)
+		q, digest := mustVersion(t, root, "acme/a")
+		pass := store.QueryTest{QueryID: "acme/a", QueryVersion: q.Version, Passed: true, Total: 1,
+			TestDigest: digest, Detail: "1 of 1 passed", RanAt: "2026-09-24T10:00:00Z"}
+		got := progressOf(t, root, "acme/a", first, pass)["tests"]
 		if got.State != c.want || !strings.Contains(got.Detail, c.says) {
 			t.Errorf("%s: %+v, want %s saying %q", c.name, got, c.want, c.says)
 		}

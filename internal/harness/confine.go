@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -47,6 +48,9 @@ type Verdict struct {
 	Reason string
 	// Step is the authoring step the call works toward, empty when it is none.
 	Step string
+	// Args replaces an allowed call's arguments where ABOM corrected a form the server would not
+	// take but whose meaning was plain; Reason then says what was corrected.
+	Args map[string]any
 }
 
 func refuse(format string, a ...any) Verdict { return Verdict{Reason: fmt.Sprintf(format, a...)} }
@@ -320,7 +324,7 @@ func (b Bounds) Call(tool string, args any) Verdict {
 				"neither be absolute nor climb out with ..")
 		}
 		return b.readCall(fields, "paths")
-	case "grep":
+	case "grep", "rg":
 		return b.readCall(fields, "paths")
 	case "create", "edit":
 		path, _ := fields["path"].(string)
@@ -329,6 +333,8 @@ func (b Bounds) Call(tool string, args any) Verdict {
 			return refuse("%v", err)
 		}
 		return Verdict{Allowed: true, Step: step}
+	case "apply_patch":
+		return b.patchCall(args)
 	case ToolCatalog, ToolResults, ToolSource, ToolDraft:
 		return Verdict{Allowed: true}
 	case ToolTarget:
@@ -340,21 +346,91 @@ func (b Bounds) Call(tool string, args any) Verdict {
 		return b.qlmcp(name, fields)
 	}
 	return refuse("%s is not part of the authoring loop, which has no shell and works with view, "+
-		"glob, grep, create, edit, ql-mcp's test and query tools, and ABOM's %s and %s",
+		"glob, grep or rg, create and edit or apply_patch, ql-mcp's test and query tools, and ABOM's %s and %s",
 		tool, ToolCatalog, ToolTarget)
 }
 
+// patchCall judges apply_patch, the one tool a GPT model writes with, by every file the patch names:
+// each is written, so each must be one a session may write, as create and edit's one path must be.
+func (b Bounds) patchCall(args any) Verdict {
+	text := patchText(args)
+	if text == "" {
+		return refuse("apply_patch carries no patch")
+	}
+	step, named := "", 0
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.HasPrefix(line, "*** Delete File: ") || strings.HasPrefix(line, "*** Move to: ") {
+			return refuse("a session adds and changes files; it neither deletes nor moves them")
+		}
+		for _, op := range []string{"*** Add File: ", "*** Update File: "} {
+			path, ok := strings.CutPrefix(line, op)
+			if !ok {
+				continue
+			}
+			s, err := b.writable(strings.TrimSpace(path))
+			if err != nil {
+				return refuse("%v", err)
+			}
+			if named++; step == "" {
+				step = s
+			}
+		}
+	}
+	if named == 0 {
+		return refuse("the patch names no file to add or update")
+	}
+	return Verdict{Allowed: true, Step: step}
+}
+
+// patchText is apply_patch's patch, which the CLI passes bare or as the one string field it declares none of.
+func patchText(args any) string {
+	switch v := args.(type) {
+	case string:
+		return v
+	case map[string]any:
+		for _, key := range []string{"input", "patch"} {
+			if s, ok := v[key].(string); ok {
+				return s
+			}
+		}
+		if len(v) == 1 {
+			for _, value := range v {
+				s, _ := value.(string)
+				return s
+			}
+		}
+	}
+	return ""
+}
+
 func (b Bounds) readCall(fields map[string]any, key string) Verdict {
-	path := b.workspace
-	if v, ok := fields[key]; ok {
-		s, ok := v.(string)
-		if !ok {
+	paths := []string{b.workspace}
+	switch v := fields[key].(type) {
+	case nil:
+	case string:
+		paths = []string{v}
+	case []any:
+		if key != "paths" {
 			return refuse("%s names one path", key)
 		}
-		path = s
+		if len(v) > 0 {
+			paths = paths[:0]
+		}
+		for _, item := range v {
+			s, ok := item.(string)
+			if !ok {
+				return refuse("%s names paths", key)
+			}
+			paths = append(paths, s)
+		}
+	default:
+		return refuse("%s names one path or a list of them", key)
 	}
-	if err := b.readable(path); err != nil {
-		return refuse("%v", err)
+	for _, path := range paths {
+		if err := b.readable(path); err != nil {
+			return refuse("%v", err)
+		}
 	}
 	return Verdict{Allowed: true}
 }
@@ -391,12 +467,32 @@ var loopTools = map[string]loopTool{
 		"query": packFile, "format": text, "verbose": boolean,
 	}},
 	"codeql_lsp_diagnostics": {required: []string{"ql_code"}, args: map[string]check{
-		"ql_code": text, "log_level": text, "workspace_uri": packURI,
+		"ql_code": text, "log_level": text, "workspace_uri": packDir,
 	}},
+	"codeql_lsp_definition":       languageServer(true),
+	"codeql_lsp_references":       languageServer(true),
+	"codeql_lsp_completion":       languageServer(true),
+	"codeql_lsp_document_symbols": languageServer(false),
+}
+
+// languageServer is a ql-mcp tool that asks the CodeQL language server about one file, at a
+// position where at is set. The file is anything a session reads; its workspace is the pack.
+func languageServer(at bool) loopTool {
+	t := loopTool{required: []string{"file_path"}, args: map[string]check{
+		"file_path": readableFile, "file_content": text, "workspace_uri": packDir,
+	}}
+	if at {
+		t.required = append(t.required, "line", "character")
+		t.args["line"], t.args["character"] = number, number
+	} else {
+		t.args["names_only"] = boolean
+	}
+	return t
 }
 
 // unbound are the loop tools that read, so they help decide a target before there is one.
-var unbound = []string{"codeql_resolve_metadata", "codeql_lsp_diagnostics"}
+var unbound = []string{"codeql_resolve_metadata", "codeql_lsp_diagnostics", "codeql_lsp_definition",
+	"codeql_lsp_references", "codeql_lsp_completion", "codeql_lsp_document_symbols"}
 
 // loopNames are the ql-mcp tools a session is offered, in a stable order.
 func loopNames() []string {
@@ -428,6 +524,7 @@ var dangerous = map[string]string{
 	"queryPack":      "it runs a pack it names",
 	"external":       "it reads files it names",
 	"language":       "ql-mcp passes it to codeql test extract, which rejects it; the test pack names its extractor",
+	"search_path":    "it resolves libraries from wherever it names, not the versions the pack locks",
 }
 
 func (b Bounds) qlmcp(name string, fields map[string]any) Verdict {
@@ -441,10 +538,75 @@ func (b Bounds) qlmcp(name string, fields map[string]any) Verdict {
 	if !b.bound() && !slices.Contains(unbound, name) {
 		return refuse("decide the query this request is about with %s before running %s", ToolTarget, name)
 	}
+	fields, fixed := b.correct(name, fields)
 	if v, ok := b.validQlmcpArgs(name, tool, fields); !ok {
 		return v
 	}
-	return qlmcpVerdict(name, tool, fields)
+	v := qlmcpVerdict(name, tool, fields)
+	if v.Allowed && len(fixed) > 0 {
+		v.Args = fields
+		v.Reason = "ABOM corrected the call, since its meaning was plain: " + strings.Join(fixed, "; ") +
+			". Pass them this way from now on."
+	}
+	return v
+}
+
+// correct rewrites the forms of a ql-mcp call whose meaning is plain but which the server would not
+// take, returning a copy and what it changed. Each was a refused call and a retry in a live session.
+// Anything a form could mean more than one thing by is left for validation to refuse.
+func (b Bounds) correct(name string, fields map[string]any) (map[string]any, []string) {
+	out := maps.Clone(fields)
+	if out == nil {
+		out = map[string]any{}
+	}
+	var fixed []string
+	if s, ok := out["database"].(string); ok && b.bound() {
+		if p, err := b.resolve(s); err == nil && p != b.database() &&
+			(within(b.database(), p) || p == b.tests) {
+			out["database"] = b.database()
+			fixed = append(fixed, "database names the test database itself, "+b.rel(b.database()))
+		}
+	}
+	switch name {
+	case "codeql_query_run":
+		if list, ok := out["sourceFiles"].([]any); ok {
+			if names, ok := strings_(list); ok {
+				out["sourceFiles"] = strings.Join(names, ",")
+				fixed = append(fixed, "sourceFiles is one string of file names separated by commas")
+			}
+		}
+		if _, named := out["queryName"]; named && out["queryLanguage"] == nil {
+			out["queryLanguage"] = "actions"
+			fixed = append(fixed, "a tool query takes queryLanguage actions, the pack's only language")
+		}
+	case "codeql_query_compile":
+		if _, ok := out["query"]; !ok && b.bound() {
+			out["query"] = b.query
+			fixed = append(fixed, "codeql_query_compile compiles the target, "+b.rel(b.query))
+		}
+	case "codeql_test_run", "codeql_test_extract":
+		if s, ok := out["tests"].(string); ok {
+			out["tests"] = []any{s}
+			fixed = append(fixed, "tests is a list of paths")
+		}
+	}
+	if len(fixed) == 0 {
+		return fields, nil
+	}
+	return out, fixed
+}
+
+// strings_ is list as strings, where every element is one.
+func strings_(list []any) ([]string, bool) {
+	out := make([]string, 0, len(list))
+	for _, item := range list {
+		s, ok := item.(string)
+		if !ok {
+			return nil, false
+		}
+		out = append(out, s)
+	}
+	return out, len(out) > 0
 }
 
 func (b Bounds) validQlmcpArgs(name string, tool loopTool, fields map[string]any) (Verdict, bool) {
@@ -471,6 +633,11 @@ func (b Bounds) validQlmcpArgs(name string, tool loopTool, fields map[string]any
 		if err := judge(b, fields[key]); err != nil {
 			return refuse("%s %s: %v", name, key, err), false
 		}
+	}
+	if _, ok := fields["database"]; !ok && name == "codeql_query_run" {
+		return refuse("codeql_query_run names no database, and which one it reads is never assumed: name "+
+			"it. To run the query against its test database, call %s, or codeql_test_run with its tests",
+			ToolTest), false
 	}
 	for _, key := range tool.required {
 		if _, ok := fields[key]; !ok {
@@ -559,16 +726,29 @@ func packFile(b Bounds, v any) error {
 	return nil
 }
 
-func packURI(b Bounds, v any) error {
+// packDir is the pack, or a directory in it, as ql-mcp documents it: a path, relative to the pack
+// or absolute, which ql-mcp makes a URI itself. A file URI is judged by its path.
+func packDir(b Bounds, v any) error {
 	s, ok := v.(string)
 	if !ok {
-		return errors.New("is a file URI")
+		return errors.New("is the pack's directory")
 	}
-	u, err := url.Parse(s)
-	if err != nil || u.Scheme != "file" {
-		return errors.New("is a file URI")
+	if strings.Contains(s, "://") {
+		u, err := url.Parse(s)
+		if err != nil || u.Scheme != "file" {
+			return errors.New("is the pack's directory, as a path or a file URI")
+		}
+		s = u.Path
 	}
-	return packFile(b, u.Path)
+	return packFile(b, s)
+}
+
+func readableFile(b Bounds, v any) error {
+	s, ok := v.(string)
+	if !ok {
+		return errors.New("is a path")
+	}
+	return b.readable(s)
 }
 
 func toolQuery(_ Bounds, v any) error {

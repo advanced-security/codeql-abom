@@ -36,7 +36,7 @@
 
     @if (_draft is not null)
     {
-        <QueryRequestForm Request="@_draft" List="@_list" Catalog="@_catalog" Login="@Accounts.Identity.Login"
+        <QueryRequestForm Request="@_draft" List="@_list" Catalog="@_catalog" Login="@Accounts.Identity.Actor"
                           OnSaved="Saved" OnDiscard="Discard" />
     }
 
@@ -426,7 +426,7 @@
         _busy = true;
         try
         {
-            var (_, refusal) = await Api.StartAuthoringSessionAsync(id, Accounts.Identity.Login);
+            var (_, refusal) = await Api.StartAuthoringSessionAsync(id, Accounts.Identity.Actor);
             _refusal = refusal;
             if (refusal is null)
             {
