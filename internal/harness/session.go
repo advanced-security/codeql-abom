@@ -2,8 +2,6 @@ package harness
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
@@ -60,6 +58,10 @@ type Sessions struct {
 	live    map[int64]*live
 	// drafting is the sessions drafting from a run, by run.
 	drafting map[int64]*live
+
+	outsideMu sync.Mutex
+	// outside is where session state goes while WorkDir is inside the pack, made on first use.
+	outside string
 }
 
 // SetAgent changes what runs the next session; one already under way keeps its own.
@@ -628,8 +630,9 @@ func (s *Sessions) session(request, id int64) (store.AuthoringSession, error) {
 
 // sessionDir is where session state is kept: under --work-dir, which the operator names relative to
 // where the server started, never to the pack. Where that is inside the pack, a session could read
-// its own state there, so it is kept in a directory of ABOM's own outside the pack instead — the
-// same one on every start, keyed by the pack.
+// its own state there, so it is kept outside the pack instead, in a private directory made once for
+// the server's run, as its default scratch is. Never a fixed name under a directory the environment
+// names: a link planted ahead of it would carry every write and every cleanup somewhere else.
 func (s *Sessions) sessionDir() (string, error) {
 	if s.WorkDir == "" {
 		return "", errors.New("no directory is configured for session state")
@@ -645,12 +648,16 @@ func (s *Sessions) sessionDir() (string, error) {
 	if real, err := b.resolve(dir); err != nil || !within(b.Workspace(), real) {
 		return dir, err
 	}
-	cache, err := os.UserCacheDir()
-	if err != nil {
-		cache = os.TempDir()
+	s.outsideMu.Lock()
+	defer s.outsideMu.Unlock()
+	if s.outside == "" {
+		made, err := os.MkdirTemp("", "abom-authoring-*")
+		if err != nil {
+			return "", err
+		}
+		s.outside = made
 	}
-	sum := sha256.Sum256([]byte(b.Workspace()))
-	return filepath.Join(cache, "codeql-abom", "authoring", hex.EncodeToString(sum[:6])), nil
+	return s.outside, nil
 }
 
 // bounds are the pack and libraries to read, and the operator's target to write when they chose one.
@@ -1033,16 +1040,14 @@ func (s *Sessions) taken(id, name string) (string, error) {
 // libraryText names the library sources a query is written against: each pack the pack's lock
 // resolves, where it is on disk, codeql/actions-all first. The package cache holds every language
 // at every version, so it is named only while nothing is locked; a search of all of it timed out.
+// The lock is a file in the pack, so each name in it is looked up through a root at the cache: one
+// that climbs out of it names nothing.
 func libraryText(workspace string, roots []string) string {
 	packs, _ := authoring.Locked(filepath.Join(workspace, "codeql-pack.lock.yml"))
 	var found []string
 	for _, p := range packs {
-		for _, root := range roots {
-			dir := filepath.Join(root, filepath.FromSlash(p.Name), p.Version)
-			if info, err := os.Stat(dir); err == nil && info.IsDir() {
-				found = append(found, fmt.Sprintf("%s %s at %s", p.Name, p.Version, dir))
-				break
-			}
+		if dir := lockedLibrary(roots, filepath.Join(filepath.FromSlash(p.Name), p.Version)); dir != "" {
+			found = append(found, fmt.Sprintf("%s %s at %s", p.Name, p.Version, dir))
 		}
 	}
 	if len(found) == 0 || !strings.HasPrefix(found[0], "codeql/actions-all ") {
@@ -1053,6 +1058,22 @@ func libraryText(workspace string, roots []string) string {
 	}
 	return found[0] + ", where the Actions classes are, and the packs it depends on: " +
 		strings.Join(found[1:], ", ")
+}
+
+// lockedLibrary is the first root holding rel as a directory, joined to it; empty where none does.
+func lockedLibrary(roots []string, rel string) string {
+	for _, root := range roots {
+		r, err := os.OpenRoot(root)
+		if err != nil {
+			continue
+		}
+		info, err := r.Stat(rel)
+		_ = r.Close()
+		if err == nil && info.IsDir() {
+			return filepath.Join(root, rel)
+		}
+	}
+	return ""
 }
 
 // rules are appended to the system message: what the session is about, what it may touch, and

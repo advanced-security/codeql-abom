@@ -363,6 +363,86 @@ func TestWithNoCopilotCLINamedTheOneVSCodeInstalledIsUsed(t *testing.T) {
 	}
 }
 
+// The CLI VS Code installed runs as the server, so it is held to what a path the operator names is
+// held to: nothing another account could change. It is found in a directory the environment names,
+// and a link there is followed only as far as that directory goes.
+func TestVSCodesCLIIsUsedOnlyWhereNoOtherAccountCouldChangeIt(t *testing.T) {
+	link := func(t *testing.T, cli, target string) {
+		t.Helper()
+		if err := os.Remove(cli); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, cli); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, c := range map[string]struct {
+		arrange func(t *testing.T, p place, cli string)
+		used    bool
+	}{
+		"as installed": {func(*testing.T, place, string) {}, true},
+		"in a directory anyone can write": {func(t *testing.T, _ place, cli string) {
+			if err := os.Chmod(filepath.Dir(cli), 0o777); err != nil {
+				t.Fatal(err)
+			}
+		}, false},
+		"a file anyone can write": {func(t *testing.T, _ place, cli string) {
+			if err := os.Chmod(cli, 0o777); err != nil {
+				t.Fatal(err)
+			}
+		}, false},
+		"a link to a file beside it": {func(t *testing.T, _ place, cli string) {
+			if err := os.WriteFile(filepath.Join(filepath.Dir(cli), "copilot-1.0.88"),
+				[]byte("#!/bin/sh\nprintf '1.0.88\\n'\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			link(t, cli, "copilot-1.0.88")
+		}, true},
+		"a link to a file anyone can write": {func(t *testing.T, _ place, cli string) {
+			loose := filepath.Join(filepath.Dir(cli), "copilot-1.0.88")
+			if err := os.WriteFile(loose, []byte("#!/bin/sh\nprintf '1.0.88\\n'\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(loose, 0o777); err != nil {
+				t.Fatal(err)
+			}
+			link(t, cli, "copilot-1.0.88")
+		}, false},
+		"a link out of the configuration directory": {func(t *testing.T, p place, cli string) {
+			elsewhere := p.at(t, "elsewhere", "copilot", "1.0.88")
+			rel, err := filepath.Rel(filepath.Dir(cli), elsewhere)
+			if err != nil {
+				t.Fatal(err)
+			}
+			link(t, cli, rel)
+		}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := newPlace(t)
+			home := filepath.Join(p.dir, "home")
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+			config, err := os.UserConfigDir()
+			if err != nil {
+				t.Fatal(err)
+			}
+			cli := p.at(t, filepath.Join(strings.TrimPrefix(config, p.dir+string(filepath.Separator)),
+				"Code", "User", "globalStorage", "github.copilot-chat", "copilotCli"), "copilot", "1.0.88")
+			c.arrange(t, p, cli)
+			tc := p.chain(t)
+			tc.Copilot = Tool{}
+			tc.Timeout = 10 * time.Second
+
+			if _, err := tc.Load(); err != nil {
+				t.Fatal(err)
+			}
+			if used := tc.Copilot.Source == SourceVSCode; used != c.used {
+				t.Errorf("VS Code's CLI used: %v, want %v (Copilot is %+v)", used, c.used, tc.Copilot)
+			}
+		})
+	}
+}
+
 // A Demo fixes its tools at startup and reads its credential from its own setup, so readiness must
 // neither offer a path it refuses to save nor send the user to gh, which a Demo never asks.
 func TestAFixedToolchainOffersNoPathAndDescribesItsOwnCredential(t *testing.T) {

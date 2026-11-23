@@ -241,15 +241,21 @@ func TestASessionsRecordNamesTheModelThatRan(t *testing.T) {
 	}
 }
 
-// A --work-dir inside the pack is not the operator's problem: session state goes to a directory of
-// ABOM's own outside the pack, the same one each time, rather than refusing to start the session.
+// A --work-dir inside the pack is not the operator's problem: session state goes to a private
+// directory outside the pack, made once for the server's run as its default scratch is, rather than
+// refusing to start the session. It is never a fixed name under a directory the environment names,
+// where a link planted ahead of it would carry every write and the cleanup somewhere else.
 func TestSessionStateInsideThePackIsKeptOutsideItInstead(t *testing.T) {
 	var homes []string
 	b := newBench(t, stand(func(_ context.Context, s Setup) (string, error) {
 		homes = append(homes, s.Home)
 		return "done", nil
 	}))
-	t.Setenv("HOME", filepath.Join(b.place.root, "user"))
+	tmp := filepath.Join(b.place.root, "tmp")
+	if err := os.MkdirAll(tmp, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", tmp)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(b.place.root, "user", ".cache"))
 	b.sessions.WorkDir = filepath.Join(b.place.ws, "work", "authoring")
 	b.query(t, "SelfHostedRunner", "acme/self-hosted-runner", true)
@@ -267,7 +273,14 @@ func TestSessionStateInsideThePackIsKeptOutsideItInstead(t *testing.T) {
 		}
 	}
 	if len(homes) != 2 || filepath.Dir(filepath.Dir(homes[0])) != filepath.Dir(filepath.Dir(homes[1])) {
-		t.Errorf("two sessions kept state in %v, want one directory each start", homes)
+		t.Fatalf("two sessions kept state in %v, want one directory each start", homes)
+	}
+	state := filepath.Dir(filepath.Dir(homes[0]))
+	if !within(tmp, state) {
+		t.Errorf("session state is kept in %s, want a directory made under %s", state, tmp)
+	}
+	if info, err := os.Stat(state); err != nil || info.Mode().Perm() != 0o700 {
+		t.Errorf("session state directory %s: %v, %v; want one only this account can open", state, info, err)
 	}
 }
 
@@ -330,6 +343,35 @@ func TestTheRulesNameTheLibrariesThePackCompilesAgainst(t *testing.T) {
 	}
 	if strings.Contains(seen.Rules, "9.9.9") {
 		t.Errorf("the rules name a locked library that is not on disk:\n%s", seen.Rules)
+	}
+}
+
+// A lock is a file in the pack, which a session writes beside; a name in it that climbs out of the
+// package cache must not lead the rules to a directory elsewhere on the machine.
+func TestTheRulesNameNoLibraryOutsideThePackageCache(t *testing.T) {
+	var seen Setup
+	b := newBench(t, stand(func(_ context.Context, s Setup) (string, error) {
+		seen = s
+		return "done", nil
+	}))
+	packages := filepath.Join(b.place.codeql, "packages")
+	outside := filepath.Join(b.place.codeql, "outside", "1.0.0")
+	for _, dir := range []string{filepath.Join(packages, "codeql", "actions-all", "0.6.2"), outside} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lock := "---\nlockVersion: 1.0.0\ndependencies:\n  codeql/actions-all:\n    version: 0.6.2\n" +
+		"  codeql/../../outside:\n    version: 1.0.0\ncompiled: false\n"
+	if err := os.WriteFile(filepath.Join(b.place.ws, "codeql-pack.lock.yml"), []byte(lock), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b.finish(t, b.request(t, ""), "operator")
+	if !strings.Contains(seen.Rules, "codeql/actions-all 0.6.2 at ") {
+		t.Fatalf("the rules do not name the locked library:\n%s", seen.Rules)
+	}
+	if strings.Contains(seen.Rules, outside) || strings.Contains(seen.Rules, "outside 1.0.0") {
+		t.Errorf("the rules name a directory outside the package cache:\n%s", seen.Rules)
 	}
 }
 
