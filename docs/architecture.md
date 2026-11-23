@@ -334,9 +334,10 @@ finding that should not have fired, or a repository where nothing fired that sho
 checked against the run and the query when it is filed.
 
 **A linked example is read once, at save, at a commit.** Only a GitHub blob URL is accepted,
-optionally naming lines; ABOM never fetches any other address. Its ref resolves to a commit — a
-branch, a tag, or a commit named in full or by its first seven characters or more, as GitHub's blob
-view links one — the file is read at that commit, and the text a client sends for a link is never trusted. A request
+optionally naming lines; ABOM never fetches any other address. Its ref may name a branch, a tag,
+or a commit by its full SHA or a unique prefix of at least seven hex digits. Hex digits are
+case-insensitive; branch and tag names retain their case and take precedence over a commit prefix.
+The file is read at that commit, and the text a client sends for a link is never trusted. A request
 that any session names is never deleted, because the timeline is not rewritten; it is resubmitted
 as a copy and declined. A closed request keeps the progress it was closed on, so a later request
 for the same query does not repaint it.
@@ -653,7 +654,9 @@ An owned repository whose tree holds no workflow and no action manifest, or that
 analyzed. A workflow and an action manifest are what the actions extractor indexes by default — a
 YAML file directly under `.github/workflows`, one under `.github/reusable_workflows`, an
 `action.yml` anywhere — so a `.github` holding only secret scanning, code scanning or Dependabot
-configuration is nothing to analyze rather than a build that exits 32. No run is recorded for it, because CodeQL builds no database from no Actions source, and
+configuration is nothing to analyze rather than a build that exits 32. If listing the checkout
+fails, the error is retryable: an incomplete listing cannot rule out Actions content.
+No run is recorded for a tree with no Actions source, because CodeQL builds no database from it, and
 a push to it is compared with that commit like any other. A dependency in the same state stays
 `unavailable`, since what a workflow names there cannot run.
 

@@ -65,9 +65,13 @@ func refServer(t *testing.T, world map[string]fakeRepo, cost int) (*Client, *ato
 			var fields []string
 			for _, f := range fieldLine.FindAllStringSubmatch(line[len(m[0]):], -1) {
 				if f[3] != "" {
-					prefix, found := req.Variables[f[3]], ""
+					prefix, found := strings.ToLower(req.Variables[f[3]]), ""
 					for _, c := range repo.commits {
 						if len(prefix) >= 7 && strings.HasPrefix(c, prefix) {
+							if found != "" {
+								found = "null"
+								break
+							}
 							found = commitObject(c)
 						}
 					}
@@ -212,14 +216,15 @@ func TestAReferenceGitHubLookedForAndDidNotFindIsMissingNotMerelyUnread(t *testi
 func TestAnAbbreviatedCommitResolvesWhereTheQuestionAsksForOne(t *testing.T) {
 	c, queries := refServer(t, map[string]fakeRepo{
 		"o/r": {head: commitC, commits: []string{commitB},
-			refs: map[string]string{"refs/heads/bbbbbbbb1": commitObject(commitA)}},
+			refs: map[string]string{"refs/heads/BBBBBBBB": commitObject(commitA)}},
 	}, 1)
 	batch, err := c.ResolveRefs(context.Background(), []RefQuestion{
 		{Owner: "o", Repo: "r", Ref: "bbbbbbbb", OrCommit: true},
 		{Owner: "o", Repo: "r", Ref: "bbbbbbbb"},
-		{Owner: "o", Repo: "r", Ref: "bbbbbbbb1", OrCommit: true},
+		{Owner: "o", Repo: "r", Ref: "BBBBBBBB", OrCommit: true},
 		{Owner: "o", Repo: "r", Ref: "dddddddd", OrCommit: true},
 		{Owner: "o", Repo: "r", Ref: "bbbb", OrCommit: true},
+		{Owner: "o", Repo: "r", Ref: "BbBbBbBb", OrCommit: true},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -227,13 +232,33 @@ func TestAnAbbreviatedCommitResolvesWhereTheQuestionAsksForOne(t *testing.T) {
 	for i, want := range []struct {
 		commit  string
 		missing bool
-	}{{commitB, false}, {"", true}, {commitA, false}, {"", true}, {"", true}} {
+	}{{commitB, false}, {"", true}, {commitA, false}, {"", true}, {"", true}, {commitB, false}} {
 		if a := batch.Answers[i]; a.Commit != want.commit || a.Missing != want.missing {
 			t.Errorf("question %d answered %+v, want commit %q missing %v", i, a, want.commit, want.missing)
 		}
 	}
 	if n := queries.Load(); n != 1 {
 		t.Errorf("%d queries, want one for the batch", n)
+	}
+}
+
+// A link with an ambiguous prefix cannot identify which commit supplied the example.
+func TestAnAmbiguousCommitPrefixDoesNotResolve(t *testing.T) {
+	c, _ := refServer(t, map[string]fakeRepo{
+		"o/r": {commits: []string{commitA, "aaaaaaa" + commitB[7:]}},
+	}, 1)
+	batch, err := c.ResolveRefs(context.Background(), []RefQuestion{
+		{Owner: "o", Repo: "r", Ref: "aaaaaaa", OrCommit: true},
+		{Owner: "o", Repo: "r", Ref: "aaaaaaaa", OrCommit: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := batch.Answers[0]; a.Commit != "" || a.Unread == "" {
+		t.Errorf("ambiguous prefix resolved: %+v", a)
+	}
+	if a := batch.Answers[1]; a.Commit != commitA {
+		t.Errorf("unique prefix answered %+v, want %s", a, commitA)
 	}
 }
 

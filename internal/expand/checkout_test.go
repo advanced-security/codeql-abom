@@ -168,6 +168,29 @@ func TestFetchReportsNothingToAnalyze(t *testing.T) {
 	}
 }
 
+// A checkout lost before it can be read isn't evidence the repository has no workflows.
+func TestFetchReportsAnUnreadableTreeAsRetryable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the git stand-in is a shell script")
+	}
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "git")
+	script := `#!/bin/sh
+if [ "$1" = rev-parse ]; then
+	mv ../work ../moved || exit 1
+	echo 0123456789abcdef0123456789abcdef01234567
+fi
+`
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c := &Checkout{Git: stub}
+	_, err := c.Fetch(context.Background(), filepath.Join(dir, "work"), "o", "r", "")
+	if !errors.Is(err, os.ErrNotExist) || IsUnavailable(err) {
+		t.Errorf("Fetch = %v, want a retryable error preserving the filesystem cause", err)
+	}
+}
+
 // Actions content is what the extractor indexes, not any file under .github: a repository holding
 // only secret scanning or code scanning configuration there made `codeql database create` exit 32,
 // "detected code written in GitHub Actions but could not process any of it", and read as a failure.

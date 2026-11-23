@@ -26,7 +26,7 @@ type RefQuestion struct {
 }
 
 // abbreviated is a commit as a link may name it: seven hex digits or more.
-var abbreviated = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
+var abbreviated = regexp.MustCompile(`^[0-9a-fA-F]{7,40}$`)
 
 // RefAnswer is the commit a reference pointed at when GitHub was asked.
 type RefAnswer struct {

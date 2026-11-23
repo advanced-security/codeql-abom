@@ -188,7 +188,11 @@ func (c *Checkout) Fetch(ctx context.Context, dest, owner, repo, ref string) (Tr
 	// The ref is recorded as asked for, not as "HEAD": a row for `v4` that reported HEAD could
 	// never be told apart from one analyzed at the default branch.
 	tree := Tree{Dir: dest, Ref: analyzedRef(ref), SHA: strings.TrimSpace(sha)}
-	if !hasActionsContent(dest) {
+	files, err := indexedByDefault(dest)
+	if err != nil {
+		return Tree{}, fmt.Errorf("listing actions content in %s: %w", repo, err)
+	}
+	if len(files) == 0 {
 		return Tree{}, &NothingToAnalyze{Tree: Tree{Ref: tree.Ref, SHA: tree.SHA},
 			Why: repo + " has no workflows or action manifest"}
 	}
@@ -248,14 +252,6 @@ func (c *Checkout) checkout(ctx context.Context, dest, repo, ref string) error {
 func unbornBranch(out string) bool {
 	return strings.Contains(out, "yet to be born") ||
 		strings.Contains(out, "does not have any commits yet")
-}
-
-// hasActionsContent reports whether the tree holds anything the actions extractor indexes by
-// default. Other YAML under .github — secret scanning, code scanning or Dependabot configuration —
-// is not, and building from it alone makes `codeql database create` exit 32 as if extraction failed.
-func hasActionsContent(dir string) bool {
-	files, _ := indexedByDefault(dir)
-	return len(files) > 0
 }
 
 func (c *Checkout) run(ctx context.Context, dir string, args ...string) (string, error) {
