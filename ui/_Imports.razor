@@ -1,3 +1,6 @@
+@* Stated, though it is the project's RootNamespace, because CodeQL generates components without
+   the project file: there they fell into ASP.Shared and every @using below failed to resolve. *@
+@namespace Abom.WebAssembly
 @using Microsoft.AspNetCore.Components.Routing
 @using Microsoft.AspNetCore.Components.Web
 @using Microsoft.AspNetCore.Components.Web.Virtualization
