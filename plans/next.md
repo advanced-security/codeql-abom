@@ -96,9 +96,9 @@ ownership by repository property, which the operator ranked ahead of them, is bu
    loop is built as far as `review`. A session home is deleted when the run ends; ql-mcp's test,
    query, metadata and language-server tools are offered behind a relay that hands it one call at a
    time, and its other tools are refused by name. A session already runs on the runtime's model
-   list, falling back to `auto` and recording what ran; the picker is left. Fifteen requests from
-   the zizmor gap analysis reached 7 of 7 through it, and asked for two things it lacks: lists in
-   data extensions, and fixtures checked as Actions rather than as YAML.
+   list, falling back to `auto` and recording what ran; the picker is left. Fifteen requests for
+   Actions checks CodeQL lacks reached 7 of 7 through it, and asked for two things the loop does
+   not have: lists in data extensions, and fixtures checked as Actions rather than as YAML.
 3. **[Practice safely in a startup-only Demo instance](tools/demo-mode.md)** — a marked Demo
    now serves fictional repositories from a loopback-only simulated GitHub, builds real CodeQL
    databases and results from them, and enables Copilot authoring only behind an egress allowlist;
