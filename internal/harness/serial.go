@@ -19,6 +19,10 @@ import (
 // command in flight is retried as a fresh process; one queued behind it is never answered, so two
 // calls made together waited out the client's timeout. One CodeQL evaluation at a time is also
 // what the machine-wide lock a session holds assumes.
+//
+// It returns when the server's output ends, on the first error either way, or when ctx ends. A read
+// from clientIn still under way then is not interrupted, since an io.Reader offers no way to: the
+// caller owns clientIn, and serialize-mcp exits once this returns.
 func Serialize(ctx context.Context, clientIn io.Reader, clientOut io.Writer, serverIn io.Writer,
 	serverOut io.Reader) error {
 	s := &serial{server: serverIn}

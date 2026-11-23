@@ -302,7 +302,8 @@ func (c *Copilot) config(s Setup) *copilot.SessionConfig {
 	}
 	var command string
 	var args []string
-	if line := append(slices.Clone(c.Serial), c.QLMCP...); len(c.QLMCP) > 0 {
+	if len(c.QLMCP) > 0 {
+		line := append(slices.Clone(c.Serial), c.QLMCP...)
 		command, args = line[0], line[1:]
 	}
 	cfg := &copilot.SessionConfig{
