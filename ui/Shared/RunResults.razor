@@ -59,11 +59,11 @@ else
             Run #@_run.RowId covers @Analyzed of @CountText.Of(_run.Members.Count, "repository", "repositories")@(Waiting > 0 ? $", with {Waiting} still to do" : "").
             @if (NothingToAnalyze.Count > 0)
             {
-                <span>@CountText.Number(NothingToAnalyze.Count) had nothing to analyze: @NamesText(NothingToAnalyze).</span>
+                <span>@(" ")@CountText.Number(NothingToAnalyze.Count) had nothing to analyze: @NamesText(NothingToAnalyze).</span>
             }
             @if (NotCovered.Count > 0)
             {
-                <span>Not covered: @NamesText(NotCovered) — show every repository to see why.</span>
+                <span>@(" ")Not covered: @NamesText(NotCovered) — show every repository to see why.</span>
             }
         </span>
         @if (_run.Held)

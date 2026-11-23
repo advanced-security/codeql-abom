@@ -14,7 +14,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -189,7 +188,11 @@ func (c *Checkout) Fetch(ctx context.Context, dest, owner, repo, ref string) (Tr
 	// The ref is recorded as asked for, not as "HEAD": a row for `v4` that reported HEAD could
 	// never be told apart from one analyzed at the default branch.
 	tree := Tree{Dir: dest, Ref: analyzedRef(ref), SHA: strings.TrimSpace(sha)}
-	if !hasActionsContent(dest) {
+	files, err := indexedByDefault(dest)
+	if err != nil {
+		return Tree{}, fmt.Errorf("listing actions content in %s: %w", repo, err)
+	}
+	if len(files) == 0 {
 		return Tree{}, &NothingToAnalyze{Tree: Tree{Ref: tree.Ref, SHA: tree.SHA},
 			Why: repo + " has no workflows or action manifest"}
 	}
@@ -238,7 +241,7 @@ func (c *Checkout) checkout(ctx context.Context, dest, repo, ref string) error {
 	if out, err := c.run(ctx, dest, "checkout"); err != nil {
 		if unbornBranch(out) {
 			return &NothingToAnalyze{Tree: Tree{Ref: analyzedRef(ref)},
-				Why: fmt.Sprintf("%s has no commit on its default branch: %s", repo, out)}
+				Why: repo + " has no commit on its default branch"}
 		}
 		return fmt.Errorf("checking out %s: %s", repo, out)
 	}
@@ -249,37 +252,6 @@ func (c *Checkout) checkout(ctx context.Context, dest, repo, ref string) error {
 func unbornBranch(out string) bool {
 	return strings.Contains(out, "yet to be born") ||
 		strings.Contains(out, "does not have any commits yet")
-}
-
-// hasActionsContent reports whether anything survived the sparse filter.
-func hasActionsContent(dir string) bool {
-	if _, err := os.Stat(filepath.Join(dir, ".github")); err == nil {
-		return true
-	}
-	found := false
-	// The walk's own error is deliberately discarded: an unreadable tree means nothing was
-	// found, which is exactly what the zero value says.
-	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			// An unreadable subtree is not actions content. Skipping it is the answer; abandoning
-			// the walk would report the rest of the tree as empty.
-			return nil //nolint:nilerr
-		}
-		if found {
-			return filepath.SkipAll
-		}
-		if d.IsDir() {
-			if d.Name() == ".git" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if d.Name() == "action.yml" || d.Name() == "action.yaml" {
-			found = true
-		}
-		return nil
-	})
-	return found
 }
 
 func (c *Checkout) run(ctx context.Context, dir string, args ...string) (string, error) {

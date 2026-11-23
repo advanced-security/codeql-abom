@@ -158,7 +158,9 @@ func pinned(link blobLink, e store.RequestExample) (string, string, string) {
 func (s *Server) resolveLink(ctx context.Context, link blobLink) (string, string, string, int, error) {
 	qs := make([]catalog.RefQuestion, len(link.rest)-1)
 	for i := range qs {
-		qs[i] = catalog.RefQuestion{Owner: link.owner, Repo: link.repo, Ref: strings.Join(link.rest[:i+1], "/")}
+		// A blob link names a commit by its first characters as readily as by all of them.
+		qs[i] = catalog.RefQuestion{Owner: link.owner, Repo: link.repo, Ref: strings.Join(link.rest[:i+1], "/"),
+			OrCommit: true}
 	}
 	batch, err := s.Files.ResolveRefs(ctx, qs)
 	if err != nil {
