@@ -46,8 +46,10 @@ type Agent interface {
 	Run(ctx context.Context, s Setup) (string, error)
 }
 
-// builtins are the CLI's own tools the loop needs: reading, searching and writing files.
-var builtins = []string{"view", "glob", "grep", "create", "edit"}
+// builtins are the CLI's own tools the loop needs: reading, searching and writing files. A model has
+// one family of them — Claude searches with grep and writes with create and edit, a GPT model with
+// rg and apply_patch — and the runtime offers each model only its own, so the loop names both.
+var builtins = []string{"view", "glob", "grep", "rg", "create", "edit", "apply_patch"}
 
 // DefaultModel is the model the loop was recorded with.
 const DefaultModel = "claude-opus-5"
@@ -72,6 +74,9 @@ type Copilot struct {
 	Mint func(ctx context.Context, refresh bool) (token string, expires time.Time, err error)
 	// QLMCP is the command line that starts ql-mcp.
 	QLMCP []string
+	// Serial starts the relay that hands ql-mcp one tool call at a time, with QLMCP after it;
+	// empty starts ql-mcp directly.
+	Serial []string
 	// CodeQL is the CLI ql-mcp runs, the one ABOM runs; empty takes codeql from PATH.
 	CodeQL string
 	// Packs is where ql-mcp resolves packs, the search path ABOM's own invocations use.
@@ -297,8 +302,8 @@ func (c *Copilot) config(s Setup) *copilot.SessionConfig {
 	}
 	var command string
 	var args []string
-	if len(c.QLMCP) > 0 {
-		command, args = c.QLMCP[0], slices.Clone(c.QLMCP[1:])
+	if line := append(slices.Clone(c.Serial), c.QLMCP...); len(c.QLMCP) > 0 {
+		command, args = line[0], line[1:]
 	}
 	cfg := &copilot.SessionConfig{
 		ClientName:       "codeql-abom",

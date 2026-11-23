@@ -66,8 +66,8 @@ func (s *Sessions) draft(run int64, queryID string, picked []Picked, by string) 
 	if len(picked) == 0 {
 		return store.AuthoringSession{}, nil, errors.New("a draft is written from picked results; pick one")
 	}
-	if s.WorkDir == "" {
-		return store.AuthoringSession{}, nil, errors.New("no directory is configured for session state")
+	if _, err := s.sessionDir(); err != nil {
+		return store.AuthoringSession{}, nil, err
 	}
 	databases, err := s.draftDatabases(run, picked)
 	if err != nil {
@@ -134,7 +134,11 @@ func (s *Sessions) draftDatabases(run int64, picked []Picked) (map[string]string
 }
 
 func (s *Sessions) prepareDraftBounds(id int64) (dir, home string, bounds Bounds, err error) {
-	dir = filepath.Join(s.WorkDir, fmt.Sprintf("draft-%d", id))
+	root, err := s.sessionDir()
+	if err != nil {
+		return "", "", Bounds{}, err
+	}
+	dir = filepath.Join(root, fmt.Sprintf("draft-%d", id))
 	home = filepath.Join(dir, "copilot")
 	bounds, err = NewBounds(s.Workspace, s.Libraries)
 	if err == nil {

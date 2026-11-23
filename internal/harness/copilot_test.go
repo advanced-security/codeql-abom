@@ -44,8 +44,8 @@ func aSetup(t *testing.T) Setup {
 func TestASessionIsOfferedOnlyTheLoopsTools(t *testing.T) {
 	cfg := aCopilot().config(aSetup(t))
 
-	want := []string{"builtin:create", "builtin:edit", "builtin:glob", "builtin:grep", "builtin:view",
-		"custom:" + ToolCatalog, "custom:" + ToolTarget}
+	want := []string{"builtin:apply_patch", "builtin:create", "builtin:edit", "builtin:glob", "builtin:grep",
+		"builtin:rg", "builtin:view", "custom:" + ToolCatalog, "custom:" + ToolTarget}
 	for _, name := range loopNames() {
 		want = append(want, "mcp:"+Server+"-"+name)
 	}
@@ -83,6 +83,21 @@ func TestASealedSessionIsOfferedABOMsToolsAlone(t *testing.T) {
 	}
 	if len(cfg.MCPServers) != 0 || !slices.Contains(cfg.DisabledMCPServers, "github-mcp-server") {
 		t.Errorf("servers %v, disabled %v", cfg.MCPServers, cfg.DisabledMCPServers)
+	}
+}
+
+// ql-mcp is started behind ABOM's relay, which hands it one tool call at a time; the command line
+// that starts ql-mcp itself is unchanged after it.
+func TestQLMCPIsStartedBehindTheRelayThatHandsItOneCallAtATime(t *testing.T) {
+	c := aCopilot()
+	c.Serial = []string{"/opt/abom/codeql-abom", "serialize-mcp", "--"}
+	server, ok := c.config(aSetup(t)).MCPServers[Server].(copilot.MCPStdioServerConfig)
+	if !ok {
+		t.Fatal("ql-mcp is not a stdio server")
+	}
+	want := []string{"serialize-mcp", "--", "/opt/ql-mcp/bin/codeql-development-mcp-server", "--quiet"}
+	if server.Command != "/opt/abom/codeql-abom" || !slices.Equal(server.Args, want) {
+		t.Errorf("ql-mcp starts as %s %v, want /opt/abom/codeql-abom %v", server.Command, server.Args, want)
 	}
 }
 

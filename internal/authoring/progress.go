@@ -7,8 +7,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/advanced-security/codeql-abom/internal/customql"
 	"github.com/advanced-security/codeql-abom/internal/runner"
@@ -36,6 +39,8 @@ type Step struct {
 	Step   string `json:"step"`
 	State  State  `json:"state"`
 	Detail string `json:"detail"`
+	// Unproven is a pass that nothing shows could have failed, which another pass cannot change.
+	Unproven bool `json:"-"`
 }
 
 // Evidence is what ABOM holds about a query besides its files: the test results on record for its
@@ -65,6 +70,10 @@ func Progress(root string, q Query, ev Evidence) ([]Step, error) {
 	if err != nil {
 		return nil, err
 	}
+	marked, err := MarkedFixtures(root, q.Tests)
+	if err != nil {
+		return nil, err
+	}
 	recorded := classifyRuns(q, ev)
 	help, err := helpStep(root, q)
 	if err != nil {
@@ -78,7 +87,7 @@ func Progress(root string, q Query, ev Evidence) ([]Step, error) {
 	if err != nil {
 		return nil, err
 	}
-	first, staleFirst := seenFailing(q, ev.Tests, fixtures)
+	first, staleFirst := seenFailing(q, ev.Tests, fixtures, marked)
 	tests := testsStep(q, recorded.current, recorded.otherCLI, recorded.passedElsewhere, digest, ev.CLI)
 	if tests.State == Passing {
 		tests = failedFirstStep(q, tests, first, staleFirst)
@@ -148,23 +157,56 @@ func libraryStep(root string, compiled Step) (Step, error) {
 // lockedActionsAll is the codeql/actions-all a pack's lock file resolved, empty where none has
 // been written yet.
 func lockedActionsAll(lock string) (string, error) {
+	packs, err := Locked(lock)
+	for _, p := range packs {
+		if p.Name == actionsAll {
+			return p.Version, err
+		}
+	}
+	return "", err
+}
+
+const actionsAll = "codeql/actions-all"
+
+// LockedPack is one pack a lock file resolved, at the version it resolved to.
+type LockedPack struct {
+	Name, Version string
+}
+
+// Locked is every pack a lock file resolved, codeql/actions-all first and the rest by name; none
+// where no lock has been written yet.
+func Locked(lock string) ([]LockedPack, error) {
 	body, err := os.ReadFile(lock)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		return "", nil
+		return nil, nil
 	case err != nil:
-		return "", err
+		return nil, err
 	}
-	lines := strings.Split(string(body), "\n")
-	for i, line := range lines {
-		if strings.TrimSpace(line) != "codeql/actions-all:" || i+1 == len(lines) {
-			continue
-		}
-		if version, ok := strings.CutPrefix(strings.TrimSpace(lines[i+1]), "version:"); ok {
-			return strings.TrimSpace(version), nil
+	var parsed struct {
+		Dependencies map[string]struct {
+			Version string `yaml:"version"`
+		} `yaml:"dependencies"`
+	}
+	if err := yaml.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("reading %s: %w", lock, err)
+	}
+	packs := make([]LockedPack, 0, len(parsed.Dependencies))
+	for name, dep := range parsed.Dependencies {
+		if dep.Version != "" {
+			packs = append(packs, LockedPack{Name: name, Version: dep.Version})
 		}
 	}
-	return "", nil
+	slices.SortFunc(packs, func(a, b LockedPack) int {
+		if (a.Name == actionsAll) != (b.Name == actionsAll) {
+			if a.Name == actionsAll {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
+	return packs, nil
 }
 
 // FailedOnMarks reports whether a recorded run failed on a result its fixtures mark: at comparing
@@ -179,15 +221,16 @@ func FailedOnMarks(t store.QueryTest) bool {
 // these fixtures, and over fixtures that have since changed.
 //
 // A pass shows a query agrees with its tests, and only a failure like this shows the tests could
-// have caught one that did not.
-func seenFailing(q Query, tests []store.QueryTest, fixtures string) (current, stale *store.QueryTest) {
+// have caught one that did not. A run that missed marked results still shows it while every marked
+// fixture it ran over is unchanged: fixtures added beside them can only add to what is caught.
+func seenFailing(q Query, tests []store.QueryTest, fixtures string, marked map[string]string) (current, stale *store.QueryTest) {
 	for i := range tests {
 		t := &tests[i]
 		if t.QueryVersion == q.Version || !FailedOnMarks(*t) {
 			continue
 		}
 		switch {
-		case fixtures != "" && t.FixturesDigest == fixtures:
+		case fixtures != "" && t.FixturesDigest == fixtures, stillMarked(*t, marked):
 			if current == nil || t.RanAt > current.RanAt {
 				current = t
 			}
@@ -196,6 +239,20 @@ func seenFailing(q Query, tests []store.QueryTest, fixtures string) (current, st
 		}
 	}
 	return current, stale
+}
+
+// stillMarked reports whether a run that missed marked results ran over marked fixtures that are
+// all still here, unchanged.
+func stillMarked(t store.QueryTest, marked map[string]string) bool {
+	if t.Missing == nil || *t.Missing == 0 || len(t.MarkedFixtures) == 0 {
+		return false
+	}
+	for path, sum := range t.MarkedFixtures {
+		if marked[path] != sum {
+			return false
+		}
+	}
+	return true
 }
 
 // failedFirstStep is (g) for a version whose tests pass only once the same fixtures were seen
@@ -207,12 +264,12 @@ func failedFirstStep(q Query, passed Step, first, stale *store.QueryTest) Step {
 			first.RanAt, runner.ExpectationsDetail(*first.Missing, *first.Unexpected))
 		return passed
 	case stale != nil:
-		passed.State = Warning
+		passed.State, passed.Unproven = Warning, true
 		passed.Detail += fmt.Sprintf(", but the fixtures changed since version %s was seen failing them, "+
 			"so nothing shows these tests can fail", short(stale.QueryVersion))
 		return passed
 	}
-	passed.State = Warning
+	passed.State, passed.Unproven = Warning, true
 	passed.Detail += ", but these fixtures were never seen failing on a result they mark, so nothing " +
 		"shows the tests could catch a query that misses one"
 	if !markedInline(q.Tests) {

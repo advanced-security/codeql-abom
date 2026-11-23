@@ -304,7 +304,10 @@ through the inline-expectations postprocess, so `# $ Alert` on a fixture line is
 marked line the query does not report is a missing result, and an unmarked one it reports is
 unexpected. The stub ABOM scaffolds reports nothing, so its first run fails on the marks. The tests
 step passes only once an earlier version failed on a marked result over the same fixtures, and a
-session's first edit to its query waits for that run. An `.expected` that lists failed expectations
+session's first edit to its query waits for that run. A run that missed marked results keeps
+counting while every marked fixture it ran over is unchanged: fixtures added beside them, marked or
+not, only add to what the tests catch. Changing or removing one of those fixtures needs another
+failure, and a session told so is asked to show one, never to make passing tests pass. An `.expected` that lists failed expectations
 fails its step: the CLI compares text, so it would make the test pass.
 
 ```mermaid
@@ -332,8 +335,12 @@ wherever either has no `codeql-pack.lock.yml`:
   a pack digest covers;
 - when a session starts, before the agent has control, since a session cannot install packs.
 
-It holds the CodeQL lock while it installs. It never replaces a lock file or runs `pack upgrade`:
-a lock file is the operator's to move. Where both exist it does nothing and does not wait for
+It holds the CodeQL lock while it installs. It never runs `pack upgrade`, and a lock file under a
+version the operator pinned is theirs to move. One exception: a pack whose manifest still says
+`codeql/actions-all: "*"`, as ABOM's older scaffold wrote, holds a lock ABOM's own install wrote
+for whatever was newest — nobody chose either. Where that lock is not the `codeql/actions-all`
+ABOM's queries run, ABOM pins its version in the manifest and drops the lock, under the CodeQL lock,
+and the install writes it again. Where both locks exist and agree it does nothing and does not wait for
 CodeQL, so a Test never queues behind a crawl to learn that nothing was needed. A failed install
 is the answer, with the CLI's reason: a Test answers with it, a round stops with it as discovery's
 last error, a run is refused with it before any member is analyzed, and a
@@ -344,6 +351,8 @@ flowchart LR
     ACT["Test, run,<br/>round, session"] --> Q{"a lock in the pack<br/>and its test pack?"}
     Q -->|"both"| GO["compile"]
     Q -->|"either missing"| INS["codeql pack install<br/>under the CodeQL lock"]
+    Q -->|"a pack nobody pinned,<br/>locked to another library"| PIN["pin ABOM's version,<br/>drop its lock"]
+    PIN --> INS
     INS -->|"installed"| GO
     INS -->|"failed"| WHY["the CLI's reason<br/>is the answer"]
     Q -. "never" .-> UP["pack upgrade"]
@@ -369,7 +378,26 @@ session from the request. ABOM drives the Copilot CLI through the Copilot SDK, w
 only tool server. ABOM registers the pinned SDK's lifecycle hooks and separate permission callback;
 the audit distinguishes their observations from runtime calls identified by an exact call ID.
 
-- Writes are confined to the target's source, help and test fixtures.
+- Writes are confined to the target's source, help and test fixtures, whichever tools the model
+  writes with: Claude's `create` and `edit`, or a GPT model's `apply_patch`, judged by every file the
+  patch names and refused if it deletes or moves one.
+- A ql-mcp call whose meaning is plain but whose form the server would not take is corrected, not
+  refused: the dataset folder inside the test database, the test directory around it, fixture files
+  as a list, a tool query with no language, a compile naming no query, one test path where a list is
+  taken. The call is forwarded corrected, the agent is told the form to use, and the timeline keeps
+  what it sent beside what was corrected. A form that could mean more than one thing is refused,
+  and so is a run naming no database: which database a query reads is never assumed. A bound
+  session's rules name each shape, so a correction is the exception.
+- Confirming the chosen target answers with it; only another query is refused.
+- A session reads the pack and the CodeQL package cache, and is pointed at the libraries the pack's
+  lock resolves, at their versions: the cache holds every language at every version, and a search of
+  all of it times out. The language server's definition, references, completion and symbol tools
+  are offered with the pack as their workspace, given as a path or a file URI.
+- ql-mcp is started behind ABOM's relay, `codeql-abom serialize-mcp`, which hands it one tool call
+  at a time and everything else as it comes. ql-mcp queues CodeQL commands on one CLI server that
+  exits on its first query run, since that server's pack cache is empty, and a call queued behind
+  the failing one is never answered; one evaluation at a time is also what the session's
+  machine-wide lock assumes.
 - There is no shell.
 - Nothing the CLI would load from the machine is loaded.
 - A call that cannot be recorded is refused.
@@ -448,7 +476,11 @@ remedy, and starting is held back with the first problem. Settings can name the 
 executables; a saved path is run before it is kept, and is used ahead of the flag or environment
 variable that names the default. It must be an absolute path to a file of the tool's own name, which
 no other account can change: the server runs it as itself, so a page that anyone reaching the
-server can submit chooses which copy of a tool runs, never which program.
+server can submit chooses which copy of a tool runs, never which program. A saved path that no
+longer exists — an editor's update moves the CLI it installed — is forgotten at start and the
+default used, and with no Copilot CLI named at all the one VS Code installed is used; the server says
+which. Path flags are named from where the server started. Session state is kept under
+`--work-dir`, or, where that lies inside the pack, in a directory of ABOM's own outside it.
 
 **ABOM prints a query's tree itself, so a query written by hand can earn every step.** A custom
 catalog row's AST mark runs `PrintAST` from `advanced-security/ql-mcp-actions-tools-src` 2.27.1,

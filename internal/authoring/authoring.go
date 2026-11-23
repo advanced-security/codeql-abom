@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -219,13 +220,31 @@ func DigestTests(root string, tests []string) (string, error) {
 // DigestFixtures identifies the code a test database is built from: the tests' files less those
 // the CLI reads after extraction, so accepting a report leaves it as it was.
 func DigestFixtures(root string, tests []string) (string, error) {
-	return digestFiles(root, tests, func(p string) bool {
-		switch filepath.Ext(p) {
-		case ".actual", ".expected", ".qlref", ".ql":
-			return false
+	return digestFiles(root, tests, isFixture)
+}
+
+func isFixture(p string) bool {
+	switch filepath.Ext(p) {
+	case ".actual", ".expected", ".qlref", ".ql":
+		return false
+	}
+	return true
+}
+
+// mark is a YAML comment the test framework reads as an expectation: one that starts with $.
+var mark = regexp.MustCompile(`(?m)(^|\s)#\s*\$`)
+
+// MarkedFixtures is each fixture holding a mark, by its path in the workspace, with a digest of
+// its bytes: what a run that missed a marked result ran over. Empty when no fixture is marked.
+func MarkedFixtures(root string, tests []string) (map[string]string, error) {
+	marked := map[string]string{}
+	err := walkTests(root, tests, isFixture, func(rel string, body []byte) {
+		if mark.Match(body) {
+			sum := sha256.Sum256(body)
+			marked[rel] = hex.EncodeToString(sum[:])
 		}
-		return true
 	})
+	return marked, err
 }
 
 func digestFiles(root string, tests []string, keep func(string) bool) (string, error) {
@@ -233,6 +252,31 @@ func digestFiles(root string, tests []string, keep func(string) bool) (string, e
 		return "", nil
 	}
 	files := map[string]string{}
+	err := walkTests(root, tests, keep, func(rel string, body []byte) {
+		sum := sha256.Sum256(body)
+		files[rel] = hex.EncodeToString(sum[:])
+	})
+	if err != nil {
+		return "", err
+	}
+
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	h := sha256.New()
+	for _, name := range names {
+		// Length-prefixed, so no two names and bodies can concatenate to a third that hashes the
+		// same.
+		fmt.Fprintf(h, "%d:%s\x00%s\x00", len(name), name, files[name])
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// walkTests hands each file keep takes from every test's directory to each, by its path in the
+// workspace, leaving out the databases a run builds.
+func walkTests(root string, tests []string, keep func(string) bool, each func(rel string, body []byte)) error {
 	for _, test := range tests {
 		dir := filepath.Dir(test)
 		err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
@@ -252,25 +296,12 @@ func digestFiles(root string, tests []string, keep func(string) bool) (string, e
 			if err != nil {
 				return err
 			}
-			sum := sha256.Sum256(body)
-			files[filepath.ToSlash(rel)] = hex.EncodeToString(sum[:])
+			each(filepath.ToSlash(rel), body)
 			return nil
 		})
 		if err != nil {
-			return "", fmt.Errorf("reading the tests in %s: %w", dir, err)
+			return fmt.Errorf("reading the tests in %s: %w", dir, err)
 		}
 	}
-
-	names := make([]string, 0, len(files))
-	for name := range files {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	h := sha256.New()
-	for _, name := range names {
-		// Length-prefixed, so no two names and bodies can concatenate to a third that hashes the
-		// same.
-		fmt.Fprintf(h, "%d:%s\x00%s\x00", len(name), name, files[name])
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return nil
 }

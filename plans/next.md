@@ -93,11 +93,12 @@ ownership by repository property, which the operator ranked ahead of them, is bu
    organization refuses App Copilot requests, and a security manager's own `admin:org` token. Kept
    first, by the operator's ranking, until those two are measured.
 2. **[A failed authoring session resumes from the step on screen](api/qlaas-loop.md)** — the
-   loop is built as far as `review`. A session home is deleted when the run ends, the model is a
-   flag, and ql-mcp calls outside six tools are refused by name. `codeql_lsp_diagnostics` is
-   already offered and refuses the workspace path the server documents. Local `gh auth` sessions
-   can land before the credential split; the production model list is the organization's, once
-   that split mints the Copilot token.
+   loop is built as far as `review`. A session home is deleted when the run ends; ql-mcp's test,
+   query, metadata and language-server tools are offered behind a relay that hands it one call at a
+   time, and its other tools are refused by name. A session already runs on the runtime's model
+   list, falling back to `auto` and recording what ran; the picker is left. Fifteen requests from
+   the zizmor gap analysis reached 7 of 7 through it, and asked for two things it lacks: lists in
+   data extensions, and fixtures checked as Actions rather than as YAML.
 3. **[Practice safely in a startup-only Demo instance](tools/demo-mode.md)** — a marked Demo
    now serves fictional repositories from a loopback-only simulated GitHub, builds real CodeQL
    databases and results from them, and enables Copilot authoring only behind an egress allowlist;

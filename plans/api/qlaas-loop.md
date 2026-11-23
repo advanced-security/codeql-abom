@@ -1,7 +1,9 @@
 # A failed authoring session resumes from the step on screen
 
-**Status:** The loop runs to review. A session home is deleted when the run ends, the model is a
-flag, and ql-mcp calls outside six tools are refused by name.
+**Status:** The loop runs to review, on a person's token or an App's installation token, with
+either model family's file tools. A session home is deleted when the run ends, the model is the
+flag's where the runtime offers it and the runtime's choice where not, and ql-mcp's test, query,
+metadata and language-server tools are offered; every other ql-mcp tool is refused by name.
 
 ## Why this exists
 
@@ -20,26 +22,21 @@ retired. The pinned SDK (`github.com/github/copilot-sdk/go` v1.0.14) already has
 `ResumeSession`, `SetModel` (reasoning effort and context tier) and `Send` with `immediate` and
 `enqueue`. The gap is that ABOM does not call them.
 
-The operator was stopped while the agent validated QL. `codeql_lsp_diagnostics` is already one of
-the six tools in `loopTools`. `packURI` in [confine.go](../../internal/harness/confine.go)
-requires a `file://` URI. The ql-mcp server documents a plain directory path for `workspace_uri`,
-not a URI. A model that follows the server is refused. The other LSP tools —
-`codeql_lsp_completion`, `codeql_lsp_definition`, `codeql_lsp_references` — are refused by name
-before any argument is checked. Read one refused event from a real session before changing the
-allowlist: the name may already have been allowed, and the argument is what failed.
+Ten of ql-mcp's tools are offered: test extract and run, query compile and run, resolve metadata, and
+the language server's diagnostics, definition, references, completion and document symbols. The
+rest are refused by name before any argument is checked, though the pinned server advertises more
+than sixty, several of which only read: `codeql_resolve_files`, `codeql_resolve_tests`,
+`codeql_bqrs_decode` over a run's own output, `read_database_source` over the test database.
 
 ## Pending
 
-1. **Confirm the refusal, then offer the server's tools.** Read one real session's refused event.
-   Offer every ql-mcp tool the pinned server advertises, not a list copied from a document that
-   will drift. LSP tools take the arguments the server documents: a plain pack directory for
-   `workspace_uri`, 0-based positions, and `file_path` as well as `ql_code`. **The fix for the
-   `packURI` mismatch is to accept the plain directory path the server documents and keep
-   confinement unchanged:** the path is resolved through links and must be the pack or inside it,
-   exactly as `packFile` already judges it. A `file://` URI stays accepted for the same check, and
-   is normalized to a path first. ABOM does not rewrite the argument it forwards. The same rule
-   applies to `workspace_uri` on every LSP tool. A tool the server does not advertise is still
-   refused by name. Depends on nothing.
+1. **Offer the server's other tools that read.** Offer what the pinned server advertises, not a
+   list copied from a document that will drift, each with the arguments its schema documents and
+   every path judged the way the gate already judges one: a file read is the pack, the locked
+   libraries or a run's own output; a workspace is the pack. An argument that names a search path,
+   an output, a log or a flag stays refused by name. Read one real session's refused event before
+   adding a tool: the name may already be allowed, and the argument is what failed. Depends on
+   nothing.
 2. **Three tools stay refused, by name, with the reason.** `codeql_test_accept` makes the query's
    own output the expected result, so the test can never fail. `codeql_pack_install` rewrites the
    lock ABOM resolves. `create_codeql_query` writes a layout ABOM did not choose. An argument that
@@ -71,11 +68,42 @@ allowlist: the name may already have been allowed, and the argument is what fail
    resume. Measured on `has-ghas` (2026-11-19): an App installation is offered `auto` and
    `gpt-5.3-codex` only, so `claude-opus-5`, the flag default, ran nowhere through the App. Depends on
    nothing.
+6. **A query can read a list from a data extension.** The scaffolded `qlpack.yml` declares no
+   `dataExtensions`, and a session writes only the target's source, help and fixtures, so a query
+   whose subject is a list — actions that fetch a tool at run time, actions that restore a cache and
+   the input that turns it on, publishers, well-known actions to compare a near-miss against — holds
+   it as rows of a QL predicate. That reads the same and grows by editing the query. Two live
+   sessions, asked for a list that can grow, tried to write `qlpack.yml` and then
+   `src/<QueryName>.model.yml`, and were refused both. Upstream, the
+   Actions pack keeps such lists as models (`ext/*.model.yml` against an `extensible` predicate).
+   Scaffold `dataExtensions: - ext/**/*.model.yml` in the pack, and let a session write
+   `ext/<QueryName>.model.yml` beside the target and nothing else under `ext/`; a model another
+   query's file declares stays out of reach. Existing packs gain the line the way an old
+   scaffold's `"*"` dependency is pinned. Depends on nothing.
+7. **A fixture is checked as Actions, not only as YAML.** A query test extracts any YAML, so a
+   fixture with a key Actions never takes still builds and still passes. Two sessions wrote a
+   step-level `container:` and a step that calls a reusable workflow with `secrets: inherit`, then
+   query branches for them that match nothing a repository can hold. The rules now say which keys
+   belong to a job; that is guidance, and a model can ignore it. With the rule in place, the same
+   request then got a top-level `x-` key, Docker Compose's convention for an anchor, and an `env:`
+   on a job that calls a reusable workflow, which takes none: guidance names the cases someone
+   thought of, and a schema names the rest. Validate each fixture against the
+   workflow and action schemas SchemaStore publishes (`github-workflow.json`,
+   `github-action.json`), vendored at a pinned commit so ABOM fetches nothing at run time, and
+   report a key the schema does not allow as a warning on the expected step, naming the file and
+   the key. A warning, not a refusal: the schemas lag GitHub, and a fixture can be meant to be
+   malformed. Depends on nothing.
 
 ## Decided
 
 **Rewind is the restore.** An icon that only resumed the conversation and left the files as they
 are would be a bookmark. The operator chose the rewind. It is recorded, and it is not silent.
+
+**A run names its database; ABOM never supplies one.** A `codeql_query_run` that names none is
+refused, not filled in with the test database, even though that is the only one a bound session
+may read: which database a query reads is never assumed, and running the target query against its
+test database is `abom_test` and `codeql_test_run`'s job. The rules offer `codeql_query_run` for
+PrintAST alone, with the database named every time.
 
 **Confinement survives resume.** Restoring files does not restore a permission the gate refused.
 Two agents still cannot write one request. A steer is a prompt event, not a side channel.
@@ -99,8 +127,8 @@ be read is that fact on screen. It is not a successful resume and not an empty p
 
 ## Verification
 
-- A diagnostics call with the plain pack path the server documents is allowed. One with a
-  workspace outside the pack is not. `codeql_lsp_definition` is offered. `codeql_test_accept` is
+- A read-only tool the server advertises is offered with its documented arguments, and one naming
+  a path outside the pack, the libraries or the run's output is refused. `codeql_test_accept` is
   still refused, with the existing reason. An `additionalArgs` write outside the pack is still
   refused.
 - A failed session resumed from Compiles has the query bytes from that snapshot, and the timeline
