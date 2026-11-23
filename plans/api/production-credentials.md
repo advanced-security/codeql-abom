@@ -24,8 +24,8 @@ which an installation token is. The same token as the client token authenticates
 login), and the `has-ghas` installation is offered two models: `auto` and `gpt-5.3-codex`. A GPT
 model searches with `rg` and writes with `apply_patch`, so a loop offering Claude's `grep`, `create`
 and `edit` alone left the agent unable to write. With both families offered and confined, sessions
-on request 4 (`acme/insecure-workflow-commands`, filed from zizmor's `insecure-commands` audit) ran
-through the App, metered in AI credits, with the model each call ran on recorded.
+on request 4 (`acme/insecure-workflow-commands`) ran through the App, metered in AI credits, with
+the model each call ran on recorded.
 
 Measured on the crawled organization (2026-11-19), serving a copy with the App beside it: readiness
 names the installation token and refuses Copilot with `organization_copilot_requests: read` not
