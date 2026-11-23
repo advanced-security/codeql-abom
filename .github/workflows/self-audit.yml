@@ -113,9 +113,17 @@ jobs:
       # traced build. C#'s extractor still restores the project's packages through the
       # .NET SDK to resolve what it references, and fetches an SDK itself when none is
       # installed.
+      #
+      # It generates the Razor components with the newest SDK it finds, and the runner image
+      # carries SDKs newer than the one the interface builds with. .NET 11's generator writes a
+      # declaration file beside each component, the extractor compiles both, and every @code
+      # field is then declared twice: the copy nothing assigns reads as a missed readonly. A
+      # directory of its own holds only the SDK the interface builds with.
       - name: Self Audit - Setup .NET
         if: matrix.dotnet
         uses: actions/setup-dotnet@v6.0.0
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
           dotnet-version: '10.0.x'
 
