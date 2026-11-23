@@ -141,6 +141,29 @@ func TestGitHubRefusingAGrantTheListingReportedIsTheSameRefusal(t *testing.T) {
 	}
 }
 
+// GitHub's refusal does not say which permission it lacks, so the refusal names none rather than every
+// one asked for: naming metadata, which the installation still holds, sends an owner to approve it again.
+func TestGitHubsRefusalNamesNoPermissionTheInstallationStillHolds(t *testing.T) {
+	key, _ := testKeys(t)
+	c := newClock()
+	gh := newFakeGitHub(t, key, c.Now,
+		fakeInstallation{ID: 11, Login: "has-ghas", Type: "Organization", Selection: "all", Granted: approvedEverything})
+	app := gh.app(c.Now)
+	ctx := context.Background()
+	if _, _, err := app.Token(ctx, "has-ghas"); err != nil {
+		t.Fatal(err)
+	}
+	gh.mu.Lock()
+	gh.installations[0].Granted = approvedReadsOnly
+	gh.mu.Unlock()
+
+	asked := PermissionSet{"metadata": "read", "organization_copilot_requests": "read"}
+	if _, _, err := app.TokenWith(ctx, "has-ghas", asked, false); !errors.Is(err, ErrNotGranted) ||
+		strings.Contains(err.Error(), "metadata") {
+		t.Errorf("GitHub refused one permission and the refusal is %v; want ErrNotGranted naming none still held", err)
+	}
+}
+
 // The crawl reads an account whose installation cannot hold organization permissions, such as a
 // user's, with the reads it did grant rather than being refused for the ones it cannot.
 func TestTheCrawlAsksForTheReadsTheInstallationGrantedAndNoMore(t *testing.T) {
