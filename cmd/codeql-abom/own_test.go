@@ -3,10 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/advanced-security/codeql-abom/internal/ghauth"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
@@ -162,8 +165,118 @@ func TestOwnListsAScopeNamingTheDefaultAsSuch(t *testing.T) {
 	}
 }
 
+// asks answers for GitHub while a test runs: who is declaring, and the role read on each repository.
+func asks(t *testing.T, verify func(context.Context) (ghauth.Identity, error), roles map[string]string) {
+	t.Helper()
+	before := declarer
+	t.Cleanup(func() { declarer = before })
+	declarer = func(string) (func(context.Context) (ghauth.Identity, error),
+		func(context.Context, string, string, string) (string, error), error) {
+		return verify, func(_ context.Context, owner, repo, _ string) (string, error) {
+			if role, ok := roles[owner+"/"+repo]; ok {
+				return role, nil
+			}
+			return "", errors.New("gh cannot read the role on " + owner + "/" + repo)
+		}, nil
+	}
+}
+
+// unverified is GitHub out of reach, which is every test that is not about who is declaring.
+func unverified(context.Context) (ghauth.Identity, error) {
+	return ghauth.Identity{}, &ghauth.Problem{Reason: "gh is not authenticated.", Remedy: "Run gh auth login."}
+}
+
+func verifiedAs(login string, accounts ...ghauth.Account) func(context.Context) (ghauth.Identity, error) {
+	return func(context.Context) (ghauth.Identity, error) {
+		return ghauth.Identity{Login: login, Host: "github.com", VerifiedAt: time.Now().UTC(),
+			Scopes: []string{"read:org"}, Accounts: accounts}, nil
+	}
+}
+
+// The command line holds a declaration to the rule the page offers by, judged on whoever is declaring
+// now: a member may declare only the repositories they administer or maintain, by name, read from
+// GitHub before anything is written.
+func TestOwnRefusesWhatTheRoleOfWhoeverIsDeclaringCannotSupport(t *testing.T) {
+	db := ownDB(t)
+	asks(t, verifiedAs("octocat",
+		ghauth.Account{Owner: "admin-org", Kind: "organization", Role: "admin"},
+		ghauth.Account{Owner: "member-org", Kind: "organization", Role: "member", SecurityManager: "no"},
+	), map[string]string{"member-org/maintained": "maintain", "member-org/written": "write"})
+
+	for args, reason := range map[string]string{
+		"--org member-org": "repositories they administer or maintain",
+		"--org member-org --include member-org/maintained --include member-org/written": "member-org/written",
+	} {
+		err := own(t, append([]string{"--db", db}, strings.Fields(args)...)...)
+		if err == nil || !strings.Contains(err.Error(), reason) {
+			t.Errorf("own %s: %v, want it refused naming %q", args, err, reason)
+		}
+		if ownedIn(t, db, "member-org/maintained") {
+			t.Fatalf("own %s was refused and still declared member-org", args)
+		}
+	}
+	runOwn(t, "--db", db, "--org", "member-org", "--include", "member-org/maintained", "--org", "admin-org")
+	if !ownedIn(t, db, "member-org/maintained") || !ownedIn(t, db, "admin-org/anything") {
+		t.Error("an admin's organization and a member's maintained repository are declarable")
+	}
+}
+
+// What was verified last may have been somebody else. The command line asks who is declaring before
+// it writes, as the page asks when it opens, so an admin's record does not vouch for a member.
+func TestOwnJudgesWhoeverIsDeclaringNowNotWhoeverWasVerifiedLast(t *testing.T) {
+	db := ownDB(t)
+	s, err := store.Open(db, store.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceAccounts(store.Verification{Login: "an-admin", Host: "github.com", VerifiedAt: time.Now().UTC(),
+		Accounts: []store.Account{{Owner: "acme", Kind: store.AccountOrganization, Role: store.RoleAdmin}}}); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	asks(t, verifiedAs("a-member",
+		ghauth.Account{Owner: "acme", Kind: "organization", Role: "member", SecurityManager: "no"}), nil)
+
+	if err := own(t, "--db", db, "--org", "acme"); err == nil {
+		t.Fatal("a member declared acme whole on an admin's record")
+	}
+	if ownedIn(t, db, "acme/service") {
+		t.Error("the refused declaration was written")
+	}
+}
+
+// GitHub out of reach is noted, and the declaration is judged against what was last verified, as the
+// page judges it when a refresh fails; with nothing verified, nothing refutes it.
+func TestOwnWithGitHubOutOfReachIsJudgedAgainstTheRecord(t *testing.T) {
+	db := ownDB(t)
+	s, err := store.Open(db, store.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceAccounts(store.Verification{Login: "octocat", Host: "github.com", VerifiedAt: time.Now().UTC(),
+		Accounts: []store.Account{{Owner: "acme-labs", Kind: store.AccountOrganization, Role: store.RoleMember,
+			SecurityManager: "no"}}}); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	var out bytes.Buffer
+	err = runOwned(context.Background(), []string{"--db", db, "--org", "acme-labs"}, &out, &out)
+	if err == nil || ownedIn(t, db, "acme-labs/tooling") {
+		t.Errorf("a member's organization was declared with GitHub out of reach: %v", err)
+	}
+	if !strings.Contains(out.String(), "gh is not authenticated") {
+		t.Errorf("own did not say why it judged against the record:\n%s", out.String())
+	}
+	runOwn(t, "--db", db, "--org", "acme")
+	if !ownedIn(t, db, "acme/service") {
+		t.Error("an account nothing on record reports was refused")
+	}
+}
+
 func ownDB(t *testing.T) string {
 	t.Helper()
+	asks(t, unverified, nil)
 	path := filepath.Join(t.TempDir(), "abom.db")
 	s, err := store.Open(path, store.Options{})
 	if err != nil {

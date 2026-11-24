@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -107,5 +108,169 @@ func TestAnAccountTheAppIsNotInstalledOnIsCannotSayForThatReason(t *testing.T) {
 			strings.Contains(got.Detail, "token") || strings.Contains(got.Detail, "membership") {
 			t.Errorf("%s: the reason is %q, want the App's missing installation", name, got.Detail)
 		}
+	}
+}
+
+// verifiedAsMember records octocat as the claim check's fixture does: an admin, a security manager,
+// a member who is neither, and a member whose security role could not be read, with the roles read
+// on three of member-org's repositories.
+func verifiedAsMember(t *testing.T, s *Store) {
+	t.Helper()
+	if err := s.ReplaceAccounts(Verification{Login: "octocat", Host: "github.com", VerifiedAt: time.Now().UTC(),
+		Scopes: []string{"read:org"}, Accounts: []Account{
+			{Owner: "octocat", Kind: AccountUser, Role: RoleOwner},
+			{Owner: "admin-org", Kind: AccountOrganization, Role: RoleAdmin},
+			{Owner: "managed-org", Kind: AccountOrganization, Role: RoleMember, SecurityManager: "yes"},
+			{Owner: "member-org", Kind: AccountOrganization, Role: RoleMember, SecurityManager: "no"},
+			{Owner: "blind-org", Kind: AccountOrganization, Role: RoleMember, SecurityManager: "unknown",
+				SecurityManagerReason: "gh cannot read who manages security in blind-org"},
+		}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordRepositoryRoles("octocat", time.Now(), []RepositoryRole{
+		{Owner: "member-org", Repo: "maintained", Role: "maintain"},
+		{Owner: "member-org", Repo: "written", Role: "write"},
+		{Owner: "member-org", Repo: "hidden", Unread: "gh cannot see member-org/hidden"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The role rule is the store's, not the page's: a declaration the picker would never offer is refused
+// however it arrives, from the command line, the API or a local file. Eligibility is a reading, so a
+// role nobody could read makes nothing newly eligible, and the refusal says it could not be read rather
+// than that it is lacking. An account GitHub does not report stays declarable by name, since ownership
+// is stated rather than inferred.
+func TestADeclarationTheRecordedRoleCannotSupportIsRefusedHoweverItArrives(t *testing.T) {
+	org := func(owner string, includes ...string) DeclaredAccount {
+		return DeclaredAccount{Owner: owner, Kind: AccountOrganization, Enabled: true,
+			IncludesOnly: includes != nil, Includes: includes}
+	}
+	scoped := org("member-org", "maintained")
+	scoped.Properties = []PropertyClause{{Terms: []PropertyTerm{{Name: "team", Value: "payments"}}}}
+	refused := map[string]struct {
+		claim  DeclaredAccount
+		reason string
+	}{
+		"a member's organization, whole": {org("member-org"), "repositories they administer or maintain"},
+		"a member's repository they only write to": {org("member-org", "maintained", "written"),
+			"member-org/written"},
+		"a member's property scope":                  {scoped, "repositories they administer or maintain"},
+		"a member's repository whose role is unread": {org("member-org", "hidden"), "could not be read"},
+		"a member's repository nobody has read":      {org("member-org", "never-read"), "has not been read"},
+		"a member whose security role cannot be read": {org("blind-org"),
+			"gh cannot read who manages security in blind-org"},
+	}
+	accepted := map[string]DeclaredAccount{
+		"an admin's organization":                       org("admin-org"),
+		"a security manager's organization":             org("managed-org"),
+		"the operator's own account":                    {Owner: "octocat", Kind: AccountUser, Enabled: true},
+		"a member's maintained repository":              org("member-org", "maintained"),
+		"an account GitHub does not report":             org("elsewhere"),
+		"a member's include list naming nothing so far": org("member-org", []string{}...),
+	}
+	for _, by := range []string{DeclaredByCLI, DeclaredByInterface, DeclaredByConfig} {
+		s := newTestStore(t)
+		verifiedAsMember(t, s)
+		for name, c := range refused {
+			err := s.SetOwnedScope([]DeclaredAccount{c.claim}, by)
+			var refusal *DeclarationRefused
+			if !errors.As(err, &refusal) || !strings.Contains(refusal.Reason, c.claim.Owner) ||
+				!strings.Contains(refusal.Reason, c.reason) {
+				t.Errorf("%s, by %s: %v, want it refused naming %s and %q", name, by, err, c.claim.Owner, c.reason)
+			}
+			if declared, _ := s.OwnedScope(); len(declared) != 0 {
+				t.Errorf("%s, by %s: a refusal declared %+v", name, by, declared)
+			}
+		}
+		for name, account := range accepted {
+			if err := s.SetOwnedScope([]DeclaredAccount{account}, by); err != nil {
+				t.Errorf("%s, by %s: refused: %v", name, by, err)
+			}
+			if err := s.SetOwnedScope(nil, by); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
+// Only what a declaration newly claims is judged. A claim made before its role was read, or before
+// the role was lost, stays declared through every later save, narrowed or switched off, because the
+// check beside a declaration never changes it; claiming more than that is a new claim, and is judged.
+func TestAClaimAlreadyDeclaredIsKeptAndOnlyWhatItAddsIsJudged(t *testing.T) {
+	s := newTestStore(t)
+	whole := DeclaredAccount{Owner: "member-org", Kind: AccountOrganization, Enabled: true}
+	admin := DeclaredAccount{Owner: "admin-org", Kind: AccountOrganization, Enabled: true}
+	if err := s.SetOwnedScope([]DeclaredAccount{whole}, DeclaredByCLI); err != nil {
+		t.Fatalf("with nothing verified, nothing refutes a claim: %v", err)
+	}
+	verifiedAsMember(t, s)
+
+	off := whole
+	off.Enabled = false
+	narrowed := DeclaredAccount{Owner: "member-org", Kind: AccountOrganization, Enabled: true,
+		IncludesOnly: true, Includes: []string{"written"}}
+	for name, declaration := range map[string][]DeclaredAccount{
+		"saved again beside another account": {whole, admin},
+		"switched off":                       {off},
+		"switched on again":                  {whole},
+	} {
+		if err := s.SetOwnedScope(declaration, DeclaredByInterface); err != nil {
+			t.Errorf("%s: %v, want the declared claim kept", name, err)
+		}
+	}
+	if err := s.SetOwnedScope([]DeclaredAccount{narrowed}, DeclaredByInterface); err != nil {
+		t.Errorf("narrowed to a repository it already covered: %v, want it kept", err)
+	}
+	if err := s.SetOwnedScope([]DeclaredAccount{narrowed}, DeclaredByCLI); err != nil {
+		t.Errorf("an include declared before its role was read, saved again: %v", err)
+	}
+	for name, declaration := range map[string]DeclaredAccount{
+		"widened back to the whole organization": whole,
+		"an include added that the member only writes to": {Owner: "member-org", Kind: AccountOrganization,
+			Enabled: true, IncludesOnly: true, Includes: []string{"written", "written-too"}},
+	} {
+		if declaration.Includes != nil {
+			if err := s.RecordRepositoryRoles("octocat", time.Now(), []RepositoryRole{
+				{Owner: "member-org", Repo: "written", Role: "write"},
+				{Owner: "member-org", Repo: "written-too", Role: "write"},
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var refusal *DeclarationRefused
+		if err := s.SetOwnedScope([]DeclaredAccount{declaration}, DeclaredByCLI); !errors.As(err, &refusal) {
+			t.Errorf("%s: %v, want it refused", name, err)
+		}
+	}
+	if declared, _ := s.OwnedScope(); len(declared) != 1 || len(declared[0].Includes) != 1 {
+		t.Errorf("after the refusals the declaration is %+v, want the narrowed one", declared)
+	}
+}
+
+// The roles read before a declaration is written cover only what it newly includes, so adding them
+// replaces an earlier read of the same repository and keeps every other read a refresh recorded.
+func TestAddingRolesKeepsTheRestOnRecord(t *testing.T) {
+	s := newTestStore(t)
+	at := time.Date(2026, 11, 24, 0, 0, 0, 0, time.UTC)
+	if err := s.RecordRepositoryRoles("octocat", at, []RepositoryRole{
+		{Owner: "member-org", Repo: "maintained", Role: "maintain"},
+		{Owner: "member-org", Repo: "written", Role: "write"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddRepositoryRoles("octocat", at.Add(time.Hour), []RepositoryRole{
+		{Owner: "member-org", Repo: "written", Role: "maintain"},
+		{Owner: "member-org", Repo: "hidden", Unread: "gh cannot see member-org/hidden"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	roles, err := s.RepositoryRoles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(roles) != 3 || roles["member-org/maintained"].Role != "maintain" ||
+		roles["member-org/written"].Role != "maintain" || roles["member-org/hidden"].Unread == "" {
+		t.Errorf("roles on record %+v, want the earlier read kept and the new reads added", roles)
 	}
 }

@@ -247,6 +247,7 @@ type OwnershipStore interface {
 	RecordInstallationSync(sync InstallationSync) error
 	RecordInstaller(installationID int64, owner, login, deliveryID string, at time.Time) error
 	RecordRepositoryRoles(login string, at time.Time, roles []RepositoryRole) error
+	AddRepositoryRoles(login string, at time.Time, roles []RepositoryRole) error
 	RepositoryRoles() (map[string]RepositoryRole, error)
 	InstallationEvidence(owners []string) (map[string]*InstallationEvidence, error)
 	SetDefaultBranch(fullName, branch string) error

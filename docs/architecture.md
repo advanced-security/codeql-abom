@@ -148,7 +148,12 @@ Membership comes from an authenticated `gh` session, or the App's installations,
 nothing on its own: holding an analyzed repository proves nothing about who can change it. A role
 makes an account eligible to be offered — an owner, an organization admin, its security manager, or
 an installation of the App — and a member who is none of these may declare, by name, the
-repositories they administer or maintain. The security manager role and a repository role are read
+repositories they administer or maintain. That rule is the store's, so the page, the API, `own` and
+a local file are held to it alike: what a declaration newly claims is refused unless the role on
+record makes it eligible, a member's new includes are read from GitHub before the write, and `own`
+asks who is declaring before it writes. Eligibility is a reading, so a role that could not be read
+makes nothing newly eligible, and the refusal says it could not be read. An account GitHub does not
+report stays declarable. The security manager role and a repository role are read
 apart from membership, and one that cannot be read is "cannot say", never "no". Beside each
 declaration ABOM says whether the role recorded behind it still supports it; that check changes
 nothing, and what is declared stays what bounds discovery. An include the App's installation does

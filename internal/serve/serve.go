@@ -1010,6 +1010,10 @@ func (s *Server) setOwnedScope(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "the declared scope must be a list of accounts")
 		return
 	}
+	if err := ReadClaimedRoles(r.Context(), s.Store, accounts, s.roleReader()); err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
 	if err := s.Store.SetOwnedScope(accounts, store.DeclaredByInterface); err != nil {
 		var refused *store.DeclarationRefused
 		if errors.As(err, &refused) {
@@ -1229,18 +1233,22 @@ func (s *Server) refreshAccounts(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, nil, err)
 		return
 	}
-	read := s.ReadRepositoryRole
-	if read == nil {
-		read = func(ctx context.Context, owner, repo, login string) (string, error) {
-			return ghauth.ReadRepositoryRole(ctx, ghauth.Exec, owner, repo, login)
-		}
-	}
-	if err := ReadDeclaredRoles(r.Context(), s.Store, read); err != nil {
+	if err := ReadDeclaredRoles(r.Context(), s.Store, s.roleReader()); err != nil {
 		writeJSON(w, nil, err)
 		return
 	}
 	stored, err := s.Store.Accounts()
 	writeJSON(w, s.view(stored, nil), err)
+}
+
+// roleReader reads the verified login's role on a repository: ReadRepositoryRole, or gh.
+func (s *Server) roleReader() func(ctx context.Context, owner, repo, login string) (string, error) {
+	if s.ReadRepositoryRole != nil {
+		return s.ReadRepositoryRole
+	}
+	return func(ctx context.Context, owner, repo, login string) (string, error) {
+		return ghauth.ReadRepositoryRole(ctx, ghauth.Exec, owner, repo, login)
+	}
 }
 
 // ReadDeclaredRoles reads the verified login's role on each repository declared in an organization
@@ -1255,16 +1263,52 @@ func ReadDeclaredRoles(ctx context.Context, s store.Backend,
 	if err != nil {
 		return err
 	}
+	return s.RecordRepositoryRoles(verified.Login, time.Now(), readIncludeRoles(ctx, verified, declared, nil, read))
+}
+
+// ReadClaimedRoles reads the verified login's role on each repository a declaration newly includes in
+// an organization it may not declare whole, and adds the answers before the declaration is written,
+// so the store judges a member's include on what GitHub says, as the picker does before offering it.
+func ReadClaimedRoles(ctx context.Context, s store.Backend, accounts []store.DeclaredAccount,
+	read func(ctx context.Context, owner, repo, login string) (string, error)) error {
+	verified, err := s.Accounts()
+	if err != nil || verified.Login == "" {
+		return err
+	}
+	declared, err := s.OwnedScope()
+	if err != nil {
+		return err
+	}
+	already := map[string]bool{}
+	for _, a := range declared {
+		for _, repo := range a.Includes {
+			already[strings.ToLower(a.Owner+"/"+repo)] = true
+		}
+	}
+	roles := readIncludeRoles(ctx, verified, accounts, already, read)
+	if len(roles) == 0 {
+		return nil
+	}
+	return s.AddRepositoryRoles(verified.Login, time.Now(), roles)
+}
+
+// readIncludeRoles reads the role on each include of an account verified may only include from,
+// skipping what skip names by lowercased owner/repo; a failed read is kept as unread.
+func readIncludeRoles(ctx context.Context, verified store.Verification, accounts []store.DeclaredAccount,
+	skip map[string]bool, read func(ctx context.Context, owner, repo, login string) (string, error)) []store.RepositoryRole {
 	includable := map[string]bool{}
 	for _, a := range verified.Accounts {
 		includable[strings.ToLower(a.Owner)] = a.CanInclude()
 	}
 	roles := []store.RepositoryRole{}
-	for _, a := range declared {
+	for _, a := range accounts {
 		if !a.IncludesOnly || !includable[strings.ToLower(a.Owner)] {
 			continue
 		}
 		for _, repo := range a.Includes {
+			if skip[strings.ToLower(a.Owner+"/"+repo)] {
+				continue
+			}
 			role, err := read(ctx, a.Owner, repo, verified.Login)
 			r := store.RepositoryRole{Owner: a.Owner, Repo: repo, Role: role}
 			if err != nil {
@@ -1273,7 +1317,7 @@ func ReadDeclaredRoles(ctx context.Context, s store.Backend,
 			roles = append(roles, r)
 		}
 	}
-	return s.RecordRepositoryRoles(verified.Login, time.Now(), roles)
+	return roles
 }
 
 // verification maps what gh established onto what the store records. The two types are kept

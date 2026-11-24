@@ -10,6 +10,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/advanced-security/codeql-abom/internal/declare"
+	"github.com/advanced-security/codeql-abom/internal/serve"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
@@ -72,6 +73,9 @@ func runOwned(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		if err != nil {
 			return fmt.Errorf("own: %w", err)
 		}
+		if err := judgeDeclarer(ctx, s, *dbPath, accounts, stderr); err != nil {
+			return fmt.Errorf("own: %w", err)
+		}
 		if err := s.SetOwnedScope(accounts, store.DeclaredByCLI); err != nil {
 			return fmt.Errorf("own: %w", err)
 		}
@@ -85,6 +89,24 @@ func runOwned(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 	writeDeclaredScope(stdout, declared)
 	return nil
+}
+
+// judgeDeclarer establishes who is declaring, as the page does when it opens, and reads their role on
+// each repository a member newly includes, so the store judges this declaration on whoever makes it
+// rather than on whoever was verified last. GitHub out of reach is said, and the record judges it.
+func judgeDeclarer(ctx context.Context, s store.Backend, dbPath string, accounts []store.DeclaredAccount,
+	stderr io.Writer) error {
+	verify, read, err := declarer(dbPath)
+	if err != nil {
+		return err
+	}
+	if err := verifyIdentity(ctx, s, verify); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		fmt.Fprintf(stderr, "own: who is declaring could not be verified, so the accounts last verified judge it: %v\n", err)
+	}
+	return serve.ReadClaimedRoles(ctx, s, accounts, read)
 }
 
 // restrictedScope says what a restricted account covers: its named repositories, or the ones

@@ -312,6 +312,9 @@ func (s *Store) SetOwnedScope(accounts []DeclaredAccount, by string) error {
 	if err := s.refusePropertyScopes(accounts); err != nil {
 		return err
 	}
+	if err := s.refuseUnsupportedClaims(accounts); err != nil {
+		return err
+	}
 
 	tx, err := s.db.Begin()
 	if err != nil {

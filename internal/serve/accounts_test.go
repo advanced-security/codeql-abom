@@ -336,6 +336,59 @@ func TestRefreshingChecksTheRoleBehindEachDeclaration(t *testing.T) {
 	}
 }
 
+// A member's declaration is judged by the store on what GitHub says of each repository it newly
+// includes, read before the write as the picker reads before offering, so the API refuses what the
+// page would never offer. What is already declared is not read again, and a read that fails offers
+// nothing, saying it could not be read.
+func TestADeclarationIsJudgedOnTheRoleGitHubReportsForWhatItNewlyIncludes(t *testing.T) {
+	srv, _ := newServer(t)
+	srv.Verify = verifies(
+		ghauth.Account{Owner: "member-org", Kind: "organization", Role: "member", SecurityManager: "no"},
+	)
+	var asked []string
+	srv.ReadRepositoryRole = func(_ context.Context, owner, repo, login string) (string, error) {
+		asked = append(asked, owner+"/"+repo)
+		switch repo {
+		case "maintained":
+			return "maintain", nil
+		case "written":
+			return "write", nil
+		}
+		return "", errors.New("gh cannot read octocat's role on member-org/" + repo)
+	}
+	if rec := postControl(t, srv, "/api/accounts/refresh"); rec.Code != http.StatusOK {
+		t.Fatalf("refresh: %d %s", rec.Code, rec.Body)
+	}
+	declare := func(body string) *httptest.ResponseRecorder {
+		asked = nil
+		return put(t, srv, "/api/owned-scope", body)
+	}
+
+	for name, c := range map[string]struct{ body, reason string }{
+		"the organization, whole": {`[{"owner":"member-org","kind":"organization","enabled":true}]`,
+			"repositories they administer or maintain"},
+		"a repository the member only writes to": {`[{"owner":"member-org","kind":"organization","enabled":true,` +
+			`"includesOnly":true,"includes":["written"]}]`, "member-org/written"},
+		"a repository whose role could not be read": {`[{"owner":"member-org","kind":"organization","enabled":true,` +
+			`"includesOnly":true,"includes":["hidden"]}]`, "could not be read"},
+	} {
+		if rec := declare(c.body); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), c.reason) {
+			t.Errorf("%s: %d %s, want it refused naming %q", name, rec.Code, rec.Body, c.reason)
+		}
+	}
+
+	maintained := `[{"owner":"member-org","kind":"organization","enabled":true,"includesOnly":true,"includes":["maintained"]}]`
+	if rec := declare(maintained); rec.Code != http.StatusOK {
+		t.Fatalf("a maintained repository: %d %s", rec.Code, rec.Body)
+	}
+	if strings.Join(asked, ",") != "member-org/maintained" {
+		t.Errorf("read %v before the write, want each repository it newly includes", asked)
+	}
+	if rec := declare(maintained); rec.Code != http.StatusOK || len(asked) != 0 {
+		t.Errorf("saved again: %d, read %v; want it kept without reading what is already declared", rec.Code, asked)
+	}
+}
+
 // An include the App's installation does not cover stays declared and is marked: a maintainer
 // cannot widen an installation, and no person's token reads it instead. Without an App, nothing is
 // marked, because nothing was asked.

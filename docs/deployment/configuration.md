@@ -147,7 +147,6 @@ directly:
 
 ```bash
 mkdir -p .abom/db
-./bin/codeql-abom accounts --db .abom/db/abom.db --refresh
 ./bin/codeql-abom own --db .abom/db/abom.db --org YOUR_ORG
 ```
 
@@ -155,10 +154,18 @@ mkdir -p .abom/db
 discovery cycle, which goes straight on to analyze them, so there is no review step. Use a
 restricted declaration if you declare this way.
 
-Verification and declaration answer different questions. The interface offers accounts whose
-reported role permits a declaration; a CLI declaration remains an operator claim, not proof of
-permissions or license eligibility. A complete membership response can contradict a declaration;
-incomplete evidence remains unknown. Confirm what the interface reports before starting work.
+`own` is held to the rule Settings offers by. Before it writes, it asks who is declaring — through
+the App beside the database, or `gh` — and records the answer, as `accounts --refresh` does. An
+account reported with a role that cannot declare it is refused: a member who is not its owner,
+admin or security manager may declare, with `--include`, only the repositories they administer or
+maintain, and `own` reads that role before writing. A role that could not be read makes nothing
+eligible, and the refusal says so; a member who is a security manager needs a `gh` token with
+`admin:org` for that role to be read (`gh auth refresh -s admin:org`). An account GitHub does not
+report stays declarable, because ownership is stated rather than inferred; one a complete
+membership list contradicts roots nothing. If GitHub cannot be reached, `own` says so and judges the
+declaration against the accounts last verified. Saving a declaration again, or narrowing it, judges
+only what it newly claims; Settings reports whether the role behind what is already declared still
+supports it. A declaration is a claim of responsibility, not proof of license eligibility.
 
 To restrict the organization to explicitly named base repositories, repeat `--include`:
 
@@ -205,7 +212,9 @@ An optional untracked `abom.local.json` in the working directory can initialize 
 Only include the `includes` or `properties` property when you intend that restriction; each
 `properties` entry is the object `--property` takes. `--declare-file` selects
 another file. This is a declaration channel, not a general application configuration file. It is
-read at startup, missing files are allowed, and malformed files are refused. A valid file does not
+read at startup, missing files are allowed, and malformed files are refused. What it declares is
+judged against the accounts last verified as anything `own` writes is, and a declaration the role on
+record cannot support stops the server with the reason. A valid file does not
 replace an existing declaration. Clearing the declaration while leaving this file configured
 can restore it at the next startup. Like `own`, a file-based declaration lists nothing until
 discovery starts.

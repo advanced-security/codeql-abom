@@ -49,15 +49,14 @@ func runAccounts(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		}
 	}
 	if *refresh {
-		app, err := readerApp(ghapp.DefaultDir(*dbPath), "", defaultAPIURL())
+		verify, read, err := declarer(*dbPath)
 		if err != nil {
 			return fmt.Errorf("accounts: %w", err)
 		}
-		creds := newCredentials(app, "")
-		if err := verifyIdentity(ctx, s, creds.verify()); err != nil {
+		if err := verifyIdentity(ctx, s, verify); err != nil {
 			return fmt.Errorf("accounts: %w", err)
 		}
-		if err := serve.ReadDeclaredRoles(ctx, s, creds.roleReader()); err != nil {
+		if err := serve.ReadDeclaredRoles(ctx, s, read); err != nil {
 			return fmt.Errorf("accounts: %w", err)
 		}
 	}
@@ -77,6 +76,19 @@ func runAccounts(ctx context.Context, args []string, stdout, stderr io.Writer) e
 	}
 	writeAccounts(stdout, current)
 	return nil
+}
+
+// declarer is how accounts and own ask GitHub about whoever is declaring: who they are, and their role
+// on a repository. The App beside the database answers where there is one, and gh otherwise. A
+// variable so a test can answer for GitHub.
+var declarer = func(dbPath string) (func(context.Context) (ghauth.Identity, error),
+	func(ctx context.Context, owner, repo, login string) (string, error), error) {
+	app, err := readerApp(ghapp.DefaultDir(dbPath), "", defaultAPIURL())
+	if err != nil {
+		return nil, nil, err
+	}
+	creds := newCredentials(app, "")
+	return creds.verify(), creds.roleReader(), nil
 }
 
 // verifyIdentity asks who may declare and records what it establishes.

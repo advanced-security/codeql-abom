@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -59,13 +60,26 @@ type IncludeCheck struct {
 
 // RecordRepositoryRoles replaces the roles on record with one refresh's reads for login.
 func (s *Store) RecordRepositoryRoles(login string, at time.Time, roles []RepositoryRole) error {
+	return s.writeRepositoryRoles(login, at, roles, true)
+}
+
+// AddRepositoryRoles adds reads for login to the roles on record, replacing an earlier read of the
+// same repository and keeping the rest: what is read before a declaration is written covers only what
+// it newly includes.
+func (s *Store) AddRepositoryRoles(login string, at time.Time, roles []RepositoryRole) error {
+	return s.writeRepositoryRoles(login, at, roles, false)
+}
+
+func (s *Store) writeRepositoryRoles(login string, at time.Time, roles []RepositoryRole, replace bool) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("recording repository roles: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.Exec(`DELETE FROM abom_repository_role`); err != nil {
-		return fmt.Errorf("recording repository roles: %w", err)
+	if replace {
+		if _, err := tx.Exec(`DELETE FROM abom_repository_role`); err != nil {
+			return fmt.Errorf("recording repository roles: %w", err)
+		}
 	}
 	stamp := at.UTC().Format(time.RFC3339Nano)
 	for _, r := range roles {
@@ -184,6 +198,108 @@ func roleName(a Account) string {
 		return "security manager"
 	}
 	return a.Role
+}
+
+// refuseUnsupportedClaims holds every writer to the rule the picker offers by: what an account newly
+// claims is refused unless the role on record makes it eligible, so the command line, the API and a
+// local file are judged as the page is. An account GitHub does not report stays declarable, and a
+// database nobody has verified refutes nothing.
+func (s *Store) refuseUnsupportedClaims(accounts []DeclaredAccount) error {
+	v, err := s.Accounts()
+	if err != nil || v.Login == "" {
+		return err
+	}
+	stored, err := s.OwnedScope()
+	if err != nil {
+		return err
+	}
+	before := make(map[string]DeclaredAccount, len(stored))
+	for _, a := range stored {
+		before[strings.ToLower(a.Owner)] = a
+	}
+	var roles map[string]RepositoryRole
+	for _, a := range accounts {
+		i := slices.IndexFunc(v.Accounts, func(known Account) bool { return strings.EqualFold(known.Owner, a.Owner) })
+		if i < 0 {
+			continue
+		}
+		claimed, ok := newlyClaimed(a, before[strings.ToLower(a.Owner)])
+		if !ok {
+			continue
+		}
+		if roles == nil {
+			if roles, err = s.RepositoryRoles(); err != nil {
+				return err
+			}
+		}
+		if why := ineligible(claimed, v.Accounts[i], v.Login, roles); why != "" {
+			return refuse("declaring %s that way is refused: %s", a.Owner, why)
+		}
+	}
+	return nil
+}
+
+// ineligible says why the picker would not offer what claimed claims, as login holds known, or "" where
+// it would: the account whole needs a role that may declare it, and a member names only repositories
+// GitHub says they administer or maintain. Eligibility is a reading, so a role that could not be read
+// makes nothing eligible, and the reason says it could not be read rather than that it is lacking.
+// It differs from CheckClaim, which asks whether the record refutes a claim already made.
+func ineligible(claimed DeclaredAccount, known Account, login string, roles map[string]RepositoryRole) string {
+	switch {
+	case known.CanDeclare():
+		return ""
+	case !known.CanInclude():
+		return article(roleName(known)) + " cannot change anything in " + claimed.Owner
+	case !claimed.IncludesOnly || len(claimed.Properties) > 0:
+		why := "a member may declare only the repositories they administer or maintain, by name"
+		if known.SecurityManager != "no" {
+			unread := known.SecurityManagerReason
+			if unread == "" {
+				unread = "it was not read when the accounts were last refreshed"
+			}
+			why += "; whether " + login + " manages security in " + claimed.Owner + ", which would allow it, could not be read: " + unread
+		}
+		return why
+	}
+	for _, repo := range claimed.Includes {
+		name := claimed.Owner + "/" + repo
+		r, ok := roles[strings.ToLower(name)]
+		switch {
+		case !ok || !strings.EqualFold(r.Login, login):
+			return login + "'s role on " + name + " has not been read"
+		case r.Role == "":
+			return login + "'s role on " + name + " could not be read: " + r.Unread
+		case r.Role != "admin" && r.Role != "maintain":
+			return login + " holds " + r.Role + " on " + name + ", which is not admin or maintain"
+		}
+	}
+	return ""
+}
+
+// newlyClaimed is what a claims beyond prev, the stored declaration of the same account, and whether
+// that is anything: switching an account on or off, or narrowing it, claims nothing new. A claim
+// already declared is never judged again here; the check beside it reports it instead.
+func newlyClaimed(a, prev DeclaredAccount) (DeclaredAccount, bool) {
+	switch {
+	case prev.Owner == "" || prev.Kind != a.Kind:
+		return a, true
+	case !a.IncludesOnly:
+		return a, prev.IncludesOnly
+	case !prev.IncludesOnly:
+		return DeclaredAccount{}, false
+	}
+	added := DeclaredAccount{Owner: a.Owner, Kind: a.Kind, Enabled: a.Enabled, IncludesOnly: true}
+	for _, repo := range a.Includes {
+		if !slices.ContainsFunc(prev.Includes, func(p string) bool { return strings.EqualFold(p, repo) }) {
+			added.Includes = append(added.Includes, repo)
+		}
+	}
+	for _, c := range a.Properties {
+		if !slices.ContainsFunc(prev.Properties, func(p PropertyClause) bool { return sameTerms(p.Terms, c.Terms) }) {
+			added.Properties = append(added.Properties, c)
+		}
+	}
+	return added, len(added.Includes) > 0 || len(added.Properties) > 0
 }
 
 func article(role string) string {
