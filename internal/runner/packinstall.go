@@ -6,7 +6,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/advanced-security/codeql-abom/internal/customql"
 )
@@ -14,6 +18,8 @@ import (
 // packLock is what `codeql pack install` writes, and what the CLI will not resolve a pack's
 // dependencies without.
 const packLock = "codeql-pack.lock.yml"
+
+const actionsAll = "codeql/actions-all"
 
 // InstallPack installs the dependencies of the operator's pack and of its test pack, wherever
 // either has no lock, under the CodeQL lock.
@@ -97,23 +103,35 @@ func isPack(dir string) bool {
 	return false
 }
 
-// anyActionsAll is how ABOM's older scaffold declared codeql/actions-all: any version, which nobody chose.
-const anyActionsAll = `  codeql/actions-all: "*"`
+// anyActionsAll is the manifest line ABOM's older scaffold declared codeql/actions-all on: any
+// version, which nobody chose, however the line is quoted, spaced, commented or ended.
+var anyActionsAll = regexp.MustCompile(`(?m)^([ \t]*codeql/actions-all[ \t]*:[ \t]*)(?:"\*"|'\*')([ \t]*(?:#[^\r\n]*)?\r?)$`)
 
-// unaligned lists the operator's packs whose manifest still declares codeql/actions-all as "*" and
-// whose lock resolved another version than want.
+// unaligned lists the operator's packs whose manifest still declares codeql/actions-all as "*" on a
+// line that can be rewritten in place, and whose lock resolved another version than want. Both files
+// are read as YAML, not matched as text. One that cannot be rewritten, such as a flow-style mapping,
+// is left as it is: it would otherwise take the CodeQL lock on every install, only to change nothing.
 func unaligned(root, want string) []string {
 	if root == "" {
 		return nil
 	}
 	var out []string
 	for _, dir := range []string{root, filepath.Join(root, "test")} {
-		manifest, err := os.ReadFile(filepath.Join(dir, "qlpack.yml"))
-		if err != nil || !strings.Contains(string(manifest), anyActionsAll+"\n") {
+		var manifest struct {
+			Dependencies map[string]string `yaml:"dependencies"`
+		}
+		body, err := os.ReadFile(filepath.Join(dir, "qlpack.yml"))
+		if err != nil || yaml.Unmarshal(body, &manifest) != nil || manifest.Dependencies[actionsAll] != "*" ||
+			!anyActionsAll.Match(body) {
 			continue
 		}
-		lock, err := os.ReadFile(filepath.Join(dir, packLock))
-		if err != nil || strings.Contains(string(lock), "  codeql/actions-all:\n    version: "+want+"\n") {
+		var lock struct {
+			Dependencies map[string]struct {
+				Version string `yaml:"version"`
+			} `yaml:"dependencies"`
+		}
+		body, err = os.ReadFile(filepath.Join(dir, packLock))
+		if err != nil || yaml.Unmarshal(body, &lock) != nil || lock.Dependencies[actionsAll].Version == want {
 			continue
 		}
 		out = append(out, dir)
@@ -130,8 +148,14 @@ func alignActionsAll(root, want string) error {
 		if err != nil {
 			return err
 		}
-		pinned := strings.Replace(string(manifest), anyActionsAll+"\n", "  codeql/actions-all: "+want+"\n", 1)
-		if err := os.WriteFile(path, []byte(pinned), 0o644); err != nil {
+		found := anyActionsAll.FindIndex(manifest)
+		if found == nil {
+			continue
+		}
+		line := manifest[found[0]:found[1]]
+		pinned := slices.Concat(manifest[:found[0]],
+			anyActionsAll.ReplaceAll(line, []byte("${1}"+want+"${2}")), manifest[found[1]:])
+		if err := os.WriteFile(path, pinned, 0o644); err != nil {
 			return fmt.Errorf("pinning codeql/actions-all %s in %s: %w", want, path, err)
 		}
 		if err := os.Remove(filepath.Join(dir, packLock)); err != nil && !os.IsNotExist(err) {
