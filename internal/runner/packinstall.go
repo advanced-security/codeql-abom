@@ -105,7 +105,8 @@ func isPack(dir string) bool {
 
 // anyActionsAll is the manifest line ABOM's older scaffold declared codeql/actions-all on: any
 // version, which nobody chose, however the line is quoted, spaced, commented or ended.
-var anyActionsAll = regexp.MustCompile(`(?m)^([ \t]*codeql/actions-all[ \t]*:[ \t]*)(?:"\*"|'\*')([ \t]*(?:#[^\r\n]*)?\r?)$`)
+var anyActionsAll = regexp.MustCompile(`(?m)^([ \t]*` + regexp.QuoteMeta(actionsAll) +
+	`[ \t]*:[ \t]*)(?:"\*"|'\*')([ \t]*(?:#[^\r\n]*)?\r?)$`)
 
 // unaligned lists the operator's packs whose manifest still declares codeql/actions-all as "*" on a
 // line that can be rewritten in place, and whose lock resolved another version than want. Both files
