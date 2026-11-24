@@ -655,4 +655,11 @@ func TestAPlainQlmcpCallIsCorrectedRatherThanRefused(t *testing.T) {
 			t.Errorf("a run whose database is %s is %+v, want it refused, pointing at the test tools", name, v)
 		}
 	}
+	// A database given in another shape was named, so the refusal is about its shape, not its absence.
+	for name, database := range map[string]any{"a number": 42, "a list": []any{db}} {
+		v := b.Call(Server+"-codeql_query_run", printAST(map[string]any{"database": database}))
+		if v.Allowed || strings.Contains(v.Reason, "names no database") {
+			t.Errorf("a run whose database is %s is %+v, want it refused for its shape", name, v)
+		}
+	}
 }

@@ -611,8 +611,9 @@ func strings_(list []any) ([]string, bool) {
 
 func (b Bounds) validQlmcpArgs(name string, tool loopTool, fields map[string]any) (Verdict, bool) {
 	// Ahead of the arguments' own checks, so a null or blank database gets this answer and not one
-	// about its type.
-	if database, _ := fields["database"].(string); name == "codeql_query_run" && strings.TrimSpace(database) == "" {
+	// about its type. Any other shape was named, and its own check says what is wrong with it.
+	if database, isString := fields["database"].(string); name == "codeql_query_run" &&
+		(fields["database"] == nil || isString && strings.TrimSpace(database) == "") {
 		return refuse("codeql_query_run names no database, and which one it reads is never assumed: name "+
 			"it. To run the query against its test database, call %s, or codeql_test_run with its tests",
 			ToolTest), false
