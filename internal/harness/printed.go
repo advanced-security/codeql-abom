@@ -60,6 +60,8 @@ func (g *Gate) print(tool string, args any, result string) string {
 		return ""
 	}
 	b := g.Bounds()
+	// Read as forwarded: the arguments a post-call hook reports may be the agent's own.
+	fields, _ = b.correct("codeql_query_run", fields)
 	e := Event{Hook: HookArtifact, Tool: tool, Subject: b.subject(tool, args), Decision: DecisionNoted,
 		Step: StepAST}
 	body, files, truncated, err := readPrinted(scratch, result)

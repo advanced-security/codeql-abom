@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -546,6 +547,14 @@ func parseServeArgs(args []string, stderr io.Writer) (serveConfig, error) {
 	if err != nil {
 		return serveConfig{}, err
 	}
+	if err := absolute(&d.customQLDir, &d.workDir, &d.cacheDir, &d.databaseCacheDir); err != nil {
+		return serveConfig{}, err
+	}
+	if strings.ContainsRune(d.codeqlPath, filepath.Separator) {
+		if err := absolute(&d.codeqlPath); err != nil {
+			return serveConfig{}, err
+		}
+	}
 	return serveConfig{
 		dbPath:         *dbPath,
 		readReplica:    *readReplica,
@@ -708,4 +717,20 @@ func serveHTTP(ctx context.Context, httpServer *http.Server, addr string, stdout
 		}
 		return nil
 	}
+}
+
+// absolute names each path from where the server started. A session runs its CLIs in the pack and
+// reads an agent's paths against it, so a relative path flag would mean something else there.
+func absolute(paths ...*string) error {
+	for _, p := range paths {
+		if *p == "" {
+			continue
+		}
+		abs, err := filepath.Abs(*p)
+		if err != nil {
+			return err
+		}
+		*p = abs
+	}
+	return nil
 }

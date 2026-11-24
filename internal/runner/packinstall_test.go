@@ -259,3 +259,91 @@ func TestAnOfflineRunnerRefusesAnUnlockedPackWithoutAskingTheCLI(t *testing.T) {
 		t.Fatalf("an offline runner refused a locked pack: %v", err)
 	}
 }
+
+// ABOM's older scaffold declared codeql/actions-all as "*", and ABOM's own install then locked
+// whatever was newest; nobody chose either. Such a pack is pinned to the library ABOM's queries run
+// and its lock dropped for the install to write again, while a version an operator pinned, and the
+// lock under it, are theirs and stay as they are.
+func TestAPackNobodyPinnedIsBroughtToTheLibraryABOMRuns(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, body string) {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lock := "---\nlockVersion: 1.0.0\ndependencies:\n  codeql/actions-all:\n    version: 0.6.2\ncompiled: false\n"
+	write("qlpack.yml", "name: abom/custom-queries\nversion: 2.27.0\nlibrary: false\ndependencies:\n  codeql/actions-all: \"*\"\nsuites: codeql-suites\n")
+	write("codeql-pack.lock.yml", lock)
+	pinned := "name: abom/custom-queries-tests\nversion: 2.27.0\nlibrary: false\nextractor: actions\ndependencies:\n  abom/custom-queries: \"*\"\n  codeql/actions-all: 0.6.2\n"
+	write("test/qlpack.yml", pinned)
+	write("test/codeql-pack.lock.yml", lock)
+
+	if err := alignActionsAll(root, "0.7.0"); err != nil {
+		t.Fatal(err)
+	}
+	manifest, _ := os.ReadFile(filepath.Join(root, "qlpack.yml"))
+	if !strings.Contains(string(manifest), "  codeql/actions-all: 0.7.0\n") || strings.Contains(string(manifest), `"*"`) {
+		t.Errorf("the pack nobody pinned reads:\n%s", manifest)
+	}
+	if _, err := os.Stat(filepath.Join(root, "codeql-pack.lock.yml")); !os.IsNotExist(err) {
+		t.Errorf("the lock ABOM wrote for 0.6.2 is still there: %v", err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(root, "test", "qlpack.yml")); string(got) != pinned {
+		t.Errorf("the pack an operator pinned was changed:\n%s", got)
+	}
+	if got, _ := os.ReadFile(filepath.Join(root, "test", "codeql-pack.lock.yml")); string(got) != lock {
+		t.Error("the lock under an operator's pin was changed")
+	}
+	if got := unlockedPacks(root); len(got) != 1 || got[0] != root {
+		t.Errorf("unlocked after aligning: %v, want the pack to install again", got)
+	}
+}
+
+// A manifest is YAML however it is written: quoted either way, with CRLF endings or a comment, "*"
+// is still a version nobody chose. One whose line cannot be rewritten in place keeps its lock, or
+// every install would drop it and lock whatever is newest again.
+func TestAPackNobodyPinnedIsFoundHoweverItsManifestIsWritten(t *testing.T) {
+	lock := "---\nlockVersion: 1.0.0\ndependencies:\n  codeql/actions-all:\n    version: 0.6.2\ncompiled: false\n"
+	aligned := strings.ReplaceAll(strings.Replace(lock, "0.6.2", "0.7.0", 1), "\n", "\r\n")
+	for name, c := range map[string]struct {
+		manifest, lock, want string
+		pinned               bool
+	}{
+		"single-quoted": {"name: q\ndependencies:\n  codeql/actions-all: '*'\n", lock,
+			"name: q\ndependencies:\n  codeql/actions-all: 0.7.0\n", true},
+		"CRLF": {"name: q\r\ndependencies:\r\n  codeql/actions-all: \"*\"\r\n", lock,
+			"name: q\r\ndependencies:\r\n  codeql/actions-all: 0.7.0\r\n", true},
+		"commented": {"name: q\ndependencies:\n  codeql/actions-all:   \"*\" # any\n", lock,
+			"name: q\ndependencies:\n  codeql/actions-all:   0.7.0 # any\n", true},
+		"already locked to it": {"name: q\ndependencies:\n  codeql/actions-all: \"*\"\n", aligned,
+			"name: q\ndependencies:\n  codeql/actions-all: \"*\"\n", false},
+		"flow-style": {"name: q\ndependencies: {codeql/actions-all: \"*\"}\n", lock,
+			"name: q\ndependencies: {codeql/actions-all: \"*\"}\n", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, "qlpack.yml"), []byte(c.manifest), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, packLock), []byte(c.lock), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := alignActionsAll(root, "0.7.0"); err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := os.ReadFile(filepath.Join(root, "qlpack.yml")); string(got) != c.want {
+				t.Errorf("the manifest reads %q, want %q", got, c.want)
+			}
+			if _, err := os.Stat(filepath.Join(root, packLock)); os.IsNotExist(err) != c.pinned {
+				t.Errorf("lock dropped: %v, want %v", os.IsNotExist(err), c.pinned)
+			}
+			if got := unaligned(root, "0.7.0"); len(got) != 0 {
+				t.Errorf("still unaligned after aligning: %v, so every install takes the lock to do nothing", got)
+			}
+		})
+	}
+}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 )
@@ -61,5 +62,42 @@ func TestSubcommandsHaveDistinctHandlers(t *testing.T) {
 		if sc.desc == "" {
 			t.Errorf("subcommand %q has no usage description", sc.name)
 		}
+	}
+}
+
+// An authoring session starts ql-mcp behind this relay, so it relays the server it is named in
+// both directions, and answers everything the server said before the client hung up.
+func TestSerializeMCPRelaysTheServerItNames(t *testing.T) {
+	call := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{}}`
+	stdin = strings.NewReader(call + "\n")
+	t.Cleanup(func() { stdin = os.Stdin })
+	var stdout, stderr strings.Builder
+	if err := run(context.Background(), []string{"serialize-mcp", "--", "cat"}, &stdout, &stderr); err != nil {
+		t.Fatalf("serialize-mcp: %v (%s)", err, stderr.String())
+	}
+	if strings.TrimSpace(stdout.String()) != call {
+		t.Errorf("relayed %q, want what the server wrote back", stdout.String())
+	}
+	if err := run(context.Background(), []string{"serialize-mcp"}, &stdout, &stderr); err == nil {
+		t.Error("serialize-mcp ran with no server named")
+	}
+}
+
+// The relay a session starts ql-mcp behind is this binary's own serialize-mcp.
+func TestQlmcpIsRelayedByThisBinary(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := relay()
+	if len(line) != 3 || line[0] != self || line[2] != "--" {
+		t.Fatalf("relay is %v, want %s serialize-mcp --", line, self)
+	}
+	known := false
+	for _, sc := range subcommands {
+		known = known || sc.name == line[1]
+	}
+	if !known {
+		t.Errorf("the relay names %s, which is no subcommand", line[1])
 	}
 }

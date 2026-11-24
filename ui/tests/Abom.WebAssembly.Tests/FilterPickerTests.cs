@@ -329,9 +329,9 @@ public sealed class FilterPickerTests : AbomTestContext
         var (popover, page) = Picker();
         page.WaitForAssertion(() => page.Find("[data-abom-add-filter]").Click());
 
-        popover.Find("[data-abom-term-search] input").Input("kind");
+        popover.WaitForElement("[data-abom-term-search] input").Input("kind");
 
-        Assert.Equal(["kinds"], Attributes(popover, "data-abom-term"));
+        popover.WaitForAssertion(() => Assert.Equal(["kinds"], Attributes(popover, "data-abom-term")));
     }
 
     /// A term already set is not offered again: a second Scope chip would be two answers to one
@@ -375,7 +375,7 @@ public sealed class FilterPickerTests : AbomTestContext
         page.WaitForAssertion(
             () => page.Find("[data-abom-filter-chip='scope'] [data-abom-chip-remove]").Click());
 
-        Assert.Equal("", Scope.Spec.Scope);
+        page.WaitForAssertion(() => Assert.Equal("", Scope.Spec.Scope));
         Assert.Equal("checkout", Scope.Spec.Search);
     }
 
@@ -525,7 +525,7 @@ public sealed class FilterPickerTests : AbomTestContext
         page.WaitForAssertion(() => page.Find("[data-abom-add-filter]").Click());
         popover.WaitForElement("[data-abom-term='scope']").Click();
 
-        Assert.Equal(["owned", "exposure"], Attributes(popover, "data-abom-value"));
+        popover.WaitForAssertion(() => Assert.Equal(["owned", "exposure"], Attributes(popover, "data-abom-value")));
     }
 
     /// Choosing a value writes it to the shared scope, which is the only thing the picker does.
@@ -535,9 +535,9 @@ public sealed class FilterPickerTests : AbomTestContext
         var (popover, page) = Picker();
         page.WaitForAssertion(() => page.Find("[data-abom-add-filter]").Click());
         popover.WaitForElement("[data-abom-term='scope']").Click();
-        popover.Find("[data-abom-value='exposure']").Click();
+        popover.WaitForElement("[data-abom-value='exposure']").Click();
 
-        Assert.Equal("exposure", Scope.Spec.Scope);
+        page.WaitForAssertion(() => Assert.Equal("exposure", Scope.Spec.Scope));
     }
 
     /// <summary>
@@ -552,7 +552,7 @@ public sealed class FilterPickerTests : AbomTestContext
         page.WaitForAssertion(() => page.Find("[data-abom-add-filter]").Click());
         popover.WaitForElement("[data-abom-term='flags']").Click();
 
-        Assert.Equal(["findings"], Attributes(popover, "data-abom-value"));
+        popover.WaitForAssertion(() => Assert.Equal(["findings"], Attributes(popover, "data-abom-value")));
     }
 
     /// A term whose values come from the corpus has no closed list to offer, so it is typed. The
@@ -564,8 +564,9 @@ public sealed class FilterPickerTests : AbomTestContext
         page.WaitForAssertion(() => page.Find("[data-abom-add-filter]").Click());
         popover.WaitForElement("[data-abom-term='q']").Click();
 
+        // The entry is waited for first: an absence is true before the term has rendered at all.
+        popover.WaitForElement("[data-abom-value-entry] input");
         Assert.Empty(popover.FindAll("[data-abom-value]"));
-        Assert.NotNull(popover.Find("[data-abom-value-entry] input"));
     }
 
     /// <summary>

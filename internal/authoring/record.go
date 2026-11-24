@@ -41,6 +41,10 @@ func RecordTests(ctx context.Context, st store.Backend, run Tests, root string, 
 	if err != nil {
 		return runner.TestResult{}, err
 	}
+	marked, err := MarkedFixtures(root, q.Tests)
+	if err != nil {
+		return runner.TestResult{}, err
+	}
 
 	// Not handed to the CLI, which would read no test as every test it could find.
 	result := runner.TestResult{
@@ -54,7 +58,7 @@ func RecordTests(ctx context.Context, st store.Backend, run Tests, root string, 
 		test := store.QueryTest{QueryID: q.ID, QueryVersion: q.Version, CLIVersion: cli,
 			Passed: result.Passed, Total: result.Total, Failed: result.Failed, Detail: result.Detail,
 			FailureStage: result.FailureStage, TestDigest: digest, FixturesDigest: fixtures,
-			Missing: result.Missing, Unexpected: result.Unexpected}
+			MarkedFixtures: marked, Missing: result.Missing, Unexpected: result.Unexpected}
 		if answerErr != nil {
 			test.Passed = false
 			test.FailureStage = "UNAVAILABLE"
@@ -81,7 +85,7 @@ func RecordTests(ctx context.Context, st store.Backend, run Tests, root string, 
 		QueryID: q.ID, QueryVersion: q.Version, CLIVersion: cli,
 		Passed: result.Passed, Total: result.Total, Failed: result.Failed, Detail: result.Detail,
 		FailureStage: result.FailureStage, TestDigest: digest, FixturesDigest: fixtures,
-		Missing: result.Missing, Unexpected: result.Unexpected,
+		MarkedFixtures: marked, Missing: result.Missing, Unexpected: result.Unexpected,
 	}); err != nil {
 		return runner.TestResult{}, err
 	}

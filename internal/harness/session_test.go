@@ -203,6 +203,33 @@ func TestAnOperatorsTargetIsBoundBeforeTheAgentStarts(t *testing.T) {
 	}
 }
 
+// The session directory is the operator's, named relative to where the server started, as
+// `make start` does not but a hand-run server may; the pack is the agent's, so a path read
+// against the pack would put the session's home somewhere its Deny never reaches.
+func TestARelativeSessionDirectoryIsTheServersNotThePacks(t *testing.T) {
+	var seen Setup
+	b := newBench(t, stand(func(_ context.Context, s Setup) (string, error) {
+		seen = s
+		return "done", nil
+	}))
+	t.Chdir(b.place.root)
+	b.sessions.WorkDir = filepath.Join("work", "authoring")
+	b.query(t, "SelfHostedRunner", "acme/self-hosted-runner", true)
+
+	got := b.finish(t, b.request(t, "acme/self-hosted-runner"), "operator")
+	if got.State == store.SessionFailed {
+		t.Fatalf("a relative session directory outside the pack was refused: %s", got.Detail)
+	}
+	root, _ := filepath.EvalSymlinks(b.place.root)
+	want := []string{filepath.Join(b.place.root, "work", "authoring"), filepath.Join(root, "work", "authoring")}
+	if !filepath.IsAbs(seen.Home) || !strings.HasPrefix(seen.Home, want[0]) && !strings.HasPrefix(seen.Home, want[1]) {
+		t.Errorf("the session's home is %s, want it under %s", seen.Home, want[0])
+	}
+	if err := seen.Gate.Bounds().readable(filepath.Join(seen.Home, "config.json")); err == nil {
+		t.Error("the session's own home is readable to it")
+	}
+}
+
 // The session row names the model that ran, as the gate learned it from the runtime.
 func TestASessionsRecordNamesTheModelThatRan(t *testing.T) {
 	b := newBench(t, stand(func(_ context.Context, s Setup) (string, error) {
@@ -211,6 +238,140 @@ func TestASessionsRecordNamesTheModelThatRan(t *testing.T) {
 	b.query(t, "SelfHostedRunner", "acme/self-hosted-runner", true)
 	if got := b.finish(t, b.request(t, "acme/self-hosted-runner"), "operator"); got.Model != "auto" {
 		t.Errorf("the session ran on auto and records %q", got.Model)
+	}
+}
+
+// A --work-dir inside the pack is not the operator's problem: session state goes to a private
+// directory outside the pack, made once for the server's run as its default scratch is, rather than
+// refusing to start the session. It is never a fixed name under a directory the environment names,
+// where a link planted ahead of it would carry every write and the cleanup somewhere else.
+func TestSessionStateInsideThePackIsKeptOutsideItInstead(t *testing.T) {
+	var homes []string
+	b := newBench(t, stand(func(_ context.Context, s Setup) (string, error) {
+		homes = append(homes, s.Home)
+		return "done", nil
+	}))
+	tmp := filepath.Join(b.place.root, "tmp")
+	if err := os.MkdirAll(tmp, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", tmp)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(b.place.root, "user", ".cache"))
+	b.sessions.WorkDir = filepath.Join(b.place.ws, "work", "authoring")
+	b.query(t, "SelfHostedRunner", "acme/self-hosted-runner", true)
+
+	request := b.request(t, "acme/self-hosted-runner")
+	for range 2 {
+		if got := b.finish(t, request, "operator"); got.State == store.SessionFailed {
+			t.Fatalf("a work directory inside the pack refused the session: %s", got.Detail)
+		}
+	}
+	pack, _ := filepath.EvalSymlinks(b.place.ws)
+	for _, home := range homes {
+		if within(b.place.ws, home) || within(pack, home) {
+			t.Errorf("the session's home %s is inside the pack", home)
+		}
+	}
+	if len(homes) != 2 || filepath.Dir(filepath.Dir(homes[0])) != filepath.Dir(filepath.Dir(homes[1])) {
+		t.Fatalf("two sessions kept state in %v, want one directory each start", homes)
+	}
+	state := filepath.Dir(filepath.Dir(homes[0]))
+	if !within(tmp, state) {
+		t.Errorf("session state is kept in %s, want a directory made under %s", state, tmp)
+	}
+	if info, err := os.Stat(state); err != nil || info.Mode().Perm() != 0o700 {
+		t.Errorf("session state directory %s: %v, %v; want one only this account can open", state, info, err)
+	}
+}
+
+// ql-mcp advertises no schema for its arguments, and a GPT model guessed a list for sourceFiles and
+// the dataset folder for database; the rules of a bound session name each shape it takes.
+func TestABoundSessionsRulesNameTheArgumentsQlmcpTakes(t *testing.T) {
+	var seen Setup
+	b := newBench(t, stand(func(_ context.Context, s Setup) (string, error) {
+		seen = s
+		return "done", nil
+	}))
+	b.query(t, "SelfHostedRunner", "acme/self-hosted-runner", true)
+	b.finish(t, b.request(t, "acme/self-hosted-runner"), "operator")
+	for _, want := range []string{
+		`database "test/SelfHostedRunner/SelfHostedRunner.testproj"`,
+		"sourceFiles as one string separated by commas",
+		`query "src/SelfHostedRunner.ql"`,
+		`tests ["test/SelfHostedRunner"]`,
+		"To run the query against its test database, call " + ToolTest,
+	} {
+		if !strings.Contains(seen.Rules, want) {
+			t.Errorf("the rules do not say %s", want)
+		}
+	}
+	// codeql_query_run reads the database it is given; running the query over its tests is the
+	// test tools' job, so the rules never pair it with the target query.
+	if strings.Contains(seen.Rules, "either query") {
+		t.Errorf("the rules offer codeql_query_run to run the target query:\n%s", seen.Rules)
+	}
+}
+
+// The package cache holds every language at every version, and a live session's search of all of
+// it timed out twice; the rules name the directories the pack's lock resolves to instead.
+func TestTheRulesNameTheLibrariesThePackCompilesAgainst(t *testing.T) {
+	var seen Setup
+	b := newBench(t, stand(func(_ context.Context, s Setup) (string, error) {
+		seen = s
+		return "done", nil
+	}))
+	packages := filepath.Join(b.place.codeql, "packages")
+	actions := filepath.Join(packages, "codeql", "actions-all", "0.6.2")
+	yaml := filepath.Join(packages, "codeql", "yaml", "1.0.60")
+	if err := os.MkdirAll(yaml, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lock := "---\nlockVersion: 1.0.0\ndependencies:\n  codeql/actions-all:\n    version: 0.6.2\n" +
+		"  codeql/ssa:\n    version: 9.9.9\n  codeql/yaml:\n    version: 1.0.60\ncompiled: false\n"
+	if err := os.WriteFile(filepath.Join(b.place.ws, "codeql-pack.lock.yml"), []byte(lock), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b.finish(t, b.request(t, ""), "operator")
+	for _, want := range []string{"codeql/actions-all 0.6.2 at " + actions, yaml, "codeql_lsp_definition"} {
+		if !strings.Contains(seen.Rules, want) {
+			t.Errorf("the rules do not say %q:\n%s", want, seen.Rules)
+		}
+	}
+	rest := strings.NewReplacer(actions, "", yaml, "").Replace(seen.Rules)
+	if strings.Contains(rest, packages) {
+		t.Errorf("the rules still offer the whole package cache to search:\n%s", seen.Rules)
+	}
+	if strings.Contains(seen.Rules, "9.9.9") {
+		t.Errorf("the rules name a locked library that is not on disk:\n%s", seen.Rules)
+	}
+}
+
+// A lock is a file in the pack, which a session writes beside; a name in it that climbs out of the
+// package cache must not lead the rules to a directory elsewhere on the machine.
+func TestTheRulesNameNoLibraryOutsideThePackageCache(t *testing.T) {
+	var seen Setup
+	b := newBench(t, stand(func(_ context.Context, s Setup) (string, error) {
+		seen = s
+		return "done", nil
+	}))
+	packages := filepath.Join(b.place.codeql, "packages")
+	outside := filepath.Join(b.place.codeql, "outside", "1.0.0")
+	for _, dir := range []string{filepath.Join(packages, "codeql", "actions-all", "0.6.2"), outside} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lock := "---\nlockVersion: 1.0.0\ndependencies:\n  codeql/actions-all:\n    version: 0.6.2\n" +
+		"  codeql/../../outside:\n    version: 1.0.0\ncompiled: false\n"
+	if err := os.WriteFile(filepath.Join(b.place.ws, "codeql-pack.lock.yml"), []byte(lock), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b.finish(t, b.request(t, ""), "operator")
+	if !strings.Contains(seen.Rules, "codeql/actions-all 0.6.2 at ") {
+		t.Fatalf("the rules do not name the locked library:\n%s", seen.Rules)
+	}
+	if strings.Contains(seen.Rules, outside) || strings.Contains(seen.Rules, "outside 1.0.0") {
+		t.Errorf("the rules name a directory outside the package cache:\n%s", seen.Rules)
 	}
 }
 
@@ -646,6 +807,37 @@ func TestTheAgentDecidesATargetOnceAndItBindsTheSession(t *testing.T) {
 	}
 }
 
+// A session whose target is already chosen is asked to confirm it, not refused: a live session
+// called abom_target three times on the operator's own choice and was refused each time. Naming
+// another query is still refused, because a session writes one query.
+func TestConfirmingTheChosenTargetAnswersRatherThanRefuses(t *testing.T) {
+	var same, unnamed, other string
+	var sameFailed, unnamedFailed bool
+	b := newBench(t, stand(func(_ context.Context, s Setup) (string, error) {
+		target := tool(t, s, ToolTarget)
+		res, _ := call(t, target, map[string]any{"decision": "improve", "queryId": "acme/self-hosted-runner", "rationale": "r"})
+		same, sameFailed = res.TextResultForLLM, res.ResultType == "failure"
+		res, _ = call(t, target, map[string]any{})
+		unnamed, unnamedFailed = res.TextResultForLLM, res.ResultType == "failure"
+		other = refusal(t, target, map[string]any{"decision": "create", "queryId": "acme/other", "name": "Other", "rationale": "r"})
+		return "done", nil
+	}))
+	b.query(t, "SelfHostedRunner", "acme/self-hosted-runner", true)
+	b.finish(t, b.request(t, "acme/self-hosted-runner"), "operator")
+
+	for name, c := range map[string]struct {
+		text   string
+		failed bool
+	}{"the same query": {same, sameFailed}, "no query": {unnamed, unnamedFailed}} {
+		if c.failed || !strings.Contains(c.text, "src/SelfHostedRunner.ql") {
+			t.Errorf("confirming with %s: failed %v, %q; want the target it is bound to", name, c.failed, c.text)
+		}
+	}
+	if other == "" || !strings.Contains(other, "acme/self-hosted-runner") {
+		t.Errorf("another query was not refused by naming the chosen one: %q", other)
+	}
+}
+
 func TestATargetTheAgentProposesMustBeNewAndPlainlyNamed(t *testing.T) {
 	var refusals []string
 	b := newBench(t, stand(func(_ context.Context, s Setup) (string, error) {
@@ -761,9 +953,12 @@ func TestTheRulesAskForBothSidesOfEveryCaseTheQueryDetects(t *testing.T) {
 	}))
 	b.finish(t, b.request(t, ""), "operator")
 	fixtures := seen.Rules[strings.Index(seen.Rules, "2. Write one fixture"):strings.Index(seen.Rules, "3. Write the .expected")]
+	// Two live sessions invented a step-level container: and secrets: to cover a composite action,
+	// keys Actions takes only on a job, and wrote query branches for them that match nothing real.
 	for _, want := range []string{"every case and edge case the query detects",
 		"at least one non-compliant fixture and at least one compliant fixture",
-		"something the others do not"} {
+		"something the others do not", "valid GitHub Actions syntax",
+		"container:, services:, permissions:, secrets: and a reusable workflow's uses: belong to a job"} {
 		if !strings.Contains(fixtures, want) {
 			t.Errorf("step 2 does not say %q:\n%s", want, fixtures)
 		}
@@ -955,6 +1150,45 @@ func TestAnAgentWithNothingLeftIsNotToldAnything(t *testing.T) {
 	b.finish(t, b.request(t, "acme/self-hosted-runner"), "operator")
 	if last != "" {
 		t.Errorf("with every step passed the agent was told %q", last)
+	}
+}
+
+// Tests that pass, with nothing showing they can fail over the fixtures as they are, are not made
+// to pass by changing the query. Told that, a live session edited a passing query four times over.
+func TestPassingTestsNotYetSeenFailingAreAskedForAFailureNotAPass(t *testing.T) {
+	var last string
+	b := newBench(t, stand(func(ctx context.Context, s Setup) (string, error) {
+		c := chain{t: t, s: s, ws: s.Workspace}
+		c.help()
+		c.fixture()
+		c.expected()
+		test := tool(t, s, ToolTest)
+		if _, err := call(t, test, map[string]any{}); err != nil {
+			t.Error(err)
+		}
+		c.print()
+		query := s.Gate.Bounds().Query()
+		c.write(query, "/**\n * @kind problem\n * @id acme/self-hosted-runner\n */\n"+
+			"import actions\n\nfrom Job j select j, \"runs on a self-hosted runner\"\n")
+		if _, err := call(t, test, map[string]any{}); err != nil {
+			t.Error(err)
+		}
+		c.write(filepath.Join(c.ws, "test", "SelfHostedRunner", ".github", "workflows", "runners.yml"),
+			"on: push\njobs:\n  a:\n    runs-on: self-hosted # $ Alert\n    steps:\n      - run: false\n")
+		c.print()
+		if _, err := call(t, test, map[string]any{}); err != nil {
+			t.Error(err)
+		}
+		last = s.Next(ctx)
+		return "done", nil
+	}))
+	b.query(t, "SelfHostedRunner", "acme/self-hosted-runner", true)
+	pass := runner.TestResult{Total: 1, Passed: true, Detail: "1 of 1 passed"}
+	*b.next = []runner.TestResult{failing(1, 0), pass, pass}
+	b.finish(t, b.request(t, "acme/self-hosted-runner"), "operator")
+	if !strings.Contains(last, "changed since") || strings.Contains(last, "so its tests pass") ||
+		!strings.Contains(last, "misses a marked result") {
+		t.Errorf("passing tests not seen failing were answered %q", last)
 	}
 }
 

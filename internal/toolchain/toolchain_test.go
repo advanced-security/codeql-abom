@@ -291,7 +291,7 @@ func TestLoadPutsASavedPathAheadOfFlagsAndEnvironment(t *testing.T) {
 	if err := p.store.SetToolPath(store.ToolCopilot, saved, "alice"); err != nil {
 		t.Fatal(err)
 	}
-	if err := tc.Load(); err != nil {
+	if _, err := tc.Load(); err != nil {
 		t.Fatal(err)
 	}
 	if tc.Copilot.Path != saved || tc.Copilot.Source != SourceSettings {
@@ -299,6 +299,147 @@ func TestLoadPutsASavedPathAheadOfFlagsAndEnvironment(t *testing.T) {
 	}
 	if tc.CodeQL.Source != "--codeql" {
 		t.Errorf("a tool nobody set in Settings changed: %+v", tc.CodeQL)
+	}
+}
+
+// An editor that updates its Copilot extension moves the CLI it installed, so a path saved in
+// Settings can stop existing while the flag or environment still names one that runs. Nobody has
+// to repair that: the saved path is forgotten, the default is used, and the server says so.
+func TestASavedPathThatNoLongerExistsGivesWayToTheDefault(t *testing.T) {
+	p := newPlace(t)
+	tc := p.chain(t)
+	fallback := tc.Copilot
+	gone := filepath.Join(p.dir, "gone", "copilot")
+	if err := p.store.SetToolPath(store.ToolCopilot, gone, "alice"); err != nil {
+		t.Fatal(err)
+	}
+	said, err := tc.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tc.Copilot != fallback {
+		t.Errorf("after loading a path that is gone, Copilot is %+v, want %+v", tc.Copilot, fallback)
+	}
+	if saved, _ := p.store.ToolPaths(); saved[store.ToolCopilot].Path != "" {
+		t.Errorf("the path that is gone is still saved: %+v", saved[store.ToolCopilot])
+	}
+	if len(said) != 1 || !strings.Contains(said[0], gone) || !strings.Contains(said[0], fallback.Path) {
+		t.Errorf("loading said %q, want the path that is gone and the one used instead", said)
+	}
+	if c := byKey(tc.Checks(context.Background(), true))[KeyCopilot]; c.State != Ready || c.Saved != "" {
+		t.Errorf("readiness after the fallback is %+v, want ready with nothing pending", c)
+	}
+}
+
+// With no Copilot CLI named anywhere, the one VS Code installed is used rather than offered as advice.
+func TestWithNoCopilotCLINamedTheOneVSCodeInstalledIsUsed(t *testing.T) {
+	p := newPlace(t)
+	home := filepath.Join(p.dir, "home")
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	config, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	installed := p.at(t, filepath.Join(strings.TrimPrefix(config, p.dir+string(filepath.Separator)),
+		"Code", "User", "globalStorage", "github.copilot-chat", "copilotCli"), "copilot", "1.0.88")
+	tc := p.chain(t)
+	tc.Copilot = Tool{}
+	// A whole-suite run can starve one probe past the bench's half second; this test is about the choice.
+	tc.Timeout = 10 * time.Second
+
+	said, err := tc.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tc.Copilot.Path != installed || tc.Copilot.Source != SourceVSCode {
+		t.Errorf("with nothing named, Copilot is %+v, want %s from VS Code", tc.Copilot, installed)
+	}
+	if len(said) != 1 || !strings.Contains(said[0], installed) {
+		t.Errorf("loading said %q, want the CLI it chose", said)
+	}
+	if c := byKey(tc.Checks(context.Background(), true))[KeyCopilot]; c.State != Ready {
+		t.Errorf("readiness with VS Code's CLI is %+v", c)
+	}
+}
+
+// The CLI VS Code installed runs as the server, so it is held to what a path the operator names is
+// held to: nothing another account could change. It is found in a directory the environment names,
+// and a link there is followed only as far as that directory goes.
+func TestVSCodesCLIIsUsedOnlyWhereNoOtherAccountCouldChangeIt(t *testing.T) {
+	link := func(t *testing.T, cli, target string) {
+		t.Helper()
+		if err := os.Remove(cli); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, cli); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, c := range map[string]struct {
+		arrange func(t *testing.T, p place, cli string)
+		used    bool
+	}{
+		"as installed": {func(*testing.T, place, string) {}, true},
+		"in a directory anyone can write": {func(t *testing.T, _ place, cli string) {
+			if err := os.Chmod(filepath.Dir(cli), 0o777); err != nil {
+				t.Fatal(err)
+			}
+		}, false},
+		"a file anyone can write": {func(t *testing.T, _ place, cli string) {
+			if err := os.Chmod(cli, 0o777); err != nil {
+				t.Fatal(err)
+			}
+		}, false},
+		"a link to a file beside it": {func(t *testing.T, _ place, cli string) {
+			if err := os.WriteFile(filepath.Join(filepath.Dir(cli), "copilot-1.0.88"),
+				[]byte("#!/bin/sh\nprintf '1.0.88\\n'\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			link(t, cli, "copilot-1.0.88")
+		}, true},
+		"a link to a file anyone can write": {func(t *testing.T, _ place, cli string) {
+			loose := filepath.Join(filepath.Dir(cli), "copilot-1.0.88")
+			if err := os.WriteFile(loose, []byte("#!/bin/sh\nprintf '1.0.88\\n'\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(loose, 0o777); err != nil {
+				t.Fatal(err)
+			}
+			link(t, cli, "copilot-1.0.88")
+		}, false},
+		"a link out of the configuration directory": {func(t *testing.T, p place, cli string) {
+			elsewhere := p.at(t, "elsewhere", "copilot", "1.0.88")
+			rel, err := filepath.Rel(filepath.Dir(cli), elsewhere)
+			if err != nil {
+				t.Fatal(err)
+			}
+			link(t, cli, rel)
+		}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := newPlace(t)
+			home := filepath.Join(p.dir, "home")
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+			config, err := os.UserConfigDir()
+			if err != nil {
+				t.Fatal(err)
+			}
+			cli := p.at(t, filepath.Join(strings.TrimPrefix(config, p.dir+string(filepath.Separator)),
+				"Code", "User", "globalStorage", "github.copilot-chat", "copilotCli"), "copilot", "1.0.88")
+			c.arrange(t, p, cli)
+			tc := p.chain(t)
+			tc.Copilot = Tool{}
+			tc.Timeout = 10 * time.Second
+
+			if _, err := tc.Load(); err != nil {
+				t.Fatal(err)
+			}
+			if used := tc.Copilot.Source == SourceVSCode; used != c.used {
+				t.Errorf("VS Code's CLI used: %v, want %v (Copilot is %+v)", used, c.used, tc.Copilot)
+			}
+		})
 	}
 }
 

@@ -918,6 +918,9 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"abom_query_test", "fixtures_digest", "TEXT"},
 	{"abom_query_test", "missing", "INTEGER"},
 	{"abom_query_test", "unexpected", "INTEGER"},
+	// Nullable: a run recorded before these were kept names no marked fixture, which is not a run
+	// over none.
+	{"abom_query_test", "marked_fixtures", "TEXT"},
 	// Nullable: a request kept before targets were attributed says nobody is recorded as choosing
 	// it, which must not read as the operator having chosen it.
 	{"abom_query_request", "target_source", "TEXT"},

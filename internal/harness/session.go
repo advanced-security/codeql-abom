@@ -58,6 +58,10 @@ type Sessions struct {
 	live    map[int64]*live
 	// drafting is the sessions drafting from a run, by run.
 	drafting map[int64]*live
+
+	outsideMu sync.Mutex
+	// outside is where session state goes while WorkDir is inside the pack, made on first use.
+	outside string
 }
 
 // SetAgent changes what runs the next session; one already under way keeps its own.
@@ -173,7 +177,11 @@ func (s *Sessions) start(request int64, by string) (store.AuthoringSession, <-ch
 func (s *Sessions) prepareAuthoringBounds(
 	id int64, bounds Bounds,
 ) (dir, home, scratch string, out Bounds, detail string, err error) {
-	dir = filepath.Join(s.WorkDir, fmt.Sprintf("session-%d", id))
+	root, err := s.sessionDir()
+	if err != nil {
+		return "", "", "", bounds, "preparing the session's directory: " + err.Error(), err
+	}
+	dir = filepath.Join(root, fmt.Sprintf("session-%d", id))
 	home, scratch = filepath.Join(dir, "copilot"), filepath.Join(dir, "ql-mcp")
 	for _, d := range []string{home, scratch} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
@@ -575,10 +583,23 @@ func (s *Sessions) nudge(ctx context.Context, request int64, gate *Gate, guard f
 			"query, compile it, and call " + ToolTest + " again"},
 	} {
 		if got := steps[st.step]; got.State != authoring.Passing {
-			return fmt.Sprintf("Not finished: %s is %s: %s. %s.", st.step, got.State, got.Detail, st.do), files
+			return fmt.Sprintf("Not finished: %s is %s: %s. %s.", st.step, got.State, got.Detail, todo(st.step, st.do, got)), files
 		}
 	}
 	return "", files
+}
+
+// todo is what to do about a step that has not passed. Tests that pass already are not made to
+// pass by changing the query: they are run again, or shown able to fail.
+func todo(step, do string, got authoring.Step) string {
+	switch {
+	case step != StepTests || got.State != authoring.Warning:
+		return do
+	case got.Unproven:
+		return "Show the tests can fail: change the query so it misses a marked result, call " + ToolTest +
+			" and read that it fails, then restore the query and call " + ToolTest + " again"
+	}
+	return "Call " + ToolTest + " again"
 }
 
 func (s *Sessions) requestNamed(id int64) (store.QueryRequest, error) {
@@ -607,6 +628,38 @@ func (s *Sessions) session(request, id int64) (store.AuthoringSession, error) {
 	return store.AuthoringSession{}, fmt.Errorf("session %d is not on record", id)
 }
 
+// sessionDir is where session state is kept: under --work-dir, which the operator names relative to
+// where the server started, never to the pack. Where that is inside the pack, a session could read
+// its own state there, so it is kept outside the pack instead, in a private directory made once for
+// the server's run, as its default scratch is. Never a fixed name under a directory the environment
+// names: a link planted ahead of it would carry every write and every cleanup somewhere else.
+func (s *Sessions) sessionDir() (string, error) {
+	if s.WorkDir == "" {
+		return "", errors.New("no directory is configured for session state")
+	}
+	dir, err := filepath.Abs(s.WorkDir)
+	if err != nil {
+		return "", err
+	}
+	b, err := NewBounds(s.Workspace, nil)
+	if err != nil {
+		return "", err
+	}
+	if real, err := b.resolve(dir); err != nil || !within(b.Workspace(), real) {
+		return dir, err
+	}
+	s.outsideMu.Lock()
+	defer s.outsideMu.Unlock()
+	if s.outside == "" {
+		made, err := os.MkdirTemp("", "abom-authoring-*")
+		if err != nil {
+			return "", err
+		}
+		s.outside = made
+	}
+	return s.outside, nil
+}
+
 // bounds are the pack and libraries to read, and the operator's target to write when they chose one.
 func (s *Sessions) bounds(req store.QueryRequest) (Bounds, error) {
 	b, err := NewBounds(s.Workspace, s.Libraries)
@@ -614,16 +667,16 @@ func (s *Sessions) bounds(req store.QueryRequest) (Bounds, error) {
 		return Bounds{}, err
 	}
 	// Everything under the pack is readable, so a session directory there would expose the CLI's state.
-	if s.WorkDir == "" {
-		return Bounds{}, errors.New("no directory is configured for session state")
+	dir, err := s.sessionDir()
+	if err != nil {
+		return Bounds{}, err
 	}
-	work, err := b.resolve(s.WorkDir)
+	work, err := b.resolve(dir)
 	if err != nil {
 		return Bounds{}, err
 	}
 	if within(b.Workspace(), work) {
-		return Bounds{}, fmt.Errorf("the session directory %s must not sit inside the pack at %s",
-			s.WorkDir, s.Workspace)
+		return Bounds{}, fmt.Errorf("session state at %s would be inside the query pack at %s", dir, s.Workspace)
 	}
 	if req.QueryID == "" {
 		return b, nil
@@ -878,7 +931,16 @@ func (s *Sessions) catalog() (string, error) {
 
 func (s *Sessions) decide(request int64, gate *Gate, c targetChoice) (string, error) {
 	if b := gate.Bounds(); b.bound() {
-		return "", fmt.Errorf("this session is already about %s; work on it", b.rel(b.query))
+		req, err := s.requestNamed(request)
+		if err != nil {
+			return "", err
+		}
+		// Confirming the choice is an answer, not a mistake; only another query is refused.
+		if c.QueryID == "" || strings.EqualFold(c.QueryID, req.QueryID) {
+			return bound(req.QueryID, b), nil
+		}
+		return "", fmt.Errorf("this session is about %s, in %s, chosen once for this request, and a "+
+			"session writes one query; work on it rather than %s", req.QueryID, b.rel(b.query), c.QueryID)
 	}
 	if strings.TrimSpace(c.Rationale) == "" {
 		return "", errors.New("say why this query, in the rationale")
@@ -923,11 +985,15 @@ func (s *Sessions) decide(request int64, gate *Gate, c targetChoice) (string, er
 	if err := gate.Bind(query, tests); err != nil {
 		return "", err
 	}
-	b := gate.Bounds()
-	return fmt.Sprintf("This session is now about %s, in %s, which is on disk: change it with edit, "+
+	return bound(c.QueryID, gate.Bounds()), nil
+}
+
+// bound tells the agent the query its session is about and where to work on it.
+func bound(queryID string, b Bounds) string {
+	return fmt.Sprintf("This session is about %s, in %s, which is on disk: change it with edit or apply_patch, "+
 		"since create refuses a file that exists. Write fixtures under %s, marking each line to report "+
-		"with # $ Alert, then call %s before changing the query.", c.QueryID, b.query,
-		filepath.Join(b.tests, ".github", "workflows"), ToolTest), nil
+		"with # $ Alert, then call %s before changing the query.", queryID, b.rel(b.query),
+		filepath.Join(b.rel(b.tests), ".github", "workflows"), ToolTest)
 }
 
 // taken says why a new query cannot have this id or file name, or is empty when it can.
@@ -971,6 +1037,45 @@ func (s *Sessions) taken(id, name string) (string, error) {
 	return "", nil
 }
 
+// libraryText names the library sources a query is written against: each pack the pack's lock
+// resolves, where it is on disk, codeql/actions-all first. The package cache holds every language
+// at every version, so it is named only while nothing is locked; a search of all of it timed out.
+// The lock is a file in the pack, so each name in it is looked up through a root at the cache: one
+// that climbs out of it names nothing.
+func libraryText(workspace string, roots []string) string {
+	packs, _ := authoring.Locked(filepath.Join(workspace, "codeql-pack.lock.yml"))
+	var found []string
+	for _, p := range packs {
+		if dir := lockedLibrary(roots, filepath.Join(filepath.FromSlash(p.Name), p.Version)); dir != "" {
+			found = append(found, fmt.Sprintf("%s %s at %s", p.Name, p.Version, dir))
+		}
+	}
+	if len(found) == 0 || !strings.HasPrefix(found[0], "codeql/actions-all ") {
+		return "under " + strings.Join(roots, ", ")
+	}
+	if len(found) == 1 {
+		return found[0] + ", where the Actions classes are"
+	}
+	return found[0] + ", where the Actions classes are, and the packs it depends on: " +
+		strings.Join(found[1:], ", ")
+}
+
+// lockedLibrary is the first root holding rel as a directory, joined to it; empty where none does.
+func lockedLibrary(roots []string, rel string) string {
+	for _, root := range roots {
+		r, err := os.OpenRoot(root)
+		if err != nil {
+			continue
+		}
+		info, err := r.Stat(rel)
+		_ = r.Close()
+		if err == nil && info.IsDir() {
+			return filepath.Join(root, rel)
+		}
+	}
+	return ""
+}
+
 // rules are appended to the system message: what the session is about, what it may touch, and
 // the order the loop goes in.
 func rules(b Bounds, libraries []string, target string) string {
@@ -978,12 +1083,24 @@ func rules(b Bounds, libraries []string, target string) string {
 	fmt.Fprintf(&out, "You are working one request for a CodeQL query over GitHub Actions workflows, "+
 		"inside ABOM, in the query pack at %s. ABOM decides and records every tool call before it "+
 		"runs. A refused call says why, and the same call again is refused again.\n\n", b.Workspace())
-	fmt.Fprintf(&out, "You have no shell. Read the pack and the CodeQL library sources under %s with "+
-		"view, glob and grep; write with create and edit; use ql-mcp's %s; and ABOM's %s, %s and %s.\n\n",
-		strings.Join(libraries, ", "), strings.Join(loopNames(), ", "), ToolCatalog, ToolTarget, ToolTest)
+	fmt.Fprintf(&out, "You have no shell. Read the pack and the CodeQL library sources it compiles "+
+		"against, %s, with view, glob and grep or rg; write with create and edit, or apply_patch, "+
+		"whichever you have; use ql-mcp's %s; and ABOM's %s, %s and %s. To learn what a library class "+
+		"or predicate offers, ask the language server rather than searching: codeql_lsp_definition and "+
+		"codeql_lsp_references at a 0-based line and character of a file, and codeql_lsp_document_symbols "+
+		"for what a file defines, each with workspace_uri \".\", the pack.\n\n",
+		libraryText(b.Workspace(), libraries), strings.Join(loopNames(), ", "), ToolCatalog, ToolTarget,
+		ToolTest)
 	if b.bound() {
 		fmt.Fprintf(&out, "This session is about %s, the query in %s, tested in %s.\n\n", target, b.query,
 			b.tests)
+		query, tests := b.rel(b.query), b.rel(b.tests)
+		fmt.Fprintf(&out, "ql-mcp takes these shapes, with paths relative to the pack: codeql_query_run "+
+			"with queryName \"PrintAST\", queryLanguage \"actions\", database %q named every time, and "+
+			"sourceFiles as one string separated by commas, such as \".github/workflows/a.yml,action.yml\"; "+
+			"codeql_query_compile with query %q; codeql_test_extract and codeql_test_run with tests [%q]. "+
+			"To run the query against its test database, call %s, which records the result.\n\n",
+			b.rel(b.database()), query, tests, ToolTest)
 	} else {
 		fmt.Fprintf(&out, "No query has been chosen for this request. Call %s, then %s: improve a "+
 			"query already in your pack, or create a new one with a new id and file name. Nothing can "+
@@ -992,6 +1109,7 @@ func rules(b Bounds, libraries []string, target string) string {
 	out.WriteString("You may write the target query, its help in a .md file beside it, its .expected, and " +
 		"Actions YAML fixtures under its test directory: workflows under .github/workflows there, or " +
 		"action metadata. create writes a new file and refuses one that exists; change a file with edit. " +
+		"apply_patch adds and changes files, and never deletes or moves one. " +
 		"The .qlref, the .actual, the test database and every manifest belong to ABOM and the CLI.\n\n")
 	out.WriteString("Use minimal synthetic or anonymized reproductions for fixtures and help examples, " +
 		"not verbatim private production source. Replace identifying names, URLs and sensitive values " +
@@ -1003,7 +1121,10 @@ func rules(b Bounds, libraries []string, target string) string {
 		"request, replace every " + customql.HelpUnwritten + " with what that section should say.\n" +
 		"2. Write one fixture per example of the request, each its own workflow file. Then give " +
 		"every case and edge case the query detects at least one non-compliant fixture and at least " +
-		"one compliant fixture; add more only where each tests something the others do not. Mark each line " +
+		"one compliant fixture; add more only where each tests something the others do not. Every " +
+		"fixture is valid GitHub Actions syntax, so cover only where Actions takes the pattern: " +
+		"container:, services:, permissions:, secrets: and a reusable workflow's uses: belong to a job, " +
+		"never to a step or a composite action. Mark each line " +
 		"the query must report with a trailing # $ Alert comment, and leave the compliant examples " +
 		"unmarked. A result meets a mark on the line its location ends on, so report the value on that " +
 		"line, such as a uses step's getCalleeNode(), not the step or job around it, whose location " +

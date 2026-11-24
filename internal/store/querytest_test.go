@@ -2,6 +2,7 @@ package store
 
 import (
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -60,7 +61,7 @@ func TestSQLiteRecordedTestKeepsWhereItStoppedAndWhatItRan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if all["acme/rule\x00v1"] != got {
+	if !reflect.DeepEqual(all["acme/rule\x00v1"], got) {
 		t.Errorf("the catalog reads %+v where the lookup reads %+v", all["acme/rule\x00v1"], got)
 	}
 
@@ -185,6 +186,55 @@ func TestATestKeepsItsFixturesAndWhatItsExpectationsSaid(t *testing.T) {
 	if broken.Missing != nil || broken.Unexpected != nil {
 		t.Errorf("a run that never compared results reads missing=%v unexpected=%v, want neither",
 			broken.Missing, broken.Unexpected)
+	}
+}
+
+// A failure on missing results names the marked fixtures it ran over, by their digests, so it holds
+// while they are unchanged. A run recorded before they were kept names none, which is not a run
+// over no marked fixture.
+func TestATestKeepsTheMarkedFixturesItRanOver(t *testing.T) {
+	s := newTestStore(t)
+	marked := map[string]string{"test/A/.github/workflows/ci.yml": "c1", "test/A/action.yml": "a1"}
+	for _, r := range []QueryTest{
+		{QueryID: "acme/rule", QueryVersion: "stub", CLIVersion: testCLI, Total: 1, Failed: 1,
+			FixturesDigest: "f1", MarkedFixtures: marked},
+		{QueryID: "acme/rule", QueryVersion: "none-marked", CLIVersion: testCLI, Total: 1,
+			FixturesDigest: "f1", MarkedFixtures: map[string]string{}},
+		{QueryID: "acme/rule", QueryVersion: "older", CLIVersion: testCLI, Total: 1, FixturesDigest: "f1"},
+	} {
+		if err := s.RecordQueryTest(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for version, want := range map[string]map[string]string{
+		"stub": marked, "none-marked": {}, "older": nil,
+	} {
+		got, _, err := s.QueryTestFor("acme/rule", version, testCLI)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(got.MarkedFixtures, want) || (want == nil) != (got.MarkedFixtures == nil) {
+			t.Errorf("%s read back marked fixtures %#v, want %#v", version, got.MarkedFixtures, want)
+		}
+	}
+}
+
+// A row whose marked fixtures cannot be read says which result it is, or nobody can find it to repair.
+func TestUnreadableMarkedFixturesNameTheResultTheyBelongTo(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.RecordQueryTest(QueryTest{QueryID: "acme/rule", QueryVersion: "stub", CLIVersion: testCLI,
+		Total: 1, MarkedFixtures: map[string]string{"test/A/ci.yml": "c1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE abom_query_test SET marked_fixtures = ? WHERE query_id = ?`,
+		`{"test/A/ci.yml":`, "acme/rule"); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := s.QueryTestFor("acme/rule", "stub", testCLI)
+	for _, want := range []string{"marked fixtures", "acme/rule", "stub", testCLI} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("reading a corrupt row = %v, want an error naming %q", err, want)
+		}
 	}
 }
 

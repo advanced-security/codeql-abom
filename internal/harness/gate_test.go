@@ -94,6 +94,29 @@ func TestARefusedAttemptIsKeptWithWhatWasAttempted(t *testing.T) {
 	}
 }
 
+// A corrected call reaches the runtime as the arguments ABOM forwards, with the agent told why, and
+// the timeline keeps both what the agent sent and what was corrected.
+func TestACorrectedCallIsForwardedCorrectedAndRecordedAsSent(t *testing.T) {
+	g, j, _ := newGate(t)
+	db := g.Bounds().database()
+	sent := map[string]any{"database": filepath.Join(db, "db-actions"), "queryName": "PrintAST",
+		"queryLanguage": "actions", "sourceFiles": []any{".github/workflows/checkout.yml"}}
+	out, err := g.PreToolUse(copilot.PreToolUseHookInput{ToolName: Server + "-codeql_query_run", ToolArgs: sent},
+		copilot.HookInvocation{})
+	if err != nil || out == nil || out.PermissionDecision == "deny" {
+		t.Fatalf("corrected call: %+v %v, want it allowed", out, err)
+	}
+	forwarded, _ := out.ModifiedArgs.(map[string]any)
+	if forwarded["database"] != db || forwarded["sourceFiles"] != ".github/workflows/checkout.yml" ||
+		!strings.Contains(out.AdditionalContext, "corrected") {
+		t.Errorf("forwarded %v with %q", out.ModifiedArgs, out.AdditionalContext)
+	}
+	e := j.all()[0]
+	if e.Decision != DecisionAllowed || !strings.Contains(e.Reason, "corrected") || !strings.Contains(e.Subject, "db-actions") {
+		t.Errorf("recorded %+v, want allowed with the correction and the agent's own arguments", e)
+	}
+}
+
 // File contents are the agent's working text, which the timeline has no use for and a reader has
 // no need to wade through; the file it named and the size are what an audit asks.
 func TestTheTimelineKeepsWhatWasTouchedNotTheText(t *testing.T) {

@@ -91,6 +91,7 @@ func newAuthoring(s store.Backend, o authoringOptions, x *expand.Expander, workD
 			Token:   token,
 			Mint:    o.mint,
 			QLMCP:   strings.Fields(o.qlmcp),
+			Serial:  relay(),
 			CodeQL:  codeql,
 			Packs:   runner.PackSearchPath(),
 			Credits: o.credits,
@@ -141,8 +142,12 @@ func newToolchain(s store.Backend, cfg *serveConfig, stderr io.Writer) *toolchai
 			return err
 		}
 	}
-	if err := chain.Load(); err != nil {
+	said, err := chain.Load()
+	if err != nil {
 		fmt.Fprintf(stderr, "serve: reading the tool paths saved in Settings: %v\n", err)
+	}
+	for _, s := range said {
+		fmt.Fprintf(stderr, "serve: %s\n", s)
 	}
 	codeql, copilot = chain.InUse()
 	cfg.discovery.codeqlPath, cfg.authoring.copilotCLI = codeql.Path, copilot.Path

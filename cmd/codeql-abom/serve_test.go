@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"io"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -213,5 +214,32 @@ func TestServeNamesTheGraphvizItDrawsWith(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "Graphviz "+version) {
 		t.Errorf("the banner does not name Graphviz %s:\n%s", version, out.String())
+	}
+}
+
+// A session runs its CLIs in the pack and confines the agent to paths read against it, so a path
+// flag named relative to where the server started must reach neither relative: it is made absolute
+// once, at parse, and nobody has to know to pass absolute paths.
+func TestPathFlagsAreNamedFromWhereTheServerStarted(t *testing.T) {
+	t.Chdir(t.TempDir())
+	cfg, err := parseServeArgs([]string{"--db", "abom.db", "--custom-ql-dir", "ql/custom", "--work-dir", "work",
+		"--cache-dir", "cache", "--database-cache-dir", "databases", "--codeql", "bin/codeql"}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := cfg.discovery
+	for name, got := range map[string]string{"--custom-ql-dir": d.customQLDir, "--work-dir": d.workDir,
+		"--cache-dir": d.cacheDir, "--database-cache-dir": d.databaseCacheDir, "--codeql": d.codeqlPath} {
+		if !filepath.IsAbs(got) {
+			t.Errorf("%s reached the server as %q", name, got)
+		}
+	}
+	bare, err := parseServeArgs([]string{"--db", "abom.db", "--codeql", "codeql"}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bare.discovery.codeqlPath != "codeql" || bare.discovery.workDir != "" {
+		t.Errorf("a bare name or an absent flag changed: codeql %q, work dir %q",
+			bare.discovery.codeqlPath, bare.discovery.workDir)
 	}
 }

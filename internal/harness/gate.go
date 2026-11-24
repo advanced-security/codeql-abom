@@ -195,6 +195,9 @@ func (g *Gate) PreToolUse(in copilot.PreToolUseHookInput, _ copilot.HookInvocati
 	if err := g.keep(e, v); err != nil {
 		return deny(unrecorded(err)), nil
 	}
+	if v.Allowed && v.Args != nil {
+		return &copilot.PreToolUseHookOutput{ModifiedArgs: v.Args, AdditionalContext: v.Reason}, nil
+	}
 	if v.Allowed {
 		return nil, nil
 	}
@@ -614,7 +617,17 @@ func (b Bounds) subject(tool string, args any) string {
 	switch {
 	case tool == "view" || tool == "create" || tool == "edit":
 		return pick("path")
-	case tool == "glob" || tool == "grep":
+	case tool == "apply_patch":
+		var named []string
+		for _, line := range strings.Split(patchText(args), "\n") {
+			for _, op := range []string{"*** Add File: ", "*** Update File: ", "*** Delete File: ", "*** Move to: "} {
+				if path, ok := strings.CutPrefix(strings.TrimRight(line, "\r"), op); ok {
+					named = append(named, b.name(strings.TrimSpace(path)))
+				}
+			}
+		}
+		return strings.Join(named, ", ")
+	case tool == "glob" || tool == "grep" || tool == "rg":
 		pattern, _ := fields["pattern"].(string)
 		return strings.TrimSpace(pick("paths") + " " + pattern)
 	case tool == "bash":
@@ -624,7 +637,7 @@ func (b Bounds) subject(tool string, args any) string {
 		if name, ok := fields["queryName"].(string); ok {
 			return name + " on " + pick("database")
 		}
-		return pick("tests", "query", "database", "basePath", "workspace_uri")
+		return pick("tests", "query", "database", "basePath", "file_path", "workspace_uri")
 	}
 	return ""
 }

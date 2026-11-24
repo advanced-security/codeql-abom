@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,6 +38,9 @@ const (
 
 // SourceSettings names a path an operator set in the interface.
 const SourceSettings = "Settings"
+
+// SourceVSCode names the Copilot CLI VS Code installed, used where nothing else names one.
+const SourceVSCode = "VS Code"
 
 // DefaultTimeout bounds a version probe. A VS Code shim answers no flag and waits for input.
 const DefaultTimeout = 15 * time.Second
@@ -119,22 +123,47 @@ type probed struct {
 	err     error
 }
 
-// Load puts a path saved in Settings ahead of the flag or environment that chose the default.
-func (t *Toolchain) Load() error {
+// Load puts a path saved in Settings ahead of the flag or environment that chose the default. A
+// saved path that no longer exists — an editor's update moves the CLI it installed — is forgotten
+// and the default used instead; what Load did is returned, a sentence each, for the server to say.
+func (t *Toolchain) Load() ([]string, error) {
 	saved, err := t.Store.ToolPaths()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.rememberDefaults()
-	if p, ok := saved[store.ToolCodeQL]; ok {
-		t.CodeQL = Tool{Path: p.Path, Source: SourceSettings}
+	var said []string
+	for _, tool := range []struct {
+		name string
+		into *Tool
+	}{{store.ToolCodeQL, &t.CodeQL}, {store.ToolCopilot, &t.Copilot}} {
+		p, ok := saved[tool.name]
+		if !ok || p.Path == "" {
+			continue
+		}
+		if _, err := os.Stat(p.Path); errors.Is(err, fs.ErrNotExist) {
+			if err := t.Store.SetToolPath(tool.name, "", "abom"); err != nil {
+				return said, err
+			}
+			instead := "nothing is named in its place"
+			if d := t.defaults[tool.name]; d.Path != "" {
+				instead = d.Path + ", from " + d.Source + ", is used instead"
+			}
+			said = append(said, fmt.Sprintf("the %s path saved in Settings, %s, no longer exists, so it was "+
+				"forgotten and %s", tool.name, p.Path, instead))
+			continue
+		}
+		*tool.into = Tool{Path: p.Path, Source: SourceSettings}
 	}
-	if p, ok := saved[store.ToolCopilot]; ok {
-		t.Copilot = Tool{Path: p.Path, Source: SourceSettings}
+	if t.Copilot.Path == "" {
+		if found, err := vscodeCopilot(); found != "" && err == nil {
+			t.Copilot = Tool{Path: found, Source: SourceVSCode}
+			said = append(said, "no Copilot CLI is named, so the one VS Code installed, "+found+", is used")
+		}
 	}
-	return nil
+	return said, nil
 }
 
 func (t *Toolchain) rememberDefaults() {
@@ -226,7 +255,7 @@ func (t *Toolchain) copilotCheck(ctx context.Context, tool Tool, saved map[strin
 		c.Saved = p.Path
 	}
 	remedy := "set its path in Settings, or start the server with --copilot-cli or COPILOT_CLI_PATH"
-	if found := vscodeCopilot(); found != "" && found != tool.Path {
+	if found, _ := vscodeCopilot(); found != "" && found != tool.Path {
 		remedy += "; VS Code installed one at " + found
 	}
 	if tool.Path == "" {
@@ -356,13 +385,44 @@ func ownedHere(path string) error {
 		if err != nil {
 			return fmt.Errorf("%w: %s cannot be read: %v", ErrUnusable, p, err)
 		}
-		if info.Mode().Perm()&0o002 != 0 {
-			return fmt.Errorf("%w: anyone can write %s, so anyone could change what the server runs", ErrUnusable, p)
+		if err := owned(p, info); err != nil {
+			return err
 		}
-		if st, ok := info.Sys().(*syscall.Stat_t); !ok || (int(st.Uid) != os.Getuid() && st.Uid != 0) {
-			return fmt.Errorf("%w: %s belongs to another account, which could change what the server runs",
-				ErrUnusable, p)
+	}
+	return nil
+}
+
+// ownedIn is ownedHere for rel under root, a directory the environment names: every check is made
+// through the root, so a link that leads out of it is refused rather than followed.
+func ownedIn(root *os.Root, rel string) error {
+	resolved := rel
+	if info, err := root.Lstat(rel); err == nil && info.Mode()&fs.ModeSymlink != 0 {
+		target, err := root.Readlink(rel)
+		if err != nil || filepath.IsAbs(target) {
+			return fmt.Errorf("%w: %s leads out of %s", ErrUnusable, filepath.Join(root.Name(), rel), root.Name())
 		}
+		resolved = filepath.Join(filepath.Dir(rel), target)
+	}
+	for _, p := range []string{filepath.Dir(rel), filepath.Dir(resolved), resolved} {
+		info, err := root.Stat(p)
+		if err != nil {
+			return fmt.Errorf("%w: %s cannot be read: %v", ErrUnusable, filepath.Join(root.Name(), p), err)
+		}
+		if err := owned(filepath.Join(root.Name(), p), info); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// owned refuses what anyone may write, or what belongs to an account other than this one or root.
+func owned(name string, info fs.FileInfo) error {
+	if info.Mode().Perm()&0o002 != 0 {
+		return fmt.Errorf("%w: anyone can write %s, so anyone could change what the server runs", ErrUnusable, name)
+	}
+	if st, ok := info.Sys().(*syscall.Stat_t); !ok || (int(st.Uid) != os.Getuid() && st.Uid != 0) {
+		return fmt.Errorf("%w: %s belongs to another account, which could change what the server runs",
+			ErrUnusable, name)
 	}
 	return nil
 }
@@ -448,23 +508,24 @@ func firstLine(out []byte) (string, error) {
 	return "", errors.New("printed no version")
 }
 
-// vscodeCopilot is where the Copilot Chat extension installs the CLI, if it did. It is read through a
-// root at the configuration directory, which the environment names, so a link cannot lead out of it.
-func vscodeCopilot() string {
+// vscodeCopilot is where the Copilot Chat extension installs the CLI, if it did, and why the server
+// may not run it there, if it may not. Both are read through a root at the configuration directory,
+// which the environment names, so a link cannot lead out of it.
+func vscodeCopilot() (string, error) {
 	dir, err := os.UserConfigDir()
 	if err != nil {
-		return ""
+		return "", nil
 	}
 	root, err := os.OpenRoot(dir)
 	if err != nil {
-		return ""
+		return "", nil
 	}
 	defer func() { _ = root.Close() }()
 	rel := filepath.Join("Code", "User", "globalStorage", "github.copilot-chat", "copilotCli", "copilot")
 	if info, err := root.Stat(rel); err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
-		return ""
+		return "", nil
 	}
-	return filepath.Join(dir, rel)
+	return filepath.Join(dir, rel), ownedIn(root, rel)
 }
 
 func exists(path string) bool {

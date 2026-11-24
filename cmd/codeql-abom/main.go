@@ -44,6 +44,7 @@ var subcommands = []subcommand{
 	{"app", runApp, "Create, check, install and relay the read-only GitHub App ABOM can read as."},
 	{"selfcheck", runSelfcheck, "Analyze a source tree with a CodeQL suite as a smoke test."},
 	{"version", runVersion, "Print which build this is and the CodeQL version it was made for."},
+	{"serialize-mcp", runSerializeMCP, "Start an MCP stdio server and hand it one tool call at a time, as authoring sessions start ql-mcp."},
 }
 
 func main() {

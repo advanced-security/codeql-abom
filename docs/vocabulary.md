@@ -191,7 +191,7 @@ evidence. Neither a lock context nor a query's source substitutes for this datab
 | **Step** | One of seven marks inside `dev` and `test`: target, help, expected results, test database, AST, compiles, tests. A done step says what was done: chosen, written, extracted, printed, compiles, pass. Otherwise failed, unconfirmed or not yet. Not yet is grey and is never a failure |
 | **Outcome** | Where a request stands as a whole, read from its steps: an agent working on it (and the first step not yet passed), a failed or unconfirmed step, not started, unfinished at a step, or ready |
 | **Mark** (in a fixture) | `# $ Alert` on a line the query must report. A marked line it does not report is a **missing** result, and an unmarked line it reports an **unexpected** one |
-| **Failed first** | A version's tests failed on a marked result, over the fixtures a later version passes on. Without it the tests step is a warning |
+| **Failed first** | A version's tests failed on a marked result, over the fixtures a later version passes on, or over marked fixtures it still holds unchanged. Without it the tests step is a warning |
 | **CodeQL *x*** | The CodeQL a test, a tree or a run was recorded under. A mark recorded under another reads as stale, and *not recorded* is not a version |
 | **Request** | What a query should catch or stop catching, with at least one `COMPLIANT` and one `NON_COMPLIANT` example. Open, in progress, done or declined. A query id the catalog holds asks to **improve** it; any other valid id asks to **create** it |
 | **Linked example** | An example read from a GitHub link to lines, kept with the commit it was read at, so it does not change when the branch moves |

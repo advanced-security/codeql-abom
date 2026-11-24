@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -171,7 +172,8 @@ func TestTheRecordedLoopIsAllowedAndItsDetoursAreNot(t *testing.T) {
 		{"ql-mcp-create_codeql_query", `{"basePath":"$WS/test/CheckoutTagPin","description":"scaffold helper used only to create the .github/workflows directory","language":"actions","queryId":"abom/scaffold-helper","queryName":"../../CheckoutTagPin/.github/workflows/Scaffold"}`, false},
 		{"ql-mcp-codeql_pack_install", `{}`, false},
 		{"ql-mcp-codeql_test_extract", `{"testPath":"$WS/test/CheckoutTagPin"}`, false},
-		{"ql-mcp-codeql_test_extract", `{"tests":"$WS/test/CheckoutTagPin"}`, false},
+		// One path where a list is taken means that one test; ABOM passes it as a list.
+		{"ql-mcp-codeql_test_extract", `{"tests":"$WS/test/CheckoutTagPin"}`, true},
 		{"bash", `{"command":"mkdir -p $WS/test/CheckoutTagPin/.github/workflows","description":"Create workflows directory"}`, false},
 		{"edit", `{"path":"$WS/test/CheckoutTagPin/CheckoutTagPin.qlref"}`, false},
 		{"create", `{"path":"$WS/codeql-workspace.yml"}`, false},
@@ -264,11 +266,12 @@ func TestARefusedArgumentIsAnsweredWithTheArgumentsATakes(t *testing.T) {
 	if !strings.Contains(v.Reason, "tests") {
 		t.Errorf("refusal does not say the tool takes tests: %q", v.Reason)
 	}
-	// A live session sent the files as a list; ql-mcp takes them as one string.
+	// A live session sent the files as a list; ql-mcp takes them as one string, so ABOM passes them
+	// that way and tells the agent the form.
 	v = b.Call("ql-mcp-codeql_query_run", map[string]any{"queryName": "PrintAST", "queryLanguage": "actions",
 		"database": b.database(), "sourceFiles": []any{".github/workflows/checkout.yml", "action.yml"}})
-	if v.Allowed || !strings.Contains(v.Reason, "comma") {
-		t.Errorf("a list of source files: %+v, want refused saying they are separated by commas", v)
+	if !v.Allowed || !strings.Contains(v.Reason, "comma") {
+		t.Errorf("a list of source files: %+v, want it passed on, saying they are separated by commas", v)
 	}
 }
 
@@ -487,6 +490,176 @@ func TestStepsAreNamedAsTheProgressNamesThem(t *testing.T) {
 		StepCompiles, StepTests} {
 		if !names[step] {
 			t.Errorf("step %q is not one authoring reports", step)
+		}
+	}
+}
+
+// ql-mcp documents a plain directory for workspace_uri and resolves it itself, and its language
+// server answers where a library class is defined in one call, where a live session's search of
+// the package cache timed out. The calls read only what a session reads, and pass through as sent.
+func TestTheLanguageServerToolsTakeThePackAndReadWhatASessionReads(t *testing.T) {
+	p := newPlace(t)
+	lib := filepath.Join(p.codeql, "packages", "codeql", "actions-all", "0.6.2", "Ast.qll")
+	if err := os.WriteFile(lib, []byte("class UsesStep extends Step { }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b := p.bound(t)
+	unbound, err := NewBounds(p.ws, []string{filepath.Join(p.codeql, "packages")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := func(file string, more map[string]any) map[string]any {
+		args := map[string]any{"file_path": file, "line": 3, "character": 7}
+		for k, v := range more {
+			args[k] = v
+		}
+		return args
+	}
+	for _, tc := range []struct {
+		name, tool string
+		b          Bounds
+		args       map[string]any
+		want       bool
+	}{
+		{"the pack as a relative path", "codeql_lsp_diagnostics", b, map[string]any{"ql_code": "x", "workspace_uri": "."}, true},
+		{"the pack as an absolute path", "codeql_lsp_diagnostics", b, map[string]any{"ql_code": "x", "workspace_uri": p.ws}, true},
+		{"the pack as a file URI", "codeql_lsp_diagnostics", b, map[string]any{"ql_code": "x", "workspace_uri": "file://" + p.ws}, true},
+		{"a workspace outside the pack", "codeql_lsp_diagnostics", b, map[string]any{"ql_code": "x", "workspace_uri": p.root}, false},
+		{"a definition in the query", "codeql_lsp_definition", b, at("src/CheckoutTagPin.ql", map[string]any{"workspace_uri": "."}), true},
+		{"a definition in a library", "codeql_lsp_definition", b, at(lib, nil), true},
+		{"a definition before a target is chosen", "codeql_lsp_definition", unbound, at(lib, nil), true},
+		{"references in a file outside", "codeql_lsp_references", b, at(filepath.Join(p.root, "x.qll"), nil), false},
+		{"a library's definitions by name", "codeql_lsp_document_symbols", b, map[string]any{"file_path": lib, "names_only": true}, true},
+		{"completions over unsaved text", "codeql_lsp_completion", b, at("src/CheckoutTagPin.ql", map[string]any{"file_content": "import actions\n"}), true},
+		{"libraries resolved from a path it names", "codeql_lsp_definition", b, at(lib, map[string]any{"search_path": p.root}), false},
+	} {
+		v := tc.b.Call(Server+"-"+tc.tool, tc.args)
+		if v.Allowed != tc.want {
+			t.Errorf("%s: allowed %v, want %v (%s)", tc.name, v.Allowed, tc.want, v.Reason)
+		}
+		if v.Allowed && v.Args != nil {
+			t.Errorf("%s: forwarded as %v, want as sent", tc.name, v.Args)
+		}
+	}
+}
+
+// A GPT model searches with rg and writes with apply_patch, the only tools it has for either; they
+// keep to the bounds grep, create and edit keep to, and a patch is judged by every file it names.
+func TestAModelsOwnSearchAndPatchToolsKeepToTheSameBounds(t *testing.T) {
+	p := newPlace(t)
+	b := p.bound(t)
+	patch := func(body string) string { return "*** Begin Patch\n" + body + "\n*** End Patch\n" }
+	for _, tc := range []struct {
+		name, tool string
+		args       any
+		want       bool
+	}{
+		{"a search in the pack", "rg", map[string]any{"pattern": "uses", "paths": "src"}, true},
+		{"a search outside it", "rg", map[string]any{"pattern": "uses", "paths": p.root}, false},
+		// The CLI's search tools take one directory or a list, and every one in a list must be readable.
+		{"a glob over two pack directories", "glob", map[string]any{"pattern": "**/*", "paths": []any{"src", "test/CheckoutTagPin"}}, true},
+		{"a list reaching outside", "rg", map[string]any{"pattern": "uses", "paths": []any{"src", p.root}}, false},
+		{"an update to the query", "apply_patch",
+			map[string]any{"input": patch("*** Update File: src/CheckoutTagPin.ql\n@@\n-a\n+b")}, true},
+		{"a new fixture, as a bare string", "apply_patch",
+			patch("*** Add File: test/CheckoutTagPin/.github/workflows/w.yml\n+on: push"), true},
+		{"the query and a fixture", "apply_patch", map[string]any{"input": patch(
+			"*** Update File: src/CheckoutTagPin.ql\n@@\n-a\n+b\n*** Add File: test/CheckoutTagPin/.github/workflows/w.yml\n+on: push")}, true},
+		{"one file it may not write", "apply_patch", map[string]any{"input": patch(
+			"*** Update File: src/CheckoutTagPin.ql\n@@\n-a\n+b\n*** Update File: test/CheckoutTagPin/CheckoutTagPin.qlref\n@@\n-a\n+b")}, false},
+		{"a delete", "apply_patch",
+			map[string]any{"input": patch("*** Delete File: test/CheckoutTagPin/.github/workflows/w.yml")}, false},
+		{"a move", "apply_patch",
+			map[string]any{"input": patch("*** Update File: src/CheckoutTagPin.ql\n*** Move to: src/Other.ql\n@@\n-a\n+b")}, false},
+		{"a patch naming no file", "apply_patch", map[string]any{"input": patch("")}, false},
+		{"no patch at all", "apply_patch", map[string]any{}, false},
+	} {
+		if got := b.Call(tc.tool, tc.args); got.Allowed != tc.want {
+			t.Errorf("%s: allowed %v (%s), want %v", tc.name, got.Allowed, got.Reason, tc.want)
+		}
+	}
+}
+
+// A ql-mcp call whose meaning is plain but whose form the server would not take is corrected and
+// allowed, with the agent told how, rather than refused: each of these cost a live session a refused
+// call and a retry. What a correction produces is itself allowed as it stands.
+func TestAPlainQlmcpCallIsCorrectedRatherThanRefused(t *testing.T) {
+	p := newPlace(t)
+	b := p.bound(t)
+	db, tests, query := b.database(), filepath.Join(p.ws, "test", "CheckoutTagPin"), b.query
+	printAST := func(extra map[string]any) map[string]any {
+		out := map[string]any{"database": db, "queryName": "PrintAST", "queryLanguage": "actions",
+			"sourceFiles": ".github/workflows/checkout.yml"}
+		for k, v := range extra {
+			if v == nil {
+				delete(out, k)
+				continue
+			}
+			out[k] = v
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		name, tool string
+		args, want map[string]any
+	}{
+		{"the dataset folder inside the test database", "codeql_query_run",
+			printAST(map[string]any{"database": filepath.Join(db, "db-actions")}), printAST(nil)},
+		{"the test directory holding the test database", "codeql_query_run",
+			printAST(map[string]any{"database": "test/CheckoutTagPin"}), printAST(nil)},
+		{"fixture files as a list", "codeql_query_run",
+			printAST(map[string]any{"sourceFiles": []any{".github/workflows/a.yml", "action.yml"}}),
+			printAST(map[string]any{"sourceFiles": ".github/workflows/a.yml,action.yml"})},
+		{"a tool query with no language", "codeql_query_run",
+			printAST(map[string]any{"queryLanguage": nil}), printAST(nil)},
+		{"a compile naming no query", "codeql_query_compile",
+			map[string]any{}, map[string]any{"query": query}},
+		{"tests named by one path", "codeql_test_run",
+			map[string]any{"tests": tests}, map[string]any{"tests": []any{tests}}},
+	} {
+		v := b.Call(Server+"-"+tc.tool, tc.args)
+		if !v.Allowed || !reflect.DeepEqual(v.Args, tc.want) || v.Reason == "" {
+			t.Errorf("%s: allowed %v, args %v (%s); want %v with what was corrected", tc.name, v.Allowed, v.Args, v.Reason, tc.want)
+			continue
+		}
+		if again := b.Call(Server+"-"+tc.tool, v.Args); !again.Allowed || again.Args != nil {
+			t.Errorf("%s: the corrected call is %+v, want it allowed as it stands", tc.name, again)
+		}
+		mcp := &rpc.PermissionRequestMCP{ServerName: Server, ToolName: Server + "-" + tc.tool, Args: tc.args}
+		if got := b.Request(mcp); !got.Allowed {
+			t.Errorf("%s: the permission request that follows is refused: %s", tc.name, got.Reason)
+		}
+	}
+	for name, args := range map[string]map[string]any{
+		"another test's database":          printAST(map[string]any{"database": filepath.Join(p.ws, "test", "SelfHostedRunner")}),
+		"neither a query nor a tool query": {"database": db},
+	} {
+		if v := b.Call(Server+"-codeql_query_run", args); v.Allowed {
+			t.Errorf("%s was allowed: %+v", name, v)
+		}
+	}
+	// Which database a run reads is never assumed, and running the query against its test database
+	// is what the test tools are for, so the refusal says both. A null or blank database names none
+	// either, and gets the same answer rather than a complaint about its type.
+	for name, database := range map[string]any{"absent": nil, "null": "null", "empty": "", "blank": "  "} {
+		args := printAST(map[string]any{"database": nil})
+		if name != "absent" {
+			args["database"] = database
+			if database == "null" {
+				args["database"] = nil
+			}
+		}
+		v := b.Call(Server+"-codeql_query_run", args)
+		if v.Allowed || v.Args != nil || !strings.Contains(v.Reason, "names no database") ||
+			!strings.Contains(v.Reason, ToolTest) || !strings.Contains(v.Reason, "codeql_test_run") {
+			t.Errorf("a run whose database is %s is %+v, want it refused, pointing at the test tools", name, v)
+		}
+	}
+	// A database given in another shape was named, so the refusal is about its shape, not its absence.
+	for name, database := range map[string]any{"a number": 42, "a list": []any{db}} {
+		v := b.Call(Server+"-codeql_query_run", printAST(map[string]any{"database": database}))
+		if v.Allowed || strings.Contains(v.Reason, "names no database") {
+			t.Errorf("a run whose database is %s is %+v, want it refused for its shape", name, v)
 		}
 	}
 }

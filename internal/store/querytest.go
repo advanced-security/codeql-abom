@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -28,6 +29,7 @@ const queryTestTable = `(
   fixtures_digest TEXT,
   missing         INTEGER,
   unexpected      INTEGER,
+  marked_fixtures TEXT,
   PRIMARY KEY (query_id, query_version, cli_version)
 )`
 
@@ -40,7 +42,7 @@ const queryTestCopyColumns = `query_id, query_version, passed, total, failed, de
 
 const queryTestColumns = `query_id, query_version, cli_version, passed, total, failed, detail,
   ran_at, COALESCE(failure_stage, ''), COALESCE(test_digest, ''), COALESCE(fixtures_digest, ''),
-  missing, unexpected`
+  missing, unexpected, marked_fixtures`
 
 // QueryTest is the recorded outcome of a version's tests.
 type QueryTest struct {
@@ -66,16 +68,29 @@ type QueryTest struct {
 	// test got as far as comparing results.
 	Missing    *int64 `json:"missing"`
 	Unexpected *int64 `json:"unexpected"`
+	// MarkedFixtures are the fixtures that carried a mark, by path, with a digest of each: what a
+	// failure on missing results was seen failing on. Nil for a run recorded before they were kept.
+	MarkedFixtures map[string]string `json:"markedFixtures,omitempty"`
 }
 
 func scanQueryTest(row interface{ Scan(...any) error }) (QueryTest, error) {
 	var t QueryTest
 	var passed int
 	var missing, unexpected sql.NullInt64
+	var marked sql.NullString
 	err := row.Scan(&t.QueryID, &t.QueryVersion, &t.CLIVersion, &passed, &t.Total, &t.Failed,
-		&t.Detail, &t.RanAt, &t.FailureStage, &t.TestDigest, &t.FixturesDigest, &missing, &unexpected)
+		&t.Detail, &t.RanAt, &t.FailureStage, &t.TestDigest, &t.FixturesDigest, &missing, &unexpected,
+		&marked)
 	t.Passed = passed != 0
 	t.Missing, t.Unexpected = reported(missing), reported(unexpected)
+	if err == nil && marked.Valid {
+		if err = json.Unmarshal([]byte(marked.String), &t.MarkedFixtures); err != nil {
+			err = fmt.Errorf("the marked fixtures of %s %s under CodeQL %s: %w",
+				t.QueryID, t.QueryVersion, t.CLIVersion, err)
+		} else if t.MarkedFixtures == nil {
+			t.MarkedFixtures = map[string]string{}
+		}
+	}
 	return t, err
 }
 
@@ -91,19 +106,28 @@ func (s *Store) RecordQueryTest(t QueryTest) error {
 	case t.CLIVersion == "":
 		return fmt.Errorf("recording the tests of %s: a result names the CodeQL that ran it", t.QueryID)
 	}
+	var marked any
+	if t.MarkedFixtures != nil {
+		body, err := json.Marshal(t.MarkedFixtures)
+		if err != nil {
+			return fmt.Errorf("recording the tests of %s: %w", t.QueryID, err)
+		}
+		marked = string(body)
+	}
 	_, err := s.db.Exec(`
 INSERT INTO abom_query_test (query_id, query_version, cli_version, passed, total, failed, detail,
-                             ran_at, failure_stage, test_digest, fixtures_digest, missing, unexpected)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                             ran_at, failure_stage, test_digest, fixtures_digest, missing, unexpected,
+                             marked_fixtures)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(query_id, query_version, cli_version) DO UPDATE SET
   passed = excluded.passed, total = excluded.total, failed = excluded.failed,
   detail = excluded.detail, ran_at = excluded.ran_at,
   failure_stage = excluded.failure_stage, test_digest = excluded.test_digest,
   fixtures_digest = excluded.fixtures_digest, missing = excluded.missing,
-  unexpected = excluded.unexpected`,
+  unexpected = excluded.unexpected, marked_fixtures = excluded.marked_fixtures`,
 		t.QueryID, t.QueryVersion, t.CLIVersion, t.Passed, t.Total, t.Failed, t.Detail,
 		time.Now().UTC().Format(time.RFC3339), nullable(t.FailureStage), nullable(t.TestDigest),
-		nullable(t.FixturesDigest), t.Missing, t.Unexpected)
+		nullable(t.FixturesDigest), t.Missing, t.Unexpected, marked)
 	if err != nil {
 		return fmt.Errorf("recording the tests of %s: %w", t.QueryID, err)
 	}
