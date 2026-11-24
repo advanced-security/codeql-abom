@@ -77,10 +77,31 @@ func Read(root string) (Lock, error) {
 		lock.Reason = reasonFor(err)
 		return lock, nil
 	}
+	if reason := elsewhere(file); reason != "" {
+		lock.Coverage, lock.Reason = Unsupported, reason
+		return lock, nil
+	}
 	lock.file, lock.parsed = file, true
 	lock.Schema = file.Version
 	lock.Coverage = Covered
 	return lock, nil
+}
+
+// elsewhere names the first entry, by pin, that lives on another GitHub instance, or "" when none
+// does. ABOM reads github.com, and the parser reads an older schema's entries as github.com; a
+// tenant's repository taken for github.com's same-named one would select an unrelated commit.
+func elsewhere(file native.File) string {
+	pins := make([]string, 0, len(file.Dependencies))
+	for pin := range file.Dependencies {
+		pins = append(pins, pin)
+	}
+	slices.Sort(pins)
+	for _, pin := range pins {
+		if host := file.Dependencies[pin].Hostname; host != "" && !strings.EqualFold(host, "github.com") {
+			return fmt.Sprintf("%s is on %s, and only a github.com dependency can be selected here", pin, host)
+		}
+	}
+	return ""
 }
 
 // readUnderRoot reads one path inside the checkout, refusing anything that leaves it.

@@ -105,6 +105,6 @@ provide useful SHA-to-version and parent-lookup examples from
 ABOM already has the relation and PURL normalization; the lesson is broader measured lookup and
 explicit selection tests, not replacing its evidence or copying a silent pagination ceiling.
 
-GitHub's [native lock format](https://github.com/github/actions-lockfile/blob/go/v0.0.4/README.md)
+GitHub's [native lock format](https://github.com/github/actions-lockfile/blob/go/v0.0.6/README.md)
 now supplies the default context for selection. Use its parser and retain verification provenance;
 the presence of both `ref` and `commit` is not, alone, a vulnerability-applicability verdict.

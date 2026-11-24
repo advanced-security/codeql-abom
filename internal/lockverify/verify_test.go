@@ -62,21 +62,32 @@ func TestEachReportedStateIsItsOwnOutcome(t *testing.T) {
 		code int
 		want string
 	}{
-		"nothing to report": {`{"cli_version":"v0.1.6","lockfile_version":"v0.0.2","valid":true,"findings":[]}`,
+		"nothing to report": {`{"cli_version":"v0.5.1","lockfile_version":"v0.0.3","valid":true,"findings":[]}`,
 			0, OutcomePassed},
-		"a moved ref": {`{"cli_version":"v0.1.6","lockfile_version":"v0.0.2","valid":true,"findings":[
+		"a moved ref": {`{"cli_version":"v0.5.1","lockfile_version":"v0.0.3","valid":true,"findings":[
 			{"workflow":".github/workflows/ci.yml","category":"ref-moved","severity":"warning",
 			 "dependency":"actions/checkout@v4","detail":"ref v4 now resolves to 11d5960a3267"}]}`,
 			0, OutcomeWarnings},
-		"not pinned": {`{"cli_version":"v0.1.6","lockfile_version":"v0.0.2","valid":false,"findings":[
+		"not pinned": {`{"cli_version":"v0.5.1","lockfile_version":"v0.0.3","valid":false,"findings":[
 			{"workflow":".github/workflows/ci.yml","category":"not-pinned","severity":"error",
 			 "dependency":"actions/checkout@v4","detail":"no lockfile entry"}]}`,
 			1, OutcomeFailed},
-		"could not tell": {`{"cli_version":"v0.1.6","lockfile_version":"v0.0.2","valid":true,"findings":[
+		"could not tell": {`{"cli_version":"v0.5.1","lockfile_version":"v0.0.3","valid":true,"findings":[
 			{"workflow":".github/workflows/ci.yml","category":"reachability-unknown","severity":"warning",
 			 "detail":"could not confirm the pin is reachable"}]}`,
 			0, OutcomeInconclusive},
-		"a category this build does not know": {`{"cli_version":"v0.2.0","lockfile_version":"v0.0.2","valid":true,"findings":[
+		// GitHub not answering is an outage, not a verdict, whichever check it stopped: the tool
+		// calls the lock invalid until a re-run gets an answer, and recording that as a failure
+		// would say the lock is wrong.
+		"GitHub did not answer": {`{"cli_version":"v0.5.1","lockfile_version":"v0.0.3","valid":false,"findings":[
+			{"workflow":".github/workflows/ci.yml","category":"repo-unavailable","severity":"error",
+			 "dependency":"actions/checkout@v4","detail":"GitHub returned 503","retryable":true}]}`,
+			1, OutcomeInconclusive},
+		"a container image the lock cannot pin": {`{"cli_version":"v0.5.1","lockfile_version":"v0.0.3","valid":true,"findings":[
+			{"workflow":".github/workflows/ci.yml","category":"container-image","severity":"warning",
+			 "detail":"node:20 runs by tag"}]}`,
+			0, OutcomeWarnings},
+		"a category this build does not know": {`{"cli_version":"v0.6.0","lockfile_version":"v0.0.3","valid":true,"findings":[
 			{"workflow":".github/workflows/ci.yml","category":"something-new","severity":"info","detail":"?"}]}`,
 			0, OutcomeInconclusive},
 	} {
@@ -94,14 +105,26 @@ func TestEachReportedStateIsItsOwnOutcome(t *testing.T) {
 // A category this build does not know is kept as the tool said it and marked, never dropped: it
 // is the part of the answer nobody here can interpret yet.
 func TestAnUnknownCategoryIsKeptAndMarked(t *testing.T) {
-	gh, _ := fakeGh(t, `{"cli_version":"v0.2.0","lockfile_version":"v0.0.2","valid":true,"findings":[
+	gh, _ := fakeGh(t, `{"cli_version":"v0.6.0","lockfile_version":"v0.0.3","valid":true,"findings":[
 		{"workflow":".github/workflows/ci.yml","category":"something-new","severity":"info","detail":"?"}]}`, 0, "")
 	got := run(t, gh, aTree(t), ModeLocal)
 	if len(got.Findings) != 1 || got.Findings[0].Category != "something-new" || got.Findings[0].Known {
 		t.Errorf("findings = %+v, want the unknown category kept and marked unknown", got.Findings)
 	}
-	if got.ToolVersion != "v0.2.0" || got.LockfileVersion != "v0.0.2" {
+	if got.ToolVersion != "v0.6.0" || got.LockfileVersion != "v0.0.3" {
 		t.Errorf("versions = %q, %q; want what the tool reported", got.ToolVersion, got.LockfileVersion)
+	}
+}
+
+// A check GitHub did not answer is kept as the tool marked it, so a reader can tell it from one
+// that found something.
+func TestACheckGitHubDidNotAnswerIsMarkedRetryable(t *testing.T) {
+	gh, _ := fakeGh(t, `{"cli_version":"v0.5.1","lockfile_version":"v0.0.3","valid":false,"findings":[
+		{"workflow":".github/workflows/ci.yml","category":"repo-unavailable","severity":"error",
+		 "detail":"GitHub returned 503","retryable":true}]}`, 1, "")
+	got := run(t, gh, aTree(t), ModeNetwork)
+	if len(got.Findings) != 1 || !got.Findings[0].Retryable || !got.Findings[0].Known {
+		t.Errorf("findings = %+v, want the known category kept and marked retryable", got.Findings)
 	}
 }
 
@@ -137,7 +160,7 @@ func TestTheToolRunsOnACopyAndIsNotBelievedIfItWritesToIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gh, calls := fakeGh(t, `{"cli_version":"v0.1.6","lockfile_version":"v0.0.2","valid":true,"findings":[]}`, 0,
+	gh, calls := fakeGh(t, `{"cli_version":"v0.5.1","lockfile_version":"v0.0.3","valid":true,"findings":[]}`, 0,
 		"echo rewritten >> .github/workflows/actions.lock")
 
 	got := run(t, gh, tree, ModeLocal)
@@ -165,7 +188,7 @@ func TestTheToolRunsOnACopyAndIsNotBelievedIfItWritesToIt(t *testing.T) {
 // and neither is ABOM's to change.
 func TestTheToolIsAlwaysCalledNoFix(t *testing.T) {
 	for mode, flag := range map[string]string{ModeLocal: "--verify-local", ModeNetwork: "--verify"} {
-		gh, calls := fakeGh(t, `{"cli_version":"v0.1.6","lockfile_version":"v0.0.2","valid":true,"findings":[]}`, 0, "")
+		gh, calls := fakeGh(t, `{"cli_version":"v0.5.1","lockfile_version":"v0.0.3","valid":true,"findings":[]}`, 0, "")
 		run(t, gh, aTree(t), mode)
 		recorded, err := os.ReadFile(calls)
 		if err != nil {
@@ -183,14 +206,15 @@ func TestTheToolIsAlwaysCalledNoFix(t *testing.T) {
 // The copy is a repository of its own, because the tool reads `$/` actions through git: run in a
 // bare directory it reports every `$/` step as unreadable, which is a finding about the copy.
 func TestTheCopyIsARepositoryAtOneCommit(t *testing.T) {
-	gh, _ := fakeGh(t, `{"cli_version":"v0.1.6","lockfile_version":"v0.0.2","valid":true,"findings":[]}`, 0,
+	gh, _ := fakeGh(t, `{"cli_version":"v0.5.1","lockfile_version":"v0.0.3","valid":true,"findings":[]}`, 0,
 		"git rev-parse HEAD > /dev/null 2>&1 || { echo not a repository >&2; exit 3; }")
 	if got := run(t, gh, aTree(t), ModeLocal); got.Outcome != OutcomePassed {
 		t.Errorf("outcome %q (%q), want passed: the copy has to be a repository", got.Outcome, got.Error)
 	}
 }
 
-// The real tool, offline, against a lock it generated: the contract the fakes stand in for.
+// The real tool, offline, against a lock an earlier release generated: the contract the fakes stand
+// in for, and the one a repository that has not relocked since still depends on.
 func TestThePinnedToolReadsALockItGenerated(t *testing.T) {
 	if err := exec.Command("gh", "actions-lock", "--help").Run(); err != nil {
 		t.Skip("gh actions-lock is not installed; `make pins` reports that on its own")
@@ -204,7 +228,8 @@ func TestThePinnedToolReadsALockItGenerated(t *testing.T) {
 		t.Errorf("outcome %q (%s), findings %+v; want the fixture's complete coverage to pass",
 			got.Outcome, got.Error, got.Findings)
 	}
-	if got.ToolVersion == "" || got.LockfileVersion != "v0.0.2" {
+	// The fixture is v0.0.2 as v0.1.6 wrote it; the tool reports the schema it reads it in.
+	if got.ToolVersion == "" || got.LockfileVersion == "" {
 		t.Errorf("versions %q, %q; want what the tool reported", got.ToolVersion, got.LockfileVersion)
 	}
 }

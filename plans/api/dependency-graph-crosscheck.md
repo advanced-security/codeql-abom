@@ -176,7 +176,7 @@ are the reference for the isolated comparison. Credit that implementation in com
 do not copy its test material without preserving the required notices. Compatibility experiments
 that actually submit are owned by [dependency-submission.md](dependency-submission.md).
 
-GitHub's [native lock graph](https://github.com/github/actions-lockfile/blob/go/v0.0.4/README.md)
+GitHub's [native lock graph](https://github.com/github/actions-lockfile/blob/go/v0.0.6/README.md)
 and [Dependabot CLI engine](https://github.com/dependabot/dependabot-core/blob/main/github_actions/lib/dependabot/github_actions/lockfile/cli_engine.rb)
 establish format and updater support in source. Jesse Houwing's
 [request #122](https://github.com/github/gh-actions-lock/issues/122) asks for native DG reporting;

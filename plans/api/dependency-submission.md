@@ -95,7 +95,7 @@ Learn from its integration and explicit relationship handling without assuming i
 replacement keys or SHA/version duplication are appropriate for ABOM. Compatibility is measured
 on approved test targets, not inferred from either implementation's unit tests.
 
-GitHub's [native locking effort](https://github.com/github/gh-actions-lock/blob/v0.1.6/README.md)
+GitHub's [native locking effort](https://github.com/github/gh-actions-lock/blob/v0.5.1/README.md)
 and [Dependabot update integration](https://github.com/dependabot/dependabot-core/blob/main/github_actions/lib/dependabot/github_actions/lockfile/cli_engine.rb)
 now set the preferred integration direction. Jesse Houwing's
 [upstream request #122](https://github.com/github/gh-actions-lock/issues/122) asks for lock-backed

@@ -866,7 +866,9 @@ the row-based walks; a re-observed commit adds the routes it declares.
 
 **Unreadable and changed locks.** A lock with one malformed entry is unsupported as a whole and
 selects nothing, and a digest of the wrong length or alphabet selects nothing whatever the parser
-allowed. Each reading records the parser release and interpretation that made it; a start under a
+allowed. Schemas `v0.0.1` through `v0.0.3` are read; an entry `v0.0.3` places on another GitHub
+instance makes the lock unsupported, because ABOM reads github.com and a tenant's repository is not
+its same-named one there. Each reading records the parser release and interpretation that made it; a start under a
 different one requeues every commit that has a lockfile, and re-reading one repeats the checkout
 and no evaluation.
 
@@ -876,7 +878,8 @@ read. It runs no-fix, on a copy of the tree made a repository of its own (the to
 actions through git), and is not believed if it changed that copy. A network check of one commit
 is not repeated within the hour and a day has a ceiling. What the tool says is kept verbatim and
 appended: **passed**, **warnings**, **failed**, **inconclusive** — a category this build does not
-know, or reachability the tool could not confirm — and **error**, for a tool that gave no report.
+know, reachability the tool could not confirm, or a check the tool marks retryable because GitHub
+did not answer it — and **error**, for a tool that gave no report.
 None of them is a statement that a workflow is safe.
 
 **Policy.** A requirement for native locking is a policy like any other, over the rules the crawl

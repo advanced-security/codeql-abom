@@ -120,6 +120,6 @@ prior art for a workflow-facing contract and integration tests. Its
 [entrypoint tests](https://github.com/jessehouwing/actions-dependency-submission/blob/aa358ec7aee0a7f2dbaef9702915b28e90879842/__tests__/main.test.ts)
 and [artifact check](https://github.com/jessehouwing/actions-dependency-submission/blob/aa358ec7aee0a7f2dbaef9702915b28e90879842/.github/workflows/check-dist.yml)
 inform the action-contract acceptance criteria here, not a commitment to implement another
-publisher. GitHub's [native locking tool](https://github.com/github/gh-actions-lock/blob/v0.1.6/README.md)
+publisher. GitHub's [native locking tool](https://github.com/github/gh-actions-lock/blob/v0.5.1/README.md)
 owns dependency pinning and verification. Credit both projects in the released documentation;
 retain the required MIT notices if a later implementation incorporates source or test material.

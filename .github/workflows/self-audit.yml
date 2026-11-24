@@ -191,8 +191,11 @@ jobs:
       - name: Action pins - Install gh actions-lock
         env:
           GH_TOKEN: ${{ github.token }}
-          # v0.1.6
-          ACTIONS_LOCK_COMMIT: 047fddf38163b304f1e6ef5649f5ac1646edc6a3
+          # v0.5.1
+          ACTIONS_LOCK_COMMIT: d68b1a345a0aa02cf870cd0e0d78418d492d280d
+          # The toolchain gh-actions-lock's go.mod requires, named rather than left to whatever Go
+          # the runner image carries.
+          GOTOOLCHAIN: go1.26.7
         # `gh extension install` takes only `OWNER/REPO` or `.`, and names the extension for the
         # directory it is run in, so the checkout is named for the extension and entered.
         run: |

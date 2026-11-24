@@ -10,8 +10,8 @@ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/ebitengine/purego v0.10.1 h1:dewVBCBT2GaMu1SrNTYxQhgQBethzfhiwvZiLGP/qyY=
 github.com/ebitengine/purego v0.10.1/go.mod h1:iIjxzd6CiRiOG0UyXP+V1+jWqUXVjPKLAI0mRfJZTmQ=
-github.com/github/actions-lockfile/go v0.0.4 h1:FP2KrJNhBti8rR7+Z8TKycJdWFc0gzuaj0wTlANoFdY=
-github.com/github/actions-lockfile/go v0.0.4/go.mod h1:kp8pDNXwrr3fC+6Mgmh/ZODa6AsIEC+bmf1CLQ/7DEs=
+github.com/github/actions-lockfile/go v0.0.6 h1:cgFymt9HVT0bOGYQcngbnhG0GyTEoROmQm9cPaS0ano=
+github.com/github/actions-lockfile/go v0.0.6/go.mod h1:TM1f/Q0wZd3TOy5vEypxZZZk1oEuYB5W2F4xLArVX2c=
 github.com/github/copilot-sdk/go v1.0.14 h1:DeHPF2CbxRCe4EeAjYIo7v3CovGEEMHsrURUNaogf5A=
 github.com/github/copilot-sdk/go v1.0.14/go.mod h1:U0STg9Jdv9LDwtkUtcUJCzPQ4KTnKakRfP+1LhEx248=
 github.com/go-logr/logr v1.2.2/go.mod h1:jdQByPbusPIv2/zmleS9BjJVeZ6kBagPoEUsqbVz/1A=

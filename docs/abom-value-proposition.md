@@ -29,9 +29,9 @@ run. A verified release association supplies version context for advisory interp
 facts should travel together, not compete for one field. Full-version tags remain mutable; an
 immutable lock binding is not the same as trusting a tag never to move.
 
-GitHub's [native tool](https://github.com/github/gh-actions-lock/blob/v0.1.6/README.md) records
+GitHub's [native tool](https://github.com/github/gh-actions-lock/blob/v0.5.1/README.md) records
 transitive pins and describes execution-time enforcement for onboarded workflows. Its
-[shared format and Go parser](https://github.com/github/actions-lockfile/blob/go/v0.0.4/README.md)
+[shared format and Go parser](https://github.com/github/actions-lockfile/blob/go/v0.0.6/README.md)
 carry commits, symbolic refs, dependency links and numeric repository identities. This is native
 transitive evidence, so claiming that no native surface names it is no longer defensible.
 

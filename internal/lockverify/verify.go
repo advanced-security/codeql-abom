@@ -49,17 +49,21 @@ const (
 	OutcomeError = "error"
 )
 
-// knownCategories are the categories the pinned CLI (v0.1.6) reports. One outside this set is
+// knownCategories are the categories the pinned CLI (v0.5.1) reports. One outside this set is
 // kept verbatim and makes the outcome inconclusive, because nobody here knows what it claims.
 var knownCategories = map[string]bool{
-	"not-pinned": true, "sha-as-ref": true, "ref-changed": true, "ref-moved": true, "stale": true,
-	"misleading-sha": true, "unreachable-pin": true, "valid": true, "run-only": true,
-	"ancestry-unknown": true, "reachability-unknown": true, "onboarding-required": true,
-	"version-ref": true, "local-action": true, "stale-workflow": true,
-	"self-repository-action": true, "invalid-self-repository-ref": true,
+	"not-pinned": true, "ref-missing": true, "invalid-workflow": true, "sha-as-ref": true,
+	"ref-changed": true, "ref-moved": true, "tag-commit-mismatch": true, "stale": true,
+	"misleading-sha": true, "unreachable-pin": true, "repo-renamed": true, "repo-replaced": true,
+	"repo-unavailable": true, "valid": true, "run-only": true, "ancestry-unknown": true,
+	"reachability-unknown": true, "onboarding-required": true, "version-ref": true,
+	"local-action": true, "stale-workflow": true, "self-repository-action": true,
+	"invalid-self-repository-ref": true, "fresh-tag": true, "cooldown-config-ignored": true,
+	"incomplete-lockfile": true, "container-image": true,
 }
 
-// undecidedCategories are the tool saying it could not tell, which is not a pass.
+// undecidedCategories are the tool saying it could not tell, which is not a pass. A finding of any
+// other category says the same by being retryable: GitHub did not answer the check.
 var undecidedCategories = map[string]bool{"ancestry-unknown": true, "reachability-unknown": true}
 
 // Finding is one diagnostic, as the tool wrote it.
@@ -73,13 +77,17 @@ type Finding struct {
 	Detail     string `json:"detail"`
 	// Known is false for a category this build does not recognize.
 	Known bool `json:"known"`
+	// Retryable is the tool saying GitHub did not answer the check, so it reached no verdict.
+	Retryable bool `json:"retryable,omitempty"`
 }
 
 // Result is one run of the tool.
 type Result struct {
-	Mode            string    `json:"mode"`
-	Outcome         string    `json:"outcome"`
-	ToolVersion     string    `json:"toolVersion"`
+	Mode        string `json:"mode"`
+	Outcome     string `json:"outcome"`
+	ToolVersion string `json:"toolVersion"`
+	// LockfileVersion is the schema the tool read the lock in: since v0.2.0, the one it would
+	// write, whatever the file declares.
 	LockfileVersion string    `json:"lockfileVersion"`
 	Valid           *bool     `json:"valid"`
 	Findings        []Finding `json:"findings"`
@@ -112,6 +120,7 @@ type report struct {
 		Dependency string `json:"dependency"`
 		RequiredBy string `json:"required_by"`
 		Detail     string `json:"detail"`
+		Retryable  bool   `json:"retryable"`
 	} `json:"findings"`
 }
 
@@ -237,11 +246,11 @@ func (out *Result) applyReport(rep report) {
 	for _, f := range rep.Findings {
 		known := knownCategories[f.Category]
 		unknown = unknown || !known
-		undecided = undecided || undecidedCategories[f.Category]
+		undecided = undecided || undecidedCategories[f.Category] || f.Retryable
 		out.Findings = append(out.Findings, Finding{
 			Workflow: f.Workflow, Category: f.Category, Severity: f.Severity,
 			Confidence: f.Confidence, Dependency: f.Dependency, RequiredBy: f.RequiredBy,
-			Detail: f.Detail, Known: known,
+			Detail: f.Detail, Known: known, Retryable: f.Retryable,
 		})
 	}
 	switch {

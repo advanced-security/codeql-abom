@@ -36,8 +36,8 @@ func TestThePinnedParserReadsThisRepositorysOwnLockfile(t *testing.T) {
 	if got.Coverage != Covered {
 		t.Fatalf("coverage = %q (%s), want %q", got.Coverage, got.Reason, Covered)
 	}
-	if got.Schema != "v0.0.2" {
-		t.Errorf("schema = %q, want v0.0.2; the compatibility baseline moved", got.Schema)
+	if got.Schema != "v0.0.3" {
+		t.Errorf("schema = %q, want v0.0.3; the compatibility baseline moved", got.Schema)
 	}
 	if c := got.Workflow(".github/workflows/self-audit.yml"); c != Covered {
 		t.Errorf("self-audit.yml coverage = %q, want %q", c, Covered)

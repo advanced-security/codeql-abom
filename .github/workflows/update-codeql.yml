@@ -187,8 +187,11 @@ jobs:
       - name: Upgrade - Install gh actions-lock
         env:
           GH_TOKEN: ${{ github.token }}
-          # v0.1.6
-          ACTIONS_LOCK_COMMIT: 047fddf38163b304f1e6ef5649f5ac1646edc6a3
+          # v0.5.1
+          ACTIONS_LOCK_COMMIT: d68b1a345a0aa02cf870cd0e0d78418d492d280d
+          # The toolchain gh-actions-lock's go.mod requires. setup-go pins GOTOOLCHAIN=local to this
+          # repository's older one, which refuses to build it, so this step names its own.
+          GOTOOLCHAIN: go1.26.7
         run: |
           mkdir -p "$RUNNER_TEMP/gh-actions-lock"
           git -C "$RUNNER_TEMP/gh-actions-lock" init

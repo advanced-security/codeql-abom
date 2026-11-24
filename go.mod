@@ -8,7 +8,7 @@ toolchain go1.26.0
 
 require (
 	github.com/CycloneDX/cyclonedx-go v0.12.0
-	github.com/github/actions-lockfile/go v0.0.4
+	github.com/github/actions-lockfile/go v0.0.6
 	github.com/github/copilot-sdk/go v1.0.14
 	github.com/lib/pq v1.10.9
 	github.com/mattn/go-sqlite3 v1.14.50

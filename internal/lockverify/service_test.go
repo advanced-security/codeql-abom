@@ -55,7 +55,7 @@ func service(t *testing.T, s *store.Store, gh string, now time.Time) (*Service, 
 	}, &calls
 }
 
-const passing = `{"cli_version":"v0.1.6","lockfile_version":"v0.0.2","valid":true,"findings":[]}`
+const passing = `{"cli_version":"v0.5.1","lockfile_version":"v0.0.3","valid":true,"findings":[]}`
 
 // A request verifies the commit the repository resolves to, and what the tool said is kept with
 // who asked.
