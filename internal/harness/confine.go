@@ -610,6 +610,13 @@ func strings_(list []any) ([]string, bool) {
 }
 
 func (b Bounds) validQlmcpArgs(name string, tool loopTool, fields map[string]any) (Verdict, bool) {
+	// Ahead of the arguments' own checks, so a null or blank database gets this answer and not one
+	// about its type.
+	if database, _ := fields["database"].(string); name == "codeql_query_run" && strings.TrimSpace(database) == "" {
+		return refuse("codeql_query_run names no database, and which one it reads is never assumed: name "+
+			"it. To run the query against its test database, call %s, or codeql_test_run with its tests",
+			ToolTest), false
+	}
 	takes := make([]string, 0, len(tool.args))
 	for key := range tool.args {
 		takes = append(takes, key)
@@ -633,11 +640,6 @@ func (b Bounds) validQlmcpArgs(name string, tool loopTool, fields map[string]any
 		if err := judge(b, fields[key]); err != nil {
 			return refuse("%s %s: %v", name, key, err), false
 		}
-	}
-	if _, ok := fields["database"]; !ok && name == "codeql_query_run" {
-		return refuse("codeql_query_run names no database, and which one it reads is never assumed: name "+
-			"it. To run the query against its test database, call %s, or codeql_test_run with its tests",
-			ToolTest), false
 	}
 	for _, key := range tool.required {
 		if _, ok := fields[key]; !ok {

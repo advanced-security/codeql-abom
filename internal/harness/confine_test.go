@@ -639,10 +639,20 @@ func TestAPlainQlmcpCallIsCorrectedRatherThanRefused(t *testing.T) {
 		}
 	}
 	// Which database a run reads is never assumed, and running the query against its test database
-	// is what the test tools are for, so the refusal says both.
-	v := b.Call(Server+"-codeql_query_run", printAST(map[string]any{"database": nil}))
-	if v.Allowed || v.Args != nil || !strings.Contains(v.Reason, "names no database") ||
-		!strings.Contains(v.Reason, ToolTest) || !strings.Contains(v.Reason, "codeql_test_run") {
-		t.Errorf("a run naming no database is %+v, want it refused, pointing at the test tools", v)
+	// is what the test tools are for, so the refusal says both. A null or blank database names none
+	// either, and gets the same answer rather than a complaint about its type.
+	for name, database := range map[string]any{"absent": nil, "null": "null", "empty": "", "blank": "  "} {
+		args := printAST(map[string]any{"database": nil})
+		if name != "absent" {
+			args["database"] = database
+			if database == "null" {
+				args["database"] = nil
+			}
+		}
+		v := b.Call(Server+"-codeql_query_run", args)
+		if v.Allowed || v.Args != nil || !strings.Contains(v.Reason, "names no database") ||
+			!strings.Contains(v.Reason, ToolTest) || !strings.Contains(v.Reason, "codeql_test_run") {
+			t.Errorf("a run whose database is %s is %+v, want it refused, pointing at the test tools", name, v)
+		}
 	}
 }
