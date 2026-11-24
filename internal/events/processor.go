@@ -242,8 +242,10 @@ type actionEvent struct {
 	Repository   *repositoryRef `json:"repository"`
 	Organization *account       `json:"organization"`
 	Installation *struct {
+		ID      int64   `json:"id"`
 		Account account `json:"account"`
 	} `json:"installation"`
+	Sender *account `json:"sender"`
 }
 
 func decode(d store.EventDelivery, into any) (outcome, bool) {
@@ -382,6 +384,17 @@ func (p *Processor) accountChange(d store.EventDelivery) (outcome, error) {
 	var e actionEvent
 	if o, ok := decode(d, &e); !ok {
 		return o, nil
+	}
+	// GitHub required an owner of the account to create an installation asking for its permissions.
+	if d.Event == "installation" && e.Action == "created" && e.Installation != nil && e.Installation.ID != 0 {
+		login := ""
+		if e.Sender != nil {
+			login = e.Sender.Login
+		}
+		if err := p.Store.RecordInstaller(e.Installation.ID, e.Installation.Account.Login, login,
+			d.DeliveryID, time.Now()); err != nil {
+			return outcome{}, err
+		}
 	}
 	if p.Installations != nil {
 		p.Installations()

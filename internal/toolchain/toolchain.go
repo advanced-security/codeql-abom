@@ -3,6 +3,7 @@
 package toolchain
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -63,6 +64,8 @@ type Check struct {
 	// Saved is a path set in Settings that this process is not running yet.
 	Saved    string `json:"saved"`
 	Settable bool   `json:"settable"`
+	// Credential is the kind of credential a session authenticates with, on the token check alone.
+	Credential string `json:"credential,omitempty"`
 }
 
 // Tool is the executable a tool runs and where that choice came from.
@@ -73,10 +76,18 @@ type Tool struct {
 
 // Credential names a token source other than gh, and how a reader supplies it.
 type Credential struct {
+	Kind   string
 	Name   string
 	Source string
 	Remedy string
 }
+
+// Kinds of credential a session authenticates with.
+const (
+	CredentialGH           = "gh"
+	CredentialInstallation = "installation"
+	CredentialSupplied     = "supplied"
+)
 
 // Toolchain checks and changes what sessions run on.
 type Toolchain struct {
@@ -247,9 +258,9 @@ func (t *Toolchain) qlmcpCheck() Check {
 }
 
 func (t *Toolchain) tokenCheck(ctx context.Context) Check {
-	c := Check{Key: KeyToken, Name: "GitHub sign-in", Source: "gh auth token"}
+	c := Check{Key: KeyToken, Name: "GitHub sign-in", Source: "gh auth token", Credential: CredentialGH}
 	if cred := t.Credential; cred.Source != "" {
-		c.Name, c.Source = cred.Name, cred.Source
+		c.Name, c.Source, c.Credential = cred.Name, cred.Source, cmp.Or(cred.Kind, CredentialSupplied)
 		if t.Token == nil {
 			return c.problem("this server has no way to read its credential", cred.Remedy)
 		}

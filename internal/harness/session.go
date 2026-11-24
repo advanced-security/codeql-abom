@@ -144,6 +144,7 @@ func (s *Sessions) start(request int64, by string) (store.AuthoringSession, <-ch
 		return s.Store.AddAuthoringSpend(id, store.AuthoringSpend{InputTokens: sp.InputTokens,
 			OutputTokens: sp.OutputTokens, NanoAIU: sp.NanoAIU})
 	})
+	gate.KeepModel(func(model string) error { return s.Store.SetAuthoringSessionModel(id, model) })
 	limit := s.limit()
 	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	gate.cancel = cancel

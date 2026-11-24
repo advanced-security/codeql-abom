@@ -13,8 +13,15 @@
     What you claim as yours, and what discovery does with it. Which GitHub accounts are yours is
     something you state, not something we infer. Discovery
     crawls only what these accounts reach, and every page reports its figures split into what you
-    can change and what you cannot &mdash; both halves, always. <code>gh</code> is asked whether
-    you still have the access you claim; it never decides what is yours.
+    can change and what you cannot &mdash; both halves, always.
+    @if (Accounts.Identity.ByApp)
+    {
+        <text>The App's installations are read to see where it may read; they never decide what is yours.</text>
+    }
+    else
+    {
+        <text><code>gh</code> is asked whether you still have the access you claim; it never decides what is yours.</text>
+    }
 </PageHeader>
 
 <TutorialChecklist />
@@ -32,12 +39,12 @@ else
         @if (_checking)
         {
             <MudProgressCircular Size="Size.Small" Indeterminate="true" />
-            <MudText Typo="Typo.body2" data-abom-checking>Asking gh which accounts you belong to&hellip;</MudText>
+            <MudText Typo="Typo.body2" data-abom-checking>@(Accounts.Identity.ByApp ? "Reading the App's installations\u2026" : "Asking gh which accounts you belong to\u2026")</MudText>
         }
         else if (_checkError is not null)
         {
             <MudText Typo="Typo.body2" Class="abom-unconfirmed" data-abom-check-failed>
-                ABOM could not ask gh: @_checkError
+                ABOM could not @(Accounts.Identity.ByApp ? "read the App's installations" : "ask gh"): @_checkError
             </MudText>
         }
         else if (_problem is not null)
@@ -54,7 +61,7 @@ else
         else if (Accounts.Identity.Authenticated)
         {
             <MudText Typo="Typo.body2">
-                Verified as <b>@Accounts.Identity.Login</b> on @Accounts.Identity.Host@(Accounts.Identity.VerifiedAt is { } at
+                @(Accounts.Identity.ReadByApp ? "Read as the App" : "Verified as") <b>@Accounts.Identity.Login</b> on @Accounts.Identity.Host@(Accounts.Identity.VerifiedAt is { } at
                     ? $", checked {at.ToLocalTime():yyyy-MM-dd HH:mm}" : string.Empty).
             </MudText>
         }
@@ -64,10 +71,13 @@ else
                 No accounts verified yet, so every figure is reported undivided.
             </MudText>
         }
-        <MudTooltip Text="Ask gh which accounts you belong to. It never decides what is yours; it only confirms the access you claim.">
+        <MudTooltip Text="@(Accounts.Identity.ByApp
+                             ? "Read which accounts the App is installed on. It never decides what is yours; an installation only makes an account eligible to declare."
+                             : "Ask gh which accounts you belong to. It never decides what is yours; it only confirms the access you claim.")">
             <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="_checking"
                        StartIcon="@Icons.Material.Filled.Refresh" OnClick="Refresh" data-abom-check>
-                @(Accounts.Identity.Authenticated ? "Check with gh again" : "Check with gh")
+                @(Accounts.Identity.ByApp ? "Check the App's installations"
+                  : Accounts.Identity.Authenticated ? "Check with gh again" : "Check with gh")
             </MudButton>
         </MudTooltip>
     </div>
@@ -102,8 +112,8 @@ else
                         Class="abom-grid abom-table abom-grid-windowed abom-declared-grid mb-2">
             <thead>
                 <tr>
-                    <th><HeaderTip Tip="The account the declaration says is yours.">Account</HeaderTip></th><th><HeaderTip Tip="Whether the declaration names your user account or an organization.">Kind</HeaderTip></th><th><HeaderTip Tip="The role gh reports for you in that account, when it can read memberships.">Role</HeaderTip></th><th><HeaderTip Tip="Whether discovery should use this declaration when it decides what to crawl.">On</HeaderTip></th><th><HeaderTip Tip="Whether the declaration covers every repository in the account or only the named repositories.">Scope</HeaderTip></th>
-                    <th><HeaderTip Tip="What gh has confirmed, contradicted or could not check about your access.">Access</HeaderTip></th><th><HeaderTip Tip="When ABOM last listed repositories under this account and whether any declared repositories are missing.">Repository listing</HeaderTip></th><th></th>
+                    <th><HeaderTip Tip="The account the declaration says is yours.">Account</HeaderTip></th><th><HeaderTip Tip="Whether the declaration names your user account or an organization.">Kind</HeaderTip></th><th><HeaderTip Tip="@(Accounts.Identity.ByApp ? "How the App holds that account: installed there, or not installed and so reporting no role." : "The role gh reports for you in that account, when it can read memberships.")">Role</HeaderTip></th><th><HeaderTip Tip="Whether discovery should use this declaration when it decides what to crawl.">On</HeaderTip></th><th><HeaderTip Tip="Whether the declaration covers every repository in the account or only the named repositories.">Scope</HeaderTip></th>
+                    <th><HeaderTip Tip="@(Accounts.Identity.ByApp ? "Whether the App is installed on the account, which is what confirms a declaration while ABOM reads as the App." : "What gh has confirmed, contradicted or could not check about your access.")">Access</HeaderTip></th><th><HeaderTip Tip="When ABOM last listed repositories under this account and whether any declared repositories are missing.">Repository listing</HeaderTip></th><th></th>
                 </tr>
             </thead>
             <tbody>
@@ -127,19 +137,23 @@ else
                             @{ var seen = Membership(a.Owner); }
                             @if (seen is null)
                             {
-                                <MudTooltip Text="The gh result lists the accounts you belong to, and this account is not among them, so the role behind this declaration is unknown.">
+                                <MudTooltip Text="@(Accounts.Identity.ByApp
+                                                    ? $"The App is not installed on {a.Owner}, so no installation reports a role behind this declaration."
+                                                    : "The gh result lists the accounts you belong to, and this account is not among them, so the role behind this declaration is unknown.")">
                                     <span class="abom-unconfirmed">not reported</span>
                                 </MudTooltip>
                             }
-                            else if (!seen.CanDeclare)
+                            else if (!seen.CanDeclare && !(seen.CanInclude && a.IncludesOnly))
                             {
-                                <MudTooltip Text="@($"A {seen.Role} cannot change anything in this account, so this declaration claims more than the access behind it.")">
-                                    <span class="abom-unconfirmed">@seen.Role</span>
+                                <MudTooltip Text="@(seen.CanInclude
+                                                    ? $"A {seen.Role} may declare only the repositories they administer or maintain here, by name, so this declaration claims more than the access behind it."
+                                                    : $"A {seen.Role} cannot change anything in this account, so this declaration claims more than the access behind it.")">
+                                    <span class="abom-unconfirmed">@seen.RoleText</span>
                                 </MudTooltip>
                             }
                             else
                             {
-                                <span class="mud-text-secondary">@seen.Role</span>
+                                <span class="mud-text-secondary">@seen.RoleText</span>
                             }
                         </td>
                         <td>
@@ -172,11 +186,23 @@ else
                                                     <span class="abom-unconfirmed" data-abom-include-unlisted="@name">&nbsp;not listed</span>
                                                 </MudTooltip>
                                             }
+                                            @if (IncludeClaim(a, name) is { State: not "supported" } claim)
+                                            {
+                                                <MudTooltip Text="@claim.Detail">
+                                                    <span class="abom-unconfirmed" data-abom-include-claim="@name" title="@claim.Detail">&nbsp;@(claim.State == "unsupported" ? $"you hold {claim.Role}" : "role cannot be said")</span>
+                                                </MudTooltip>
+                                            }
+                                            @if (NotInstalled(a, name))
+                                            {
+                                                <MudTooltip Text="@($"The App's installation on {a.Owner} does not include {name}. It stays declared, and is read only if it is public; an owner of {a.Owner} adds it to the installation.")">
+                                                    <span class="abom-unconfirmed" data-abom-include-not-installed="@name">&nbsp;not in the App's installation</span>
+                                                </MudTooltip>
+                                            }
                                         </MudChip>
                                     }
                                     @if (ListingOf(a.Owner) is null)
                                     {
-                                        <MudTooltip Text="@($"Ask GitHub, with your gh token, which repositories {a.Owner} holds. Nothing is chosen for you.")">
+                                        <MudTooltip Text="@($"Ask GitHub, {Through}, which repositories {a.Owner} holds. Nothing is chosen for you.")">
                                             <MudButton Size="Size.Small" Variant="Variant.Text"
                                                        StartIcon="@Icons.Material.Filled.Checklist"
                                                        OnClick="@(() => OpenChooser(a))"
@@ -211,7 +237,7 @@ else
                                                 else if (LiveCount(a.Owner, clause) is { } live)
                                                 {
                                                     <div class="mud-text-secondary" data-abom-scope-count
-                                                         title="Counted against what GitHub reported through your gh token. Archived repositories are left out, because no listing records them.">
+                                                         title="@($"Counted against what GitHub reported {Through}. Archived repositories are left out, because no listing records them.")">
                                                         @CountText.Of(live, "carries", "carry") it on GitHub now
                                                     </div>
                                                 }
@@ -246,7 +272,7 @@ else
                                         <MudButton Size="Size.Small" Variant="Variant.Text"
                                                    StartIcon="@Icons.Material.Filled.Sell"
                                                    OnClick="@(() => OpenScopeEditor(a))"
-                                                   title="@($"Ask GitHub, with your gh token, which custom properties {a.Owner} defines, to cover the repositories carrying the values you choose.")"
+                                                   title="@($"Ask GitHub, {Through}, which custom properties {a.Owner} defines, to cover the repositories carrying the values you choose.")"
                                                    data-abom-add-scope="@a.Owner">
                                             Add property scope
                                         </MudButton>
@@ -284,14 +310,14 @@ else
                             @* A row not yet saved has no stored declaration for gh to have answered about. *@
                             @if (a.IsNew)
                             {
-                                <span class="mud-text-secondary">checked by gh once saved</span>
+                                <span class="mud-text-secondary">@(Accounts.Identity.ByApp ? "checked against the App's installations once saved" : "checked by gh once saved")</span>
                             }
                             else
                             {
                             @switch (a.State)
                             {
                                 case "confirmed":
-                                    <span class="mud-text-secondary">confirmed by gh</span>
+                                    <span class="mud-text-secondary">@(Accounts.Identity.ByApp ? "the App is installed here" : "confirmed by gh")</span>
                                     break;
                                 case "contradicted":
                                     <MudTooltip Text="The gh answer did not list this account. The declaration is kept so you can correct it, and nothing it holds is counted until you do.">
@@ -299,7 +325,13 @@ else
                                     </MudTooltip>
                                     break;
                                 default:
-                                    @if (!Accounts.Identity.CanReadMemberships && Accounts.Identity.Authenticated)
+                                    @if (Accounts.Identity.ByApp)
+                                    {
+                                        <MudTooltip Text="@($"The App is not installed on {a.Owner}, so no installation can confirm or contradict this declaration. Installing the App there is what confirms it.")">
+                                            <span class="abom-unconfirmed" data-abom-uncheckable="@a.Owner">App not installed</span>
+                                        </MudTooltip>
+                                    }
+                                    else if (!Accounts.Identity.CanReadMemberships && Accounts.Identity.Authenticated)
                                     {
                                         <MudTooltip Text="Nothing on record says this token can read organization memberships, so gh can neither confirm nor contradict this. Check with gh to record it; if it still says this, the token needs read:org.">
                                             <span class="abom-unconfirmed" data-abom-uncheckable="@a.Owner">cannot be checked</span>
@@ -312,6 +344,20 @@ else
                                         </MudTooltip>
                                     }
                                     break;
+                            }
+                            @if (Stored(a.Owner) is { Check: { } check } && check.State != "supported")
+                            {
+                                <MudTooltip Text="@check.Detail">
+                                    <div class="abom-unconfirmed" data-abom-claim="@a.Owner" title="@check.Detail">
+                                        @(check.State == "unsupported" ? "role behind it: not supported" : "role behind it: cannot say")
+                                    </div>
+                                </MudTooltip>
+                            }
+                            @if (Stored(a.Owner)?.Installation is { State: "installed" } installation)
+                            {
+                                <div class="mud-text-secondary mud-typography-caption" data-abom-installed-by="@a.Owner">
+                                    @(installation.InstalledBy is { } by ? $"App installed by {by}" : "App installed; who installed it is not known")
+                                </div>
                             }
                             }
                             @if (a.Unaccounted)
@@ -460,7 +506,7 @@ else
                                                          Placeholder="@($"Filter {answer.Repositories.Count:N0} repositories")" />
                                         </div>
                                         <MudText Typo="Typo.caption" Class="mud-text-secondary">
-                                            @CountText.Of(answer.Repositories.Count, "repository", "repositories") in @a.Owner, as your gh token sees them.
+                                            @CountText.Of(answer.Repositories.Count, "repository", "repositories") in @a.Owner, @SeenThrough.
                                         </MudText>
                                         <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => CloseChooser(a))"
                                                    title="Close this list. What you chose stays in the draft until you save or discard it."
@@ -470,13 +516,22 @@ else
                                         @foreach (var r in matching.Take(OfferedAtOnce))
                                         {
                                             <div class="abom-repo-option" data-abom-repo-option="@r.Name">
+                                                @* Already chosen stays removable, whatever the role behind it now. *@
                                                 <MudCheckBox T="bool" Dense="true" Size="Size.Small"
                                                              Value="@a.Has(r.Name)"
                                                              ValueChanged="@(v => Choose(a, r.Name, v))"
+                                                             Disabled="@(!r.Declarable && !a.Has(r.Name))"
                                                              Label="@r.Name" />
                                                 @if (Tags(r) is { Length: > 0 } tags)
                                                 {
                                                     <span class="abom-repo-tags mud-text-secondary mud-typography-caption">@tags</span>
+                                                }
+                                                @if (!r.Declarable)
+                                                {
+                                                    <span class="abom-repo-tags mud-text-secondary mud-typography-caption"
+                                                          title="Only a repository you administer or maintain may be declared in an organization you may not declare whole.">
+                                                        @(r.Permission.Length > 0 ? $"you hold {r.Permission}" : "no role reported")
+                                                    </span>
                                                 }
                                             </div>
                                         }
@@ -529,7 +584,7 @@ else
                                 {
                                     <div class="d-flex flex-wrap align-center gap-3 mb-1">
                                         <MudText Typo="Typo.caption" Class="mud-text-secondary">
-                                            Custom properties @a.Owner defines, as your gh token sees them, counted over
+                                            Custom properties @a.Owner defines, @SeenThrough, counted over
                                             @CountText.Of(answer.Repositories, "repository", "repositories"). Archived repositories are left
                                             out, because no listing records them. A repository must carry every value you choose.
                                         </MudText>
@@ -644,9 +699,11 @@ else
     {
         @* Both folds start closed: a list of every declarable account buries the one row a reader came for. *@
         <div data-abom-memberships class="mb-4">
-            <MudText Typo="Typo.subtitle2" Class="mt-4">Accounts gh says you can declare</MudText>
+            <MudText Typo="Typo.subtitle2" Class="mt-4">@(Accounts.Identity.ByApp ? "Accounts the App is installed on" : "Accounts gh says you can declare")</MudText>
             <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-1">
-                You are an owner or admin of these. Nothing is declared until you choose one and save.
+                @(Accounts.Identity.ByApp
+                    ? "An owner of each installed the App there. Nothing is declared until you choose one and save."
+                    : "You are an owner, admin or security manager of these. Nothing is declared until you choose one and save.")
             </MudText>
             @if (Declarable.Any())
             {
@@ -654,7 +711,7 @@ else
                     <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => _declarableOpen = !_declarableOpen)"
                                EndIcon="@(_declarableOpen ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)"
                                aria-expanded="@(_declarableOpen ? "true" : "false")"
-                               title="Show or hide the accounts gh reports where you are an owner or admin."
+                               title="@(Accounts.Identity.ByApp ? "Show or hide the accounts the App is installed on." : "Show or hide the accounts gh reports where you are an owner or admin.")"
                                data-abom-declarable-toggle>
                         @(_declarableOpen ? "Hide" : "Show") the @CountText.Of(Declarable.Count(), "account", "accounts") you can declare
                     </MudButton>
@@ -667,9 +724,9 @@ else
                                 Class="abom-grid abom-table abom-membership-grid mt-1 mb-2">
                     <thead>
                         <tr>
-                            <th><HeaderTip Tip="The user or organization gh reports you belong to.">Account</HeaderTip></th>
-                            <th><HeaderTip Tip="Whether gh reports this as your user account or an organization.">Kind</HeaderTip></th>
-                            <th><HeaderTip Tip="The role gh reports for you in that account.">Role</HeaderTip></th>
+                            <th><HeaderTip Tip="@(Accounts.Identity.ByApp ? "An account the App is installed on." : "The user or organization gh reports you belong to.")">Account</HeaderTip></th>
+                            <th><HeaderTip Tip="@(Accounts.Identity.ByApp ? "Whether the App is installed on a user account or an organization." : "Whether gh reports this as your user account or an organization.")">Kind</HeaderTip></th>
+                            <th><HeaderTip Tip="@(Accounts.Identity.ByApp ? "How the App holds the account: one of its owners installed it there." : "The role gh reports for you in that account.")">Role</HeaderTip></th>
                             <th></th>
                         </tr>
                     </thead>
@@ -679,7 +736,7 @@ else
                             <tr>
                                 <td>@m.Owner</td>
                                 <td>@(m.Kind == "user" ? "Your account" : "Organization")</td>
-                                <td>@m.Role</td>
+                                <td>@(m.Role == "installation" ? "App installed" : m.RoleText)</td>
                                 <td>
                                     <span data-abom-membership="@m.Owner">
                                         @if (InDraft(m.Owner))
@@ -706,7 +763,7 @@ else
             else if (!Declarable.Any())
             {
                 <MudText Typo="Typo.body2" Class="mb-2">
-                    gh reports no account where you are an owner or admin.
+                    @(Accounts.Identity.ByApp ? "The App is installed on no account." : "gh reports no account where you are an owner, admin or security manager.")
                 </MudText>
             }
             @if (Members.Any())
@@ -715,9 +772,9 @@ else
                     <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => _membersOpen = !_membersOpen)"
                                EndIcon="@(_membersOpen ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)"
                                aria-expanded="@(_membersOpen ? "true" : "false")"
-                               title="Show or hide the accounts gh reports where your role cannot declare them."
+                               title="Show or hide the accounts gh reports where your role cannot declare them whole."
                                data-abom-members-toggle>
-                        @(_membersOpen ? "Hide" : "Show") @Members.Count() more you belong to without a role that can declare
+                        @(_membersOpen ? "Hide" : "Show") @Members.Count() more you belong to without a role that can declare them whole
                     </MudButton>
                 </div>
                 @if (_membersOpen)
@@ -730,9 +787,36 @@ else
                                 <tr>
                                     <td>@m.Owner</td>
                                     <td>@(m.Kind == "user" ? "Your account" : "Organization")</td>
-                                    <td>@m.Role</td>
                                     <td>
-                                        <MudTooltip Text="@($"You are a {m.Role} here, which cannot change anything in this account.")"><span data-abom-membership="@m.Owner" class="mud-text-secondary mud-typography-caption">not yours to declare</span></MudTooltip>
+                                        @m.Role
+                                        @if (m.SecurityManager == "unknown")
+                                        {
+                                            <MudTooltip Text="@m.SecurityManagerReason">
+                                                <span class="abom-unconfirmed mud-typography-caption d-block" data-abom-security-manager="@m.Owner"
+                                                      title="@m.SecurityManagerReason">security manager: cannot say</span>
+                                            </MudTooltip>
+                                        }
+                                    </td>
+                                    <td>
+                                        @if (m.CanInclude && InDraft(m.Owner))
+                                        {
+                                            <MudText Typo="Typo.caption" Class="mud-text-secondary" data-abom-membership="@m.Owner">declared</MudText>
+                                        }
+                                        else if (m.CanInclude)
+                                        {
+                                            <MudTooltip Text="@($"A {m.Role} may declare the repositories in {m.Owner} they administer or maintain, by name. Nothing is written until you save.")">
+                                                <MudButton Size="Size.Small" Variant="Variant.Outlined"
+                                                           OnClick="@(() => DeclareIncludes(m))"
+                                                           data-abom-membership="@m.Owner"
+                                                           data-abom-declare-includes="@m.Owner">
+                                                    Choose repositories you maintain
+                                                </MudButton>
+                                            </MudTooltip>
+                                        }
+                                        else
+                                        {
+                                            <MudTooltip Text="@($"You are a {m.Role} here, which cannot change anything in this account.")"><span data-abom-membership="@m.Owner" class="mud-text-secondary mud-typography-caption">not yours to declare</span></MudTooltip>
+                                        }
                                     </td>
                                 </tr>
                             }
@@ -749,7 +833,9 @@ else
                           Variant="Variant.Outlined" Margin="Margin.Dense"
                           Placeholder="account name" Label="Declare an account by name" />
         </div>
-        <MudTooltip Text="For an account gh cannot see. Ownership is stated, not inferred, so this is allowed — it stays flagged as unconfirmed.">
+        <MudTooltip Text="@(Accounts.Identity.ByApp
+                            ? "For an account the App is not installed on. Ownership is stated, not inferred, so this is allowed — it stays flagged as unconfirmed."
+                            : "For an account gh cannot see. Ownership is stated, not inferred, so this is allowed — it stays flagged as unconfirmed.")">
             <MudButton Size="Size.Small" Variant="Variant.Outlined"
                        Disabled="@(string.IsNullOrWhiteSpace(_typedOwner))"
                        OnClick="DeclareTyped" data-abom-declare-typed>
@@ -1121,6 +1207,32 @@ else
         Accounts.Identity.Accounts.FirstOrDefault(
             a => string.Equals(a.Owner, owner, StringComparison.OrdinalIgnoreCase));
 
+    private DeclaredAccount? Stored(string owner) =>
+        Accounts.Declared?.FirstOrDefault(
+            account => string.Equals(account.Owner, owner, StringComparison.OrdinalIgnoreCase));
+
+    // Who a listing reads as, said the way a reader can check it: the App's installation or their gh token.
+    private string Through => Accounts.Identity.ByApp ? "through the App's installation" : "with your gh token";
+    private string SeenThrough => Accounts.Identity.ByApp ? "as the App's installation sees them" : "as your gh token sees them";
+
+    // The server's check of the role behind one include, only for what is saved as it is drafted.
+    private IncludeCheck? IncludeClaim(Draft account, string repo) =>
+        Stored(account.Owner)?.Check?.Includes.FirstOrDefault(
+            i => string.Equals(i.Repository, repo, StringComparison.OrdinalIgnoreCase));
+
+    private bool NotInstalled(Draft account, string repo) =>
+        Stored(account.Owner)?.NotInstalled?.Contains(repo, StringComparer.OrdinalIgnoreCase) == true;
+
+    // A member's route: an include list, opened on what GitHub says they hold, nothing chosen for them.
+    private async Task DeclareIncludes(OwnedAccount member)
+    {
+        if (InDraft(member.Owner)) return;
+        var draft = new Draft { Owner = member.Owner, Kind = member.Kind, Enabled = true, IncludesOnly = true, IsNew = true };
+        _draft.Add(draft);
+        await Changed();
+        await OpenChooser(draft);
+    }
+
     private EnumerationMarks ListingFor(string owner) =>
         Accounts.Declared?.FirstOrDefault(
             account => string.Equals(account.Owner, owner, StringComparison.OrdinalIgnoreCase))
@@ -1186,6 +1298,12 @@ else
         // An account gh does not report stays declarable, because ownership is stated rather than
         // inferred. One gh *does* report, with a role that can change nothing, is a different
         // answer: gh was asked and said no.
+        if (known is { CanDeclare: false, CanInclude: true })
+        {
+            _typedOwner = string.Empty;
+            await DeclareIncludes(known);
+            return;
+        }
         if (known is { CanDeclare: false })
         {
             _saveError = $"gh reports you as a {known.Role} of {known.Owner}, "

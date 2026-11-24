@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -12,7 +13,12 @@ import (
 
 	"github.com/advanced-security/codeql-abom/internal/catalog"
 	"github.com/advanced-security/codeql-abom/internal/ghapp"
+	"github.com/advanced-security/codeql-abom/internal/ghauth"
+	"github.com/advanced-security/codeql-abom/internal/serve"
+	"github.com/advanced-security/codeql-abom/internal/setup"
 	"github.com/advanced-security/codeql-abom/internal/store"
+	"github.com/advanced-security/codeql-abom/internal/submit"
+	"github.com/advanced-security/codeql-abom/internal/toolchain"
 )
 
 // installationSyncEvery is how often serve rereads the App's installations into the store.
@@ -96,6 +102,127 @@ func dbReaderTokens(dbPath string) (ghapp.TokenSource, error) {
 	return readerTokens(app), err
 }
 
+// githubCredentials chooses what each kind of call carries. With an App, every token is minted by it
+// for that call and the person's is never read, because a production pod has no gh session;
+// without one, the person's token is used throughout, which is the local and development path.
+type githubCredentials struct {
+	app *ghapp.App
+	// operator reads the person's token; only the path without an App calls it.
+	operator func(context.Context) string
+	// copilotOrg is the organization an App's Copilot requests are billed to.
+	copilotOrg string
+}
+
+// newCredentials bills Copilot to the App's own organization unless another is named.
+func newCredentials(app *ghapp.App, copilotOrg string) githubCredentials {
+	if app != nil && copilotOrg == "" && app.Credentials.OwnerKind != ghauth.KindUser {
+		copilotOrg = app.Credentials.Owner
+	}
+	return githubCredentials{app: app, operator: githubToken, copilotOrg: copilotOrg}
+}
+
+// operatorToken is the person's token, for the path without an App.
+func (c githubCredentials) operatorToken(ctx context.Context) string {
+	if c.operator == nil {
+		return githubToken(ctx)
+	}
+	return c.operator(ctx)
+}
+
+// refuseWrites stops a server reading as an App from being given anything to write: the App asks
+// for no write, a dependency snapshot and default setup are the repository's own to change, and a
+// write carried out with the operator's token would be the person's token in production.
+func (c githubCredentials) refuseWrites(cfg serveConfig) error {
+	if c.app == nil {
+		return nil
+	}
+	for flag, value := range map[string]string{"--submit-targets": cfg.submitTargets,
+		"--enable-targets": cfg.enableTargets, "--enable-accounts": cfg.enableAccounts} {
+		if strings.TrimSpace(value) != "" {
+			return fmt.Errorf("serve: %s names something to write, and a server reading as a GitHub App "+
+				"writes nothing; drop it, or serve without the App to write with your own token", flag)
+		}
+	}
+	return nil
+}
+
+// snapshotClient submits to targets, with the reader that resolves the commit a snapshot names. With
+// an App it approves nothing and holds no token, so every submission is refused before GitHub is asked.
+func (c githubCredentials) snapshotClient(ctx context.Context, apiURL string, targets []string,
+) (*submit.Client, func(context.Context, string) (string, error)) {
+	if c.app == nil {
+		token := c.operatorToken(ctx)
+		return submit.NewClient(token, targets), catalog.New(apiURL, token, nil).HeadSHA
+	}
+	return submit.NewClient("", nil), newReader(ctx, apiURL, c.app).HeadSHA
+}
+
+// patcher writes default setup to what allowed names, with the operator's token: a server reading as
+// an App is never given anything to write.
+func (c githubCredentials) patcher(ctx context.Context, apiURL string, allowed func(string) bool) *setup.Patcher {
+	return &setup.Patcher{BaseURL: apiURL, Token: c.operatorToken(ctx), Allowed: allowed}
+}
+
+// copilot has sessions mint an installation token billed to the organization, where an App is
+// configured and nothing else named a credential; otherwise they keep gh's.
+func (c githubCredentials) copilot(o *authoringOptions) {
+	if c.app == nil || o.token != nil {
+		return
+	}
+	org := cmp.Or(o.org, c.copilotOrg)
+	app := c.app
+	o.credential = toolchain.Credential{Kind: toolchain.CredentialInstallation, Name: "Copilot credential",
+		Source: "GitHub App installation token for " + org,
+		Remedy: "an owner of " + org + " approves Copilot requests for the App, and the organization's " +
+			"policy allows Copilot requests from GitHub App installations"}
+	if org == "" {
+		o.credential.Source = "GitHub App installation token"
+		o.credential.Remedy = "name the organization Copilot requests are billed to with --authoring-org"
+	}
+	o.mint = func(ctx context.Context, refresh bool) (string, time.Time, error) {
+		if org == "" {
+			return "", time.Time{}, errors.New("the App is owned by a user, so no organization is billed for " +
+				"Copilot requests; name one it is installed on with --authoring-org")
+		}
+		return app.TokenWith(ctx, org, ghapp.CopilotPermissions, refresh)
+	}
+}
+
+// verify establishes which accounts may be declared: where the App is installed, or what gh reports.
+func (c githubCredentials) verify() func(context.Context) (ghauth.Identity, error) {
+	if c.app == nil {
+		return func(ctx context.Context) (ghauth.Identity, error) { return ghauth.Verify(ctx, ghauth.Exec) }
+	}
+	return c.app.Identity
+}
+
+// roleReader reads the role behind a member's declared repository: through gh, or with an App,
+// which has no person whose role to read, never.
+func (c githubCredentials) roleReader() func(ctx context.Context, owner, repo, login string) (string, error) {
+	if c.app == nil {
+		return func(ctx context.Context, owner, repo, login string) (string, error) {
+			return ghauth.ReadRepositoryRole(ctx, ghauth.Exec, owner, repo, login)
+		}
+	}
+	return func(context.Context, string, string, string) (string, error) {
+		return "", errors.New("with an App, eligibility is where it is installed, and no person's role is read")
+	}
+}
+
+// picker lists an account's repositories and properties through the App; nil leaves the server's gh.
+func (c githubCredentials) picker() (
+	func(context.Context, string, bool) ([]ghauth.Repository, error),
+	func(context.Context, string) ([]ghauth.PropertyDefinition, []ghauth.RepositoryProperties, error),
+) {
+	if c.app == nil {
+		return nil, nil
+	}
+	list := func(ctx context.Context, owner string, _ bool) ([]ghauth.Repository, error) {
+		return c.app.Repositories(ctx, owner)
+	}
+	return list, serve.ReadPropertiesWith(c.app.Runner())
+}
+
 // describeApp is the banner line saying which identity reads GitHub, and which one lends to owners without one.
 func describeApp(app *ghapp.App) string {
 	lender := "the earliest installation"
@@ -103,7 +230,7 @@ func describeApp(app *ghapp.App) string {
 		lender = app.PublicReads + "'s installation"
 	}
 	return fmt.Sprintf("serve: reading GitHub as App %s (%d); owners without an installation are read through %s, "+
-		"and dependency submission keeps your own token", app.Credentials.Slug, app.Credentials.AppID, lender)
+		"Copilot sessions carry tokens it mints for them, and nothing is written", app.Credentials.Slug, app.Credentials.AppID, lender)
 }
 
 // eventsRelayEnv names the relay channel outside argv, which make status prints; the channel reads every delivery.

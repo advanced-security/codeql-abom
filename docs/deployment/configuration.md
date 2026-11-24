@@ -32,8 +32,10 @@ There are separate credential paths to check:
 
 | Consumer | Credential source |
 | --- | --- |
-| ABOM's GitHub API reader | First non-empty `GITHUB_TOKEN`, then `GH_TOKEN`, then `gh auth token`. Without one, public reads may still work and private coverage can be absent. |
-| Ownership verification | `gh api user` and membership reads under the identity the GitHub CLI selects. |
+| ABOM's GitHub API reader | With a GitHub App, its installation tokens. Without one, the first non-empty `GITHUB_TOKEN`, then `GH_TOKEN`, then `gh auth token`; without any, public reads may still work and private coverage can be absent. |
+| Ownership verification | With a GitHub App, where it is installed. Without one, `gh api user` and membership reads under the identity the GitHub CLI selects; reading a member's security manager role needs the `admin:org` scope, and without it the role is reported as unknown. |
+| Copilot sessions | With a GitHub App, a token it mints for each session, holding only Copilot requests. Without one, `gh auth token`. |
+| Dependency snapshots and default setup writes | With a GitHub App, none: the App asks for no write, and a server given `--submit-targets`, `--enable-targets` or `--enable-accounts` beside one refuses to start. Without one, the same token as the reader. |
 | Private Git checkouts | Git's credential configuration; `gh auth setup-git` installs the GitHub CLI helper for HTTPS. An API token alone does not configure Git. |
 
 The batch database-download path also needs permission to read the repository's code-scanning
@@ -57,9 +59,16 @@ installs, or an SSH key used through a Git URL rewrite, still works. Check acces
 `git ls-remote` command in [source setup](source.md#configure-authentication).
 
 Fine-grained and App tokens may not report classic OAuth scopes. Missing scope evidence means
-unknown completeness, not that the operator belongs to no organization. A GitHub App service
-identity and token-refresh lifecycle are not a supported substitute for the source onboarding
-session yet.
+unknown completeness, not that the operator belongs to no organization.
+
+A process with a GitHub App configured reads no person's token for anything, and writes nothing.
+Its Copilot sessions need the App's organization Copilot Requests permission, approved by the
+installation; until then each session is refused with the missing grant named, and Settings → *What
+agent sessions run on* says so. Copilot requests are billed to the
+App's own organization unless `--authoring-org` names another it is installed on, whose policy must
+allow Copilot requests from GitHub App installations. An installation is offered fewer models than
+a person; a session whose `--authoring-model` is not among them runs on the runtime's own choice, and
+its record names the model that ran.
 
 The API URL defaults to GitHub.com. `--api-url` overrides `GITHUB_API_URL` for that reader.
 Source checkouts use the corresponding GitHub host; ownership verification follows the `gh`

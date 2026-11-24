@@ -312,7 +312,7 @@ func TestALiveCountLeavesOutArchivedRepositories(t *testing.T) {
 		return nil, errors.New("unexpected gh " + strings.Join(args, " "))
 	}
 
-	_, repositories, err := readPropertiesWith(run)(context.Background(), "has-ghas")
+	_, repositories, err := ReadPropertiesWith(run)(context.Background(), "has-ghas")
 	if err != nil {
 		t.Fatal(err)
 	}

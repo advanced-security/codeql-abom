@@ -152,5 +152,5 @@ func (s *Service) verify(ctx context.Context, owner, repo, commit, mode string) 
 		return Result{Mode: mode, Outcome: OutcomeError, Findings: []Finding{},
 			Error: "fetching the tree at " + commit + ": " + err.Error()}
 	}
-	return s.Runner.Verify(ctx, dir, mode)
+	return s.Runner.Verify(ctx, owner, dir, mode)
 }

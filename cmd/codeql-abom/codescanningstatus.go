@@ -242,11 +242,11 @@ func runCodeScanningStatus(args []string, stdout, stderr io.Writer) error {
 }
 
 // codeScanningWrites is the default setup write service. Reads stay the App's; the one write is made
-// with the operator's own token, and only to the repositories and accounts the flags name.
+// with the operator's own token, only to what the flags name, and never by a server reading as an App.
 func codeScanningWrites(ctx context.Context, cfg serveConfig, s store.Backend, reader setup.Reader) *setup.Service {
 	sv := &setup.Service{Store: s, Targets: splitTargets(cfg.enableTargets), Accounts: splitTargets(cfg.enableAccounts)}
 	if len(sv.Targets)+len(sv.Accounts) > 0 {
-		patcher := &setup.Patcher{BaseURL: cfg.apiURL, Token: githubToken(ctx), Allowed: sv.Allowed()}
+		patcher := cfg.credentials.patcher(ctx, cfg.apiURL, sv.Allowed())
 		sv.Login = patcher.Login
 		sv.Runner = &setup.Runner{Store: s, Reader: reader, Patch: patcher,
 			Pace:     processPools.Pool(work.PoolDefaultSetup, work.UnitREST).Take,

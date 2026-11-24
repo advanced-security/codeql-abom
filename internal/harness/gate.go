@@ -106,6 +106,10 @@ type Gate struct {
 
 	// keepSpend keeps what each model call cost.
 	keepSpend func(Spend) error
+	// keepModel records the model a session ran on, where the runtime offered another than asked.
+	keepModel func(string) error
+	// ranModels are the models the session's calls ran on, in the order each first ran.
+	ranModels []string
 
 	// call and request decide, as fields so a test can break them.
 	call       func(Bounds, string, any) Verdict
@@ -426,7 +430,44 @@ func (g *Gate) KeepSpend(keep func(Spend) error) {
 	g.keepSpend = keep
 }
 
+// KeepModel records the model a session runs on when it is not the one configured.
+func (g *Gate) KeepModel(keep func(string) error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.keepModel = keep
+}
+
+func (g *Gate) ranOn(model string) error {
+	if g == nil {
+		return nil
+	}
+	g.mu.Lock()
+	keep := g.keepModel
+	g.mu.Unlock()
+	if keep == nil {
+		return nil
+	}
+	return keep(model)
+}
+
+// ranCall records a model a call ran on the first time it appears: auto is the runtime's choice, so
+// only its calls say which models the session actually ran.
+func (g *Gate) ranCall(model string) {
+	g.mu.Lock()
+	if model == "" || slices.Contains(g.ranModels, model) {
+		g.mu.Unlock()
+		return
+	}
+	g.ranModels = append(g.ranModels, model)
+	ran := strings.Join(g.ranModels, ", ")
+	g.mu.Unlock()
+	if err := g.ranOn(ran); err != nil {
+		_ = g.fail(fmt.Errorf("recording the session's model failed"))
+	}
+}
+
 func (g *Gate) spent(d *copilot.AssistantUsageData) {
+	g.ranCall(d.Model)
 	g.mu.Lock()
 	keep := g.keepSpend
 	g.mu.Unlock()

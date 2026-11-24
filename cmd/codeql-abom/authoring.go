@@ -27,6 +27,12 @@ type authoringOptions struct {
 	credits    float64
 	// token is the credential sessions authenticate with; nil asks gh for the operator's.
 	token func(context.Context) (string, error)
+	// org is the organization an App's Copilot requests are billed to; empty is the App's owner.
+	org string
+	// mint and credential are set where an App is configured: sessions then authenticate with an
+	// installation token minted for them, and readiness says so.
+	mint       func(ctx context.Context, refresh bool) (string, time.Time, error)
+	credential toolchain.Credential
 }
 
 func (o *authoringOptions) register(fs *flag.FlagSet) {
@@ -40,6 +46,8 @@ func (o *authoringOptions) register(fs *flag.FlagSet) {
 	fs.DurationVar(&o.limit, "authoring-limit", harness.DefaultLimit, "longest one authoring session may run")
 	fs.Float64Var(&o.credits, "authoring-credits", 0,
 		"AI credits one authoring session may spend (0: no limit)")
+	fs.StringVar(&o.org, "authoring-org", "",
+		"organization a GitHub App's Copilot requests are billed to (default: the App's owner)")
 }
 
 // newAuthoring runs sessions over the operator's pack, or nothing when no pack is configured, and
@@ -70,7 +78,7 @@ func newAuthoring(s store.Backend, o authoringOptions, x *expand.Expander, workD
 		Prepare:   tests.InstallPackHeld,
 	}
 	token := o.token
-	if token == nil {
+	if token == nil && o.mint == nil {
 		token = func(ctx context.Context) (string, error) { return ghauth.Token(ctx, ghauth.Exec) }
 	}
 	agentFor := func(cli string) harness.Agent {
@@ -81,6 +89,7 @@ func newAuthoring(s store.Backend, o authoringOptions, x *expand.Expander, workD
 			CLI:     cli,
 			Model:   o.model,
 			Token:   token,
+			Mint:    o.mint,
 			QLMCP:   strings.Fields(o.qlmcp),
 			CodeQL:  codeql,
 			Packs:   runner.PackSearchPath(),
@@ -124,6 +133,13 @@ func newToolchain(s store.Backend, cfg *serveConfig, stderr io.Writer) *toolchai
 			_, err := ghauth.Token(ctx, ghauth.Exec)
 			return err
 		},
+	}
+	if mint := cfg.authoring.mint; mint != nil {
+		chain.Credential = cfg.authoring.credential
+		chain.Token = func(ctx context.Context) error {
+			_, _, err := mint(ctx, false)
+			return err
+		}
 	}
 	if err := chain.Load(); err != nil {
 		fmt.Fprintf(stderr, "serve: reading the tool paths saved in Settings: %v\n", err)

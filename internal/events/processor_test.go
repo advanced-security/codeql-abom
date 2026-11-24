@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/advanced-security/codeql-abom/internal/frontier"
 	"github.com/advanced-security/codeql-abom/internal/store"
@@ -771,4 +772,29 @@ func TestAPushToARepositoryWithNothingToAnalyzeIsComparedAgainstItsCommit(t *tes
 			t.Errorf("row = %+v, want it read again ahead of the ranking", row)
 		}
 	})
+}
+
+// The installer is recorded from the created delivery, for any account and before anything is
+// declared: who installed the App is evidence about the installation, not about ownership.
+func TestAnInstallationCreatedRecordsItsSenderAsTheInstaller(t *testing.T) {
+	f := newFixture(t)
+	p := f.processor()
+	p.Installations = func() {}
+	f.deliver("i-1", "installation", installationPayload("created", "other"))
+	f.deliver("i-2", "installation", installationPayload("new_permissions_accepted", "acme"))
+	if _, err := p.Drain(context.Background()); err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if err := f.store.RecordInstallationSync(store.InstallationSync{AppID: 7, At: time.Now(), Installations: []store.AppInstallation{
+		{Owner: "other", Kind: "organization", InstallationID: 1, RepositorySelection: "all"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := f.store.InstallationEvidence([]string{"other"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if by := got["other"].InstalledBy; by == nil || *by != "octocat" {
+		t.Errorf("other installed by %v, want octocat, the created delivery's sender", by)
+	}
 }

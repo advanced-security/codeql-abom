@@ -184,7 +184,7 @@ else if (_readiness is { Known: true, Ready: false } blocked)
         _saving = true;
         try
         {
-            var (readiness, refusal) = await Api.SetToolPathAsync(tool, path, Accounts.Identity.Login);
+            var (readiness, refusal) = await Api.SetToolPathAsync(tool, path, Accounts.Identity.Actor);
             _refusal = refusal;
             if (readiness is not null)
             {

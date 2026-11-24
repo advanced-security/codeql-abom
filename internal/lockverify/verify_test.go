@@ -2,6 +2,7 @@ package lockverify
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -50,7 +51,7 @@ func aTree(t *testing.T) string {
 
 func run(t *testing.T, gh, tree, mode string) Result {
 	t.Helper()
-	return Runner{Gh: gh, Timeout: time.Minute}.Verify(context.Background(), tree, mode)
+	return Runner{Gh: gh, Timeout: time.Minute}.Verify(context.Background(), "octo", tree, mode)
 }
 
 // Each state the tool reports is its own outcome. A passing check with a warning is not a clean
@@ -198,12 +199,59 @@ func TestThePinnedToolReadsALockItGenerated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := Runner{Gh: "gh", Timeout: time.Minute}.Verify(context.Background(), tree, ModeLocal)
+	got := Runner{Gh: "gh", Timeout: time.Minute}.Verify(context.Background(), "octo", tree, ModeLocal)
 	if got.Outcome != OutcomePassed || got.Valid == nil || !*got.Valid {
 		t.Errorf("outcome %q (%s), findings %+v; want the fixture's complete coverage to pass",
 			got.Outcome, got.Error, got.Findings)
 	}
 	if got.ToolVersion == "" || got.LockfileVersion != "v0.0.2" {
 		t.Errorf("versions %q, %q; want what the tool reported", got.ToolVersion, got.LockfileVersion)
+	}
+}
+
+// With an App the tool reads GitHub as the installation on the repository's owner, and finds no
+// person's credential to fall back on; a token that cannot be minted is the outcome, and the tool
+// does not run. Without one, it reads as the operator's gh session, as before.
+func TestWithAnAppTheToolReadsAsTheInstallationAndNeverAsThePerson(t *testing.T) {
+	t.Setenv("GH_TOKEN", "ghp_a_persons_token")
+	t.Setenv("GITHUB_TOKEN", "ghp_a_persons_token")
+	gh, calls := fakeGh(t, `{"cli_version":"v0.0.2","valid":true,"findings":[]}`, 0,
+		`echo "env GH_TOKEN=$GH_TOKEN GITHUB_TOKEN=$GITHUB_TOKEN" >> '`+"${CALLS}"+`'`)
+	_ = os.Remove(calls)
+	script, _ := os.ReadFile(gh)
+	_ = os.WriteFile(gh, []byte(strings.ReplaceAll(string(script), "${CALLS}", calls)), 0o755)
+
+	var asked []string
+	r := Runner{Gh: gh, Timeout: time.Minute, Token: func(_ context.Context, owner string) (string, error) {
+		asked = append(asked, owner)
+		return "ghs_installation_" + owner, nil
+	}}
+	if got := r.Verify(context.Background(), "has-ghas", aTree(t), ModeNetwork); got.Outcome != OutcomePassed {
+		t.Fatalf("outcome %s: %s", got.Outcome, got.Error)
+	}
+	seen, _ := os.ReadFile(calls)
+	if !strings.Contains(string(seen), "GH_TOKEN=ghs_installation_has-ghas GITHUB_TOKEN=\n") ||
+		strings.Contains(string(seen), "ghp_a_persons_token") || len(asked) != 1 || asked[0] != "has-ghas" {
+		t.Errorf("the tool ran with %q after minting for %v; want the installation's token alone", seen, asked)
+	}
+
+	_ = os.Remove(calls)
+	r.Token = func(context.Context, string) (string, error) {
+		return "", errors.New("the App is not installed on has-ghas")
+	}
+	got := r.Verify(context.Background(), "has-ghas", aTree(t), ModeNetwork)
+	if got.Outcome != OutcomeError || !strings.Contains(got.Error, "not installed") {
+		t.Errorf("an unmintable token = %+v; want an error outcome with the reason", got)
+	}
+	if _, err := os.Stat(calls); err == nil {
+		t.Error("the tool ran without the installation's token")
+	}
+
+	r.Token = nil
+	if got := r.Verify(context.Background(), "has-ghas", aTree(t), ModeNetwork); got.Outcome != OutcomePassed {
+		t.Fatalf("without an App: outcome %s: %s", got.Outcome, got.Error)
+	}
+	if seen, _ := os.ReadFile(calls); !strings.Contains(string(seen), "GH_TOKEN=ghp_a_persons_token") {
+		t.Errorf("without an App the tool ran with %q; want the operator's environment", seen)
 	}
 }

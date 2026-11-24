@@ -8,7 +8,9 @@ import (
 	"io"
 	"time"
 
+	"github.com/advanced-security/codeql-abom/internal/ghapp"
 	"github.com/advanced-security/codeql-abom/internal/ghauth"
+	"github.com/advanced-security/codeql-abom/internal/serve"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
@@ -20,7 +22,8 @@ func runAccounts(ctx context.Context, args []string, stdout, stderr io.Writer) e
 	fs := flag.NewFlagSet("accounts", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dbPath := databaseFlag(fs)
-	refresh := fs.Bool("refresh", false, "ask gh who you are and which accounts you belong to")
+	refresh := fs.Bool("refresh", false,
+		"ask which accounts may be declared: where the App beside --db is installed, or what gh reports without one")
 	forget := fs.Bool("forget", false, "discard the stored identity")
 	suggest := fs.Bool("suggest", false, "list accounts holding repositories in scope")
 	if err := fs.Parse(args); err != nil {
@@ -46,7 +49,15 @@ func runAccounts(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		}
 	}
 	if *refresh {
-		if err := verifyIdentity(ctx, s); err != nil {
+		app, err := readerApp(ghapp.DefaultDir(*dbPath), "", defaultAPIURL())
+		if err != nil {
+			return fmt.Errorf("accounts: %w", err)
+		}
+		creds := newCredentials(app, "")
+		if err := verifyIdentity(ctx, s, creds.verify()); err != nil {
+			return fmt.Errorf("accounts: %w", err)
+		}
+		if err := serve.ReadDeclaredRoles(ctx, s, creds.roleReader()); err != nil {
 			return fmt.Errorf("accounts: %w", err)
 		}
 	}
@@ -68,15 +79,15 @@ func runAccounts(ctx context.Context, args []string, stdout, stderr io.Writer) e
 	return nil
 }
 
-// verifyIdentity asks gh who the operator is and records what it establishes.
-func verifyIdentity(ctx context.Context, s store.Backend) error {
-	id, err := ghauth.Verify(ctx, ghauth.Exec)
+// verifyIdentity asks who may declare and records what it establishes.
+func verifyIdentity(ctx context.Context, s store.Backend, verify func(context.Context) (ghauth.Identity, error)) error {
+	id, err := verify(ctx)
 	if err != nil {
 		return err
 	}
 	accounts := make([]store.Account, 0, len(id.Accounts))
 	for _, a := range id.Accounts {
-		accounts = append(accounts, store.Account{Owner: a.Owner, Kind: a.Kind, Role: a.Role})
+		accounts = append(accounts, serve.StoreAccount(a))
 	}
 	return s.ReplaceAccounts(store.Verification{
 		Login:      id.Login,
@@ -96,7 +107,11 @@ func writeAccounts(w io.Writer, v store.Verification) {
 	fmt.Fprintf(w, "Verified as %s on %s at %s\n\n",
 		v.Login, v.Host, v.VerifiedAt.Format(time.RFC3339))
 	for _, a := range v.Accounts {
-		fmt.Fprintf(w, "  %-32s %-14s %s\n", a.Owner, a.Kind, a.Role)
+		role := a.Role
+		if a.SecurityManager != "" {
+			role += ", security manager: " + a.SecurityManager
+		}
+		fmt.Fprintf(w, "  %-32s %-14s %s\n", a.Owner, a.Kind, role)
 	}
 }
 

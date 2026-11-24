@@ -41,6 +41,22 @@ func TestASessionIsStartedOnlyOnARequestThatExists(t *testing.T) {
 	}
 }
 
+// The configured model is what a session asked for; the runtime may offer another, and the record
+// names the one that ran, never the one nobody could run.
+func TestASessionRecordsTheModelThatRan(t *testing.T) {
+	s := newTestStore(t)
+	request, session := aSessionOn(t, s)
+	if err := s.SetAuthoringSessionModel(session, "gpt-5.3-codex"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.AuthoringSessions(request); len(got) != 1 || got[0].Model != "gpt-5.3-codex" {
+		t.Errorf("sessions %+v, want the model that ran", got)
+	}
+	if err := s.SetAuthoringSessionModel(999, "auto"); err == nil {
+		t.Error("a model was recorded for a session that does not exist")
+	}
+}
+
 // The store is the one place an ending's detail is sanitized, so a caller hands it the raw error and
 // what is written is already safe to show; the read path's projection is not what keeps it out.
 func TestASessionEndingIsSanitizedWhereItIsWritten(t *testing.T) {

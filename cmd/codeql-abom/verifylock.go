@@ -30,13 +30,20 @@ func lockVerifierWithPolicy(s store.Backend, tokens ghapp.TokenSource,
 	}
 	checkout := &expand.Checkout{Timeout: 5 * time.Minute, Tokens: tokens}
 	bindSourcePolicy(checkout, apiURL, policy)
+	runner := lockverify.Runner{Timeout: 5 * time.Minute}
+	if tokens != nil {
+		runner.Token = func(ctx context.Context, owner string) (string, error) {
+			token, _, err := tokens.Token(ctx, owner)
+			return token, err
+		}
+	}
 	return &lockverify.Service{
 		Store: s,
 		Fetch: func(ctx context.Context, dest, owner, repo, commit string) error {
 			_, err := checkout.Fetch(ctx, dest, owner, repo, commit)
 			return err
 		},
-		Runner: lockverify.Runner{Timeout: 5 * time.Minute},
+		Runner: runner,
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -36,6 +37,15 @@ CREATE TABLE IF NOT EXISTS abom_app_installation_repository (
   owner TEXT NOT NULL COLLATE NOCASE,
   name  TEXT NOT NULL COLLATE NOCASE,
   PRIMARY KEY (owner, name)
+);
+
+-- Who installed an installation, from its created delivery's sender; NULL when the delivery named none.
+CREATE TABLE IF NOT EXISTS abom_app_installer (
+  installation_id INTEGER NOT NULL PRIMARY KEY,
+  owner           TEXT NOT NULL COLLATE NOCASE,
+  installed_by    TEXT,
+  delivery_id     TEXT NOT NULL DEFAULT '',
+  recorded_at     TEXT NOT NULL
 );
 `
 
@@ -90,6 +100,48 @@ type InstallationEvidence struct {
 	// SeenAt is the last listing that named this account; CheckedAt the last read that concerned it.
 	SeenAt    *string `json:"seenAt"`
 	CheckedAt string  `json:"checkedAt"`
+	// InstalledBy is the sender of this installation's created delivery; null when none was received
+	// or it named nobody, which is unknown and not "nobody installed it".
+	InstalledBy *string `json:"installedBy"`
+}
+
+// Uncovered is the includes this installation evidence says the App cannot read: all of them where
+// it is not installed, no longer installed or suspended, and those a selected list that was read
+// omits. Nil where nothing was read, or where the listing or the repository list could not be.
+func (e *InstallationEvidence) Uncovered(includes []string) []string {
+	if e == nil {
+		return nil
+	}
+	selected := e.RepositorySelection != nil && *e.RepositorySelection == "selected"
+	switch {
+	case e.State == InstallationInstalled && selected && e.Repositories == nil:
+		return nil
+	case e.State != InstallationInstalled && e.Reason != InstallationNotInstalled &&
+		e.Reason != InstallationNoLongerInstalled && e.Reason != InstallationSuspended:
+		return nil
+	}
+	out := []string{}
+	for _, repo := range includes {
+		covered := e.State == InstallationInstalled &&
+			(!selected || slices.ContainsFunc(e.Repositories, func(r string) bool { return strings.EqualFold(r, repo) }))
+		if !covered {
+			out = append(out, repo)
+		}
+	}
+	return out
+}
+
+// RecordInstaller keeps who created an installation, as its first created delivery said; a replay
+// or a later delivery for the same installation changes nothing.
+func (s *Store) RecordInstaller(installationID int64, owner, login, deliveryID string, at time.Time) error {
+	if _, err := s.db.Exec(`
+		INSERT INTO abom_app_installer (installation_id, owner, installed_by, delivery_id, recorded_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(installation_id) DO NOTHING`,
+		installationID, owner, nullable(login), deliveryID, at.UTC().Format(time.RFC3339Nano)); err != nil {
+		return fmt.Errorf("recording who installed the App on %s: %w", owner, err)
+	}
+	return nil
 }
 
 // RecordInstallationSync records one read of the App's installations.
@@ -222,11 +274,12 @@ func (s *Store) installationRow(owner string) (*InstallationEvidence, error) {
 	var e InstallationEvidence
 	var id int64
 	var selection, seen string
-	var listed sql.NullString
-	err := s.db.QueryRow(`SELECT state, reason, detail, installation_id, repository_selection,
-		  seen_at, checked_at, repositories_read_at
-		FROM abom_app_installation WHERE owner = ?`, owner).
-		Scan(&e.State, &e.Reason, &e.Detail, &id, &selection, &seen, &e.CheckedAt, &listed)
+	var listed, installer sql.NullString
+	err := s.db.QueryRow(`SELECT i.state, i.reason, i.detail, i.installation_id, i.repository_selection,
+		  i.seen_at, i.checked_at, i.repositories_read_at,
+		  (SELECT MAX(b.installed_by) FROM abom_app_installer b WHERE b.installation_id = i.installation_id)
+		FROM abom_app_installation i WHERE i.owner = ?`, owner).
+		Scan(&e.State, &e.Reason, &e.Detail, &id, &selection, &seen, &e.CheckedAt, &listed, &installer)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -234,6 +287,9 @@ func (s *Store) installationRow(owner string) (*InstallationEvidence, error) {
 		return nil, fmt.Errorf("reading the installation on %s: %w", owner, err)
 	}
 	e.InstallationID, e.RepositorySelection, e.SeenAt = &id, &selection, &seen
+	if installer.Valid {
+		e.InstalledBy = &installer.String
+	}
 	if !listed.Valid {
 		return &e, nil
 	}

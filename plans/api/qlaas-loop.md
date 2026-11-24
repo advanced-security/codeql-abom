@@ -61,16 +61,16 @@ allowlist: the name may already have been allowed, and the argument is what fail
    current turn, `enqueue` to run after it. The prompt is recorded before it is sent. If the
    runtime transcript cannot be loaded, say so and start a new session on the restored files.
    Do not pretend the conversation survived. Depends on 3.
-5. **The model list is the runtime's.** `ListModels` on the credential the session will use —
-   the user's, when no App is configured; the organization's, when
-   [production-credentials.md](production-credentials.md) mints the Copilot token. Render id,
-   name, policy state, supported reasoning efforts and context tier. Do not invent a retiring
-   badge the runtime did not send. Pass the selected effort and tier to `SetModel` on a live
-   session and to the next create or resume. A model the runtime does not list is unavailable,
-   including the flag default. A list that could not be read is an error, not an empty catalog
-   and not `claude-opus-5` presented as the catalog. The flag names the session's model only when
-   that id is in the list. Depends on nothing for the local path. The production list depends on
-   the Copilot installation token existing; the control is the same.
+5. **Choose the model from the runtime's list, on screen.** A session already runs on that list:
+   the configured model where the runtime offers it to the session's credential, the runtime's
+   `auto` where it does not, and a list that cannot be read, or offers nothing, refuses the session.
+   The model each call actually ran on is recorded from the usage events. What is left is the
+   picker: `ListModels` on the credential the session will use, rendering id, name, policy state,
+   supported reasoning efforts and context tier, with no retiring badge the runtime did not send;
+   the selected effort and tier passed to `SetModel` on a live session and to the next create or
+   resume. Measured on `has-ghas` (2026-11-19): an App installation is offered `auto` and
+   `gpt-5.3-codex` only, so `claude-opus-5`, the flag default, ran nowhere through the App. Depends on
+   nothing.
 
 ## Decided
 

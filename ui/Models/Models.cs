@@ -821,6 +821,18 @@ public sealed record OwnedAccount
     /// conclusion is the second derivation that lets the two disagree.
     /// </summary>
     public bool CanDeclare { get; init; }
+
+    /// <summary>A member who may not declare the organization whole may still declare the
+    /// repositories in it they administer or maintain, by name. The server's answer.</summary>
+    public bool CanInclude { get; init; }
+
+    /// <summary>A member's security manager role, read apart from membership: <c>yes</c>,
+    /// <c>no</c>, or <c>unknown</c> with <see cref="SecurityManagerReason"/>; empty where nobody asked.</summary>
+    public string SecurityManager { get; init; } = string.Empty;
+    public string SecurityManagerReason { get; init; } = string.Empty;
+
+    /// <summary>The role as a reader says it: a member holding the security manager role is one.</summary>
+    public string RoleText => SecurityManager == "yes" ? "security manager" : Role;
 }
 
 /// <summary>A setup failure the operator can fix, and the command that fixes it.</summary>
@@ -851,6 +863,19 @@ public sealed record AccountIdentity
     /// differently scoped token. Decided by the server, never re-derived from the scope strings.
     /// </summary>
     public bool CanReadMemberships { get; init; }
+
+    /// <summary>What a check asks: <c>app</c>, the App's installations, or <c>gh</c>.</summary>
+    public string IdentityBy { get; init; } = "gh";
+
+    public bool ByApp => IdentityBy == "app";
+
+    /// <summary>Whether the identity on record came from the App's installations, decided by the
+    /// server; a person's verification from before the App stays theirs until the next check.</summary>
+    public bool ReadByApp { get; init; }
+
+    /// <summary>Who an action taken on this page is recorded as. Reading as an App nobody has signed
+    /// in, so the page is all that is known; the App's own login would credit it with a person's choice.</summary>
+    public string Actor => ByApp ? "interface" : Login;
 }
 
 /// <summary>A tier's size and how much of it is currently analyzed.</summary>
@@ -1161,6 +1186,44 @@ public sealed record DeclaredAccount
 
     /// <summary>True when nobody can say how this declaration got here.</summary>
     public bool Unaccounted => string.IsNullOrEmpty(DeclaredBy);
+
+    /// <summary>Whether the recorded role still supports this declaration. It changes nothing.</summary>
+    public ClaimCheck? Check { get; init; }
+
+    /// <summary>Includes the App's installation does not cover; null where no installation was read.</summary>
+    public IReadOnlyList<string>? NotInstalled { get; init; }
+
+    /// <summary>What the App's installations say about this account; null where none were read.</summary>
+    public InstallationEvidence? Installation { get; init; }
+}
+
+/// <summary>Whether a declaration's recorded role still supports it: <c>supported</c>,
+/// <c>unsupported</c> or <c>unknown</c>. Decided by the server, never re-derived here.</summary>
+public sealed record ClaimCheck
+{
+    public string State { get; init; } = string.Empty;
+    public string Role { get; init; } = string.Empty;
+    public string Detail { get; init; } = string.Empty;
+    public IReadOnlyList<IncludeCheck> Includes { get; init; } = [];
+}
+
+/// <summary>The role behind one repository a member declared.</summary>
+public sealed record IncludeCheck
+{
+    public string Repository { get; init; } = string.Empty;
+    public string State { get; init; } = string.Empty;
+    public string Role { get; init; } = string.Empty;
+    public string Detail { get; init; } = string.Empty;
+}
+
+/// <summary>What the App's installations say about one account: evidence, never a declaration.</summary>
+public sealed record InstallationEvidence
+{
+    public string State { get; init; } = string.Empty;
+    public string Reason { get; init; } = string.Empty;
+
+    /// <summary>Who created the installation, from its delivery; null is unknown, not nobody.</summary>
+    public string? InstalledBy { get; init; }
 }
 
 /// <summary>One custom property value a property scope requires. Rendered verbatim.</summary>
@@ -1245,6 +1308,13 @@ public sealed record AccountRepository
     public bool Private { get; init; }
     public bool Archived { get; init; }
     public bool Fork { get; init; }
+
+    /// <summary>The reader's role on it as GitHub reported it; empty where none was.</summary>
+    public string Permission { get; init; } = string.Empty;
+
+    /// <summary>The server's answer: the account may be declared whole, or the reader administers
+    /// or maintains this repository. Never re-derived from the permission here.</summary>
+    public bool Declarable { get; init; }
 }
 
 /// <summary>
@@ -2816,6 +2886,8 @@ public sealed record CodeScanningReadings
 public sealed record CodeScanningWriteMode
 {
     public bool Writes { get; init; }
+    /// <summary>A server reading as a GitHub App, which refuses every write flag at start.</summary>
+    public bool ReadsAsApp { get; init; }
     public IReadOnlyList<string> Targets { get; init; } = [];
     public IReadOnlyList<string> Accounts { get; init; } = [];
 }

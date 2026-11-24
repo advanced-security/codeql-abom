@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -267,6 +268,154 @@ func TestPinningLevelsDrillByTheKeyTheParentReported(t *testing.T) {
 	for _, r := range refs {
 		if r.HasChildren {
 			t.Errorf("reference %s reports children; it is the leaf", r.ScopeKey)
+		}
+	}
+}
+
+// A refresh reads the role behind each repository a member declared, and the owned scope says
+// beside each declaration whether that role still supports it; a role that cannot be read is
+// "cannot say", and nothing about the check changes what is declared.
+func TestRefreshingChecksTheRoleBehindEachDeclaration(t *testing.T) {
+	srv, s := newServer(t)
+	srv.Verify = verifies(
+		ghauth.Account{Owner: "admin-org", Kind: "organization", Role: "admin"},
+		ghauth.Account{Owner: "member-org", Kind: "organization", Role: "member", SecurityManager: "no"},
+	)
+	var asked []string
+	srv.ReadRepositoryRole = func(_ context.Context, owner, repo, login string) (string, error) {
+		asked = append(asked, owner+"/"+repo+" as "+login)
+		switch repo {
+		case "maintained":
+			return "maintain", nil
+		case "written":
+			return "write", nil
+		}
+		return "", errors.New("gh cannot read octocat's role on member-org/" + repo)
+	}
+	declared := []store.DeclaredAccount{
+		{Owner: "admin-org", Kind: store.AccountOrganization, Enabled: true, IncludesOnly: true, Includes: []string{"anything"}},
+		{Owner: "member-org", Kind: store.AccountOrganization, Enabled: true, IncludesOnly: true,
+			Includes: []string{"maintained", "written", "hidden"}},
+	}
+	if err := s.SetOwnedScope(declared, store.DeclaredByInterface); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := s.OwnedScope()
+
+	if rec := postControl(t, srv, "/api/accounts/refresh"); rec.Code != http.StatusOK {
+		t.Fatalf("refresh: %d %s", rec.Code, rec.Body)
+	}
+	want := []string{"member-org/hidden as octocat", "member-org/maintained as octocat", "member-org/written as octocat"}
+	slices.Sort(asked)
+	if strings.Join(asked, ",") != strings.Join(want, ",") {
+		t.Errorf("roles read %v, want %v: an admin's includes need no read", asked, want)
+	}
+
+	type checked struct {
+		Owner string           `json:"owner"`
+		Check store.ClaimCheck `json:"check"`
+	}
+	got := map[string]store.ClaimCheck{}
+	for _, a := range decode[[]checked](t, get(t, srv, "/api/owned-scope")) {
+		got[a.Owner] = a.Check
+	}
+	if got["admin-org"].State != store.ClaimSupported {
+		t.Errorf("admin-org check %+v, want supported", got["admin-org"])
+	}
+	member := got["member-org"]
+	includes := map[string]string{}
+	for _, i := range member.Includes {
+		includes[i.Repository] = i.State
+	}
+	if member.State != store.ClaimUnsupported || includes["maintained"] != store.ClaimSupported ||
+		includes["written"] != store.ClaimUnsupported || includes["hidden"] != store.ClaimUnknown {
+		t.Errorf("member-org check %+v, want unsupported with maintained supported, written not, hidden cannot say", member)
+	}
+	if after, _ := s.OwnedScope(); len(after) != len(before) || len(after[1].Includes) != 3 {
+		t.Errorf("the check changed the declaration: %+v", after)
+	}
+}
+
+// An include the App's installation does not cover stays declared and is marked: a maintainer
+// cannot widen an installation, and no person's token reads it instead. Without an App, nothing is
+// marked, because nothing was asked.
+func TestAnIncludeTheInstallationDoesNotCoverIsMarked(t *testing.T) {
+	srv, s := newServer(t)
+	declared := []store.DeclaredAccount{
+		{Owner: "advanced-security", Kind: store.AccountOrganization, Enabled: true, IncludesOnly: true,
+			Includes: []string{"codeql-abom", "maintained-elsewhere"}},
+		{Owner: "uninstalled", Kind: store.AccountOrganization, Enabled: true, IncludesOnly: true, Includes: []string{"service"}},
+		{Owner: "has-ghas", Kind: store.AccountOrganization, Enabled: true, IncludesOnly: true, Includes: []string{"anything"}},
+	}
+	if err := s.SetOwnedScope(declared, store.DeclaredByInterface); err != nil {
+		t.Fatal(err)
+	}
+	type marked struct {
+		Owner        string   `json:"owner"`
+		NotInstalled []string `json:"notInstalled"`
+	}
+	read := func() map[string][]string {
+		got := map[string][]string{}
+		for _, a := range decode[[]marked](t, get(t, srv, "/api/owned-scope")) {
+			got[a.Owner] = a.NotInstalled
+		}
+		return got
+	}
+	for owner, list := range read() {
+		if list != nil {
+			t.Errorf("without an App %s marks %v", owner, list)
+		}
+	}
+
+	if err := s.RecordInstallationSync(store.InstallationSync{AppID: 7, At: time.Now(), Installations: []store.AppInstallation{
+		{Owner: "advanced-security", Kind: "organization", InstallationID: 12, RepositorySelection: "selected",
+			Repositories: []string{"codeql-abom"}},
+		{Owner: "has-ghas", Kind: "organization", InstallationID: 11, RepositorySelection: "all"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	got := read()
+	for owner, want := range map[string][]string{
+		"advanced-security": {"maintained-elsewhere"}, "uninstalled": {"service"}, "has-ghas": {},
+	} {
+		if !slices.Equal(got[owner], want) || got[owner] == nil {
+			t.Errorf("%s marks %v, want %v", owner, got[owner], want)
+		}
+	}
+}
+
+// The page says what a check asks — the App's installations or gh — from the server's answer: a
+// production instance has no gh, and telling its reader to run gh is a remedy nobody can follow.
+func TestTheIdentityNamesWhatACheckAsks(t *testing.T) {
+	srv, _ := newServer(t)
+	type asks struct {
+		IdentityBy string `json:"identityBy"`
+	}
+	if got := decode[asks](t, get(t, srv, "/api/accounts")); got.IdentityBy != IdentityByGh {
+		t.Errorf("without an App the identity is by %q, want gh", got.IdentityBy)
+	}
+	srv.IdentityBy = IdentityByApp
+	if got := decode[asks](t, get(t, srv, "/api/accounts")); got.IdentityBy != IdentityByApp {
+		t.Errorf("with an App the identity is by %q, want app", got.IdentityBy)
+	}
+}
+
+// What a check asks and what is on record differ until the first check after an App is configured:
+// a person's verification read before then is still theirs, and must not be presented as the App's.
+func TestTheIdentityOnRecordSaysWhetherAnAppReadIt(t *testing.T) {
+	srv, s := newServer(t)
+	srv.IdentityBy = IdentityByApp
+	type record struct {
+		ReadByApp *bool `json:"readByApp"`
+	}
+	for login, want := range map[string]bool{"octocat": false, "abom-has-ghas[bot]": true} {
+		if err := s.ReplaceAccounts(store.Verification{Login: login, Host: "github.com", VerifiedAt: time.Now().UTC(),
+			Accounts: []store.Account{{Owner: "has-ghas", Kind: store.AccountOrganization, Role: store.RoleOwner}}}); err != nil {
+			t.Fatal(err)
+		}
+		got := decode[record](t, get(t, srv, "/api/accounts"))
+		if got.ReadByApp == nil || *got.ReadByApp != want {
+			t.Errorf("%s on record: readByApp %v, want %v", login, got.ReadByApp, want)
 		}
 	}
 }
