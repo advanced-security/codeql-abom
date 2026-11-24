@@ -219,6 +219,25 @@ func TestATestKeepsTheMarkedFixturesItRanOver(t *testing.T) {
 	}
 }
 
+// A row whose marked fixtures cannot be read says which result it is, or nobody can find it to repair.
+func TestUnreadableMarkedFixturesNameTheResultTheyBelongTo(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.RecordQueryTest(QueryTest{QueryID: "acme/rule", QueryVersion: "stub", CLIVersion: testCLI,
+		Total: 1, MarkedFixtures: map[string]string{"test/A/ci.yml": "c1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE abom_query_test SET marked_fixtures = ? WHERE query_id = ?`,
+		`{"test/A/ci.yml":`, "acme/rule"); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := s.QueryTestFor("acme/rule", "stub", testCLI)
+	for _, want := range []string{"marked fixtures", "acme/rule", "stub", testCLI} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("reading a corrupt row = %v, want an error naming %q", err, want)
+		}
+	}
+}
+
 // A query's steps read every version's tests: whether another version passed is part of what
 // this one's marks say. Another query's results are not.
 func TestTheTestsOfAQueryAreReadAcrossItsVersionsAndNoOtherQuery(t *testing.T) {

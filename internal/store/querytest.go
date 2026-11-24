@@ -84,7 +84,10 @@ func scanQueryTest(row interface{ Scan(...any) error }) (QueryTest, error) {
 	t.Passed = passed != 0
 	t.Missing, t.Unexpected = reported(missing), reported(unexpected)
 	if err == nil && marked.Valid {
-		if err = json.Unmarshal([]byte(marked.String), &t.MarkedFixtures); err == nil && t.MarkedFixtures == nil {
+		if err = json.Unmarshal([]byte(marked.String), &t.MarkedFixtures); err != nil {
+			err = fmt.Errorf("the marked fixtures of %s %s under CodeQL %s: %w",
+				t.QueryID, t.QueryVersion, t.CLIVersion, err)
+		} else if t.MarkedFixtures == nil {
 			t.MarkedFixtures = map[string]string{}
 		}
 	}
