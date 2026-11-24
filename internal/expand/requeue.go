@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
 // Selection is what one selective requeue put back, and what it judged by.
@@ -64,4 +66,24 @@ func (e *Expander) RequeueRepository(name string) (Selection, error) {
 		return Selection{}, err
 	}
 	return Selection{Requeued: n, Expedited: expedited}, nil
+}
+
+// Resync puts back exactly the rows somebody chose and runs them ahead of the ranking, reading each
+// repository's source eligibility again: the request follows a fix, so a remembered refusal would
+// refuse it in all but name. It reports how many rows it moved ahead.
+func (e *Expander) Resync(refs []store.NodeRef) (store.Resync, int, error) {
+	got, err := e.Store.ResyncRows(refs)
+	if err != nil {
+		return got, 0, err
+	}
+	if e.SourcePolicy != nil {
+		for _, repository := range got.Repositories {
+			e.SourcePolicy.Invalidate(repository)
+		}
+	}
+	expedited, err := e.Queue.ExpediteRefs(refs)
+	if err != nil {
+		return got, 0, err
+	}
+	return got, expedited, nil
 }

@@ -200,6 +200,12 @@ func seedDeclaration(s store.Backend, path string, stderr io.Writer) error {
 		return fmt.Errorf("serve: %w", err)
 	}
 	seeded, err := declare.Seed(s, accounts)
+	// Stopping here would take down the interface, which is where a declaration the role supports
+	// is made; nothing is declared, so the page already says what to do next.
+	if refused := (*store.DeclarationRefused)(nil); errors.As(err, &refused) && refused.ByRole {
+		fmt.Fprintf(stderr, "serve: %s was not applied, and nothing is declared: %s\n", path, refused.Reason)
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("serve: %w", err)
 	}

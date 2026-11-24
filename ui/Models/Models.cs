@@ -168,6 +168,26 @@ public sealed record RequeueResult
     public DiscoveryState State { get; init; } = new();
 }
 
+/// <summary>What resyncing chosen Coverage rows and accounts did, counted by the state each row was in.</summary>
+public sealed record ResyncResult
+{
+    public int Requeued { get; init; }
+    public int Queued { get; init; }
+    public int Waiting { get; init; }
+    public int Running { get; init; }
+    public int NamesNoRepository { get; init; }
+    public int NotFound { get; init; }
+    public int Expedited { get; init; }
+
+    /// <summary>Owned repositories the next cycle reads again before analyzing them.</summary>
+    public IReadOnlyList<string> Reread { get; init; } = [];
+
+    /// <summary>Accounts the next cycle lists again in full.</summary>
+    public IReadOnlyList<string> Relisted { get; init; } = [];
+
+    public DiscoveryState State { get; init; } = new();
+}
+
 public sealed record GraphVersion
 {
     public long Generation { get; init; }
@@ -1349,6 +1369,20 @@ public sealed record EnumerationMarks
     /// <summary>Repositories that judgement could not decide, because their values did not arrive
     /// whole. Neither taken in nor let go.</summary>
     public int PropertiesUnjudged { get; init; }
+
+    /// <summary>
+    /// The last reads of this account, and of repositories in it, that did not answer. Empty says
+    /// none is on record, which is not the same as having been listed: <see cref="ListedAt"/> says that.
+    /// </summary>
+    public IReadOnlyList<EnumerationFailure> Failures { get; init; } = [];
+}
+
+/// <summary>A read of an account (or of <c>owner/name</c> in it) that did not answer, and why.</summary>
+public sealed record EnumerationFailure
+{
+    public string Subject { get; init; } = string.Empty;
+    public string FailedAt { get; init; } = string.Empty;
+    public string Reason { get; init; } = string.Empty;
 }
 
 /// <summary>A declared repository a full listing did not name, and since when.</summary>

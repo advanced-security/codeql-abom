@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -241,5 +242,52 @@ func TestPathFlagsAreNamedFromWhereTheServerStarted(t *testing.T) {
 	if bare.discovery.codeqlPath != "codeql" || bare.discovery.workDir != "" {
 		t.Errorf("a bare name or an absent flag changed: codeql %q, work dir %q",
 			bare.discovery.codeqlPath, bare.discovery.workDir)
+	}
+}
+
+// The local file seeds a fresh database for convenience. Refusing what it declares because of the
+// role on record must not take the interface down with it: the interface is where a declaration
+// the role supports is made. A file that cannot be a declaration at all still stops the server.
+func TestALocalDeclarationTheRoleCannotSupportIsSkippedAndServingGoesOn(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "abom.db")
+	s, err := store.Open(db, store.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceAccounts(store.Verification{Login: "octocat", Host: "github.com", VerifiedAt: time.Now().UTC(),
+		Accounts: []store.Account{{Owner: "acme", Kind: store.AccountOrganization, Role: store.RoleMember,
+			SecurityManager: "no"}}}); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	file := filepath.Join(dir, "abom.local.json")
+	if err := os.WriteFile(file, []byte(`{"own": {"orgs": ["acme"]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	served, err := openServeStore(serveConfig{dbPath: db, declareFile: file}, io.Discard, &stderr)
+	if err != nil {
+		t.Fatalf("a declaration the role cannot support stopped the server: %v", err)
+	}
+	declared, err := served.OwnedScope()
+	served.Close()
+	if err != nil || len(declared) != 0 {
+		t.Errorf("the refused declaration was written anyway: %+v, %v", declared, err)
+	}
+	if !strings.Contains(stderr.String(), file) || !strings.Contains(stderr.String(), "administer or maintain") {
+		t.Errorf("serving went on without saying the file was refused, or why:\n%s", stderr.String())
+	}
+
+	if err := os.WriteFile(file, []byte(`{"own": {"users": ["acme"], "properties": [{"org": "acme", "match": [{"name": "team", "value": "x"}]}]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if served, err := openServeStore(serveConfig{dbPath: db, declareFile: file}, io.Discard, io.Discard); err == nil {
+		served.Close()
+		t.Error("a file that cannot be a declaration at all no longer stops the server")
 	}
 }

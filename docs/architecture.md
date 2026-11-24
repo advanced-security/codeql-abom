@@ -646,6 +646,13 @@ answers `defaultBranchRef: null`.
   secondary limits cap GraphQL at 2,000 points a minute, so separate budgets are not separate
   clients.
 
+**A read that fails is kept beside what it failed to read.** `abom_enumeration_failure` holds the
+last failure for an account, or for one repository in it, until a read of the same subject answers.
+The cycle reports only its first failure as its last error, so without the record a declared
+organization the App was never installed on read as one holding nothing. Coverage lists every
+enabled declaration discovery has not listed, or that a complete membership list leaves out and so
+roots nothing, with why, and lists one again when chosen.
+
 **Listing an account does not probe its databases.** The crawler records and queues declared
 repositories without asking whether GitHub holds a CodeQL database for them. The explicit
 `discover` command asks that separate question: its GraphQL listing includes default-branch
@@ -697,7 +704,7 @@ from its own crawl, not an import of a SQLite database.
 | `abom_owned_org`, `abom_owned_scope`, `abom_owned_include` | What the operator declared, and how it arrived |
 | `abom_owned_property_clause`, `abom_owned_property_term` | Property scopes on a restricted organization, each the terms a repository must all carry; `abom_owned_property_clause_honored` is the view, derived from the recorded schema, of the ones that count |
 | `abom_property_schema`, `abom_property_schema_read` | Each organization's custom properties as last read whole — type, default, who may set the values — and when |
-| `abom_enumeration_state`, `abom_repository_absence` | When each account was last listed whole and read for changes, by which route and to which marks, and the declared repositories a full listing no longer names, since when |
+| `abom_enumeration_state`, `abom_repository_absence`, `abom_enumeration_failure` | When each account was last listed whole and read for changes, by which route and to which marks, the declared repositories a full listing no longer names, since when, and the last read of an account or repository that did not answer, with why |
 | `abom_account` | What `gh` reports about membership, with the token scopes that made the answer possible and each member's security manager role; with an App, where it is installed |
 | `abom_repository_role` | The verified login's role on each repository a member declared, or why it could not be read |
 | `abom_app_installation`, `abom_app_installer` | The App's installations as last read, and who created each, from its delivery |
@@ -714,8 +721,19 @@ from its own crawl, not an import of a SQLite database.
 
 A dependency Git could not fetch is `unavailable` and stays so: Git reports a missing credential
 and a missing repository alike, so nothing retries it on its own. An operator's retry, for all of
-them or for one named repository, puts it back with a fresh attempt budget. A reference that names
-no repository, such as one built from an expression, is never put back.
+them, for one named repository, or for the rows chosen in Coverage, puts it back with a fresh
+attempt budget. A reference that names no repository, such as one built from an expression, is
+never put back.
+
+**Coverage resyncs exactly what a reader chooses.** Each chosen row — one dependency at one
+reference — goes back as its state allows: analyzed, nothing to analyze, unavailable or retrying
+rows return pending with a fresh budget; a queued row keeps its place; a running row finishes; a
+row waiting for code scanning keeps its hold. Every chosen row runs ahead of the ranking with its
+source eligibility read again, and the next cycle reads each owned repository among them from GitHub
+before it claims anything, because the fix behind a resync is as often to the declaration, the App
+or the token as to the repository. A declared account chosen there is listed whole on the next
+cycle. Nothing already known is cleared, and no other row moves — not even another reference of
+the same dependency.
 
 An owned repository whose tree holds no workflow and no action manifest, or that has no commit, is
 `nothing`: read in full, recorded at the commit it was read at, settled, and never counted as
@@ -1177,7 +1195,7 @@ assert an order between jobs that actually run in parallel.
 | HTTP API | The whole capability set. Reads are open; anything that writes is guarded at the endpoint |
 | Dashboard | Where to start: each entry opens the Inventory already narrowed to it |
 | CodeQL | The queries findings come from: requests, the catalog of versions and stages, runs and their results per repository and query, what those results would add to the alerts developers already see, and which suites each tier runs |
-| Inventory | Which things match, in tabs that are named views, reprojected by a unit switch. An action's row opens in place onto its versions. Repositories chosen here are what a run is asked over |
+| Inventory | Which things match, in tabs that are named views, reprojected by a unit switch. An action's row opens in place onto its versions. Repositories chosen here are what a run is asked over; the queue rows and declared accounts chosen in Coverage are what a resync puts back |
 | Details | One node, under the scope it was opened with: a figure of what runs it and what it runs, its versions, and what `uses:` it — one row per repository, reference and commit, from the walk reach takes |
 | Explorer | A force-directed graph over a scoped closure |
 | Settings | What the operator claims, and what discovery does: analysis is started and requeued here |

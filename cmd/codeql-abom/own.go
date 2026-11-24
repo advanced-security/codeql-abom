@@ -88,7 +88,30 @@ func runOwned(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return fmt.Errorf("own: %w", err)
 	}
 	writeDeclaredScope(stdout, declared)
+	verified, err := s.Accounts()
+	if err != nil {
+		return fmt.Errorf("own: %w", err)
+	}
+	noteWhatDiscoveryCannotReach(stderr, declared, verified)
 	return nil
+}
+
+// noteWhatDiscoveryCannotReach names each enabled declaration the last verification leaves
+// discovery unable to act on. On stderr, because scripts read the table on stdout.
+func noteWhatDiscoveryCannotReach(w io.Writer, declared []store.DeclaredAccount, v store.Verification) {
+	for _, a := range declared {
+		if !a.Enabled {
+			continue
+		}
+		switch state := store.DeclarationState(a, v); {
+		case state == store.DeclarationContradicted:
+			fmt.Fprintf(w, "own: discovery roots nothing in %s: the organizations GitHub lists for %s do not include it\n",
+				a.Owner, v.Login)
+		case v.ByApp() && state != store.DeclarationConfirmed:
+			fmt.Fprintf(w, "own: discovery cannot list %s: %s, the App beside the database, is not installed on it\n",
+				a.Owner, v.Login)
+		}
+	}
 }
 
 // judgeDeclarer establishes who is declaring, as the page does when it opens, and reads their role on

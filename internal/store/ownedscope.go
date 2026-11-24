@@ -295,7 +295,12 @@ func declaredFullName(col string) string {
 
 // DeclarationRefused is a declaration the store will not write, with the reason as a reader reads
 // it. Anything else SetOwnedScope returns is the store failing, not the declaration.
-type DeclarationRefused struct{ Reason string }
+type DeclarationRefused struct {
+	Reason string
+	// ByRole says the declaration is well formed and the role on record cannot support it, which a
+	// different token or a refreshed verification can change; every other refusal is the shape.
+	ByRole bool
+}
 
 func (e *DeclarationRefused) Error() string { return "store: " + e.Reason }
 

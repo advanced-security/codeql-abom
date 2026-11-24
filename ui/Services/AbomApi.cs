@@ -180,6 +180,24 @@ public sealed class AbomApi(HttpClient http, TutorialService? tutorial = null)
         RequeueAsync("api/discovery/requeue-repository", new { repository }, ct);
 
     /// <summary>
+    /// Puts back exactly the Coverage rows chosen, ahead of the ranking, and has the next cycle read
+    /// again each owned repository among them and list each chosen account whole. A refusal throws
+    /// with the server's reason, which names what was wrong.
+    /// </summary>
+    public async Task<ResyncResult> ResyncAsync(
+        IEnumerable<FrontierItem> rows, IEnumerable<string> accounts, CancellationToken ct = default)
+    {
+        using var response = await SendControlRequestAsync(HttpMethod.Post, "api/discovery/resync",
+            new { rows = rows.Select(r => new { nodeKey = r.NodeKey, @ref = r.Ref }), accounts }, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+        {
+            throw new HttpRequestException(await RefusalReasonAsync(response, ct), null, response.StatusCode);
+        }
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<ResyncResult>(Json, ct) ?? new ResyncResult();
+    }
+
+    /// <summary>
     /// Puts back every dependency that could not be fetched. Nothing does so on its own, because
     /// only the operator knows that access changed.
     /// </summary>

@@ -831,6 +831,50 @@
         }
     </div>
 
+    @* An account discovery could not list holds no rows, so the grid alone says nothing about it. *@
+    @if (_coverageAccounts is null)
+    {
+        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-2" data-abom-coverage-accounts-unread>
+            The declared accounts could not be read, so whether discovery listed them is not shown.
+        </MudText>
+    }
+    else if (UnlistedAccounts.Any())
+    {
+        <div class="abom-coverage-accounts mb-3" data-abom-coverage-accounts>
+            <MudText Typo="Typo.subtitle2">Declared accounts discovery has not acted on</MudText>
+            @foreach (var account in UnlistedAccounts)
+            {
+                <div class="abom-coverage-account" data-abom-coverage-account="@account.Owner">
+                    <MudCheckBox T="bool" Size="Size.Small" Dense="true"
+                                 Value="@_pickedAccounts.Contains(account.Owner)"
+                                 ValueChanged="@(v => PickAccount(account.Owner, v))"
+                                 aria-label="@($"Choose {account.Owner} to list again")"
+                                 title="Choose this account to list again in full when you resync."
+                                 data-abom-coverage-account-pick="@account.Owner" />
+                    <span class="abom-coverage-account-name">@account.Owner</span>
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary">@ListingWords(account)</MudText>
+                </div>
+            }
+        </div>
+    }
+
+    <div class="d-flex align-center flex-wrap gap-2 mb-2" data-abom-coverage-actions>
+        <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh"
+                   Disabled="@(_resyncing || PickedCount == 0)" OnClick="Resync"
+                   title="Put the chosen rows back ahead of the ranking, read the owned repositories among them again, and list the chosen accounts again in full."
+                   data-abom-coverage-resync>Resync @(PickedCount > 0 ? $"{PickedCount:N0} chosen" : "chosen")</MudButton>
+        @if (PickedCount > 0)
+        {
+            <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="ClearPicks"
+                       title="Choose nothing: no row and no account."
+                       data-abom-coverage-clear>Clear</MudButton>
+        }
+        @if (_resyncNote is { } note)
+        {
+            <MudText Typo="Typo.caption" Class="mud-text-secondary" data-abom-coverage-resync-note>@note</MudText>
+        }
+    </div>
+
     @if (_coverageLoading)
     {
         <MudProgressLinear Indeterminate="true" Class="my-4" />
@@ -841,6 +885,24 @@
                      SortMode="SortMode.Single" Filterable="false" RowsPerPage="30"
                      ShowColumnOptions="false" FixedHeader="true" Class="abom-grid abom-grid-windowed abom-grid-captioned">
             <Columns>
+                @* Picked by dependency and reference rather than by row object, so a choice is what a
+                   reader sees rather than whichever instance the last load happened to build. *@
+                <TemplateColumn T="FrontierItem" Sortable="false" CellClass="abom-coverage-pick" HeaderClass="abom-coverage-pick">
+                    <HeaderTemplate>
+                        <MudCheckBox T="bool" Size="Size.Small" Dense="true" Value="@AllShownPicked"
+                                     ValueChanged="PickAllShown" aria-label="Choose every row listed"
+                                     title="Choose every row listed here, on every page, to resync."
+                                     data-abom-coverage-pick-all />
+                    </HeaderTemplate>
+                    <CellTemplate>
+                        <MudCheckBox T="bool" Size="Size.Small" Dense="true"
+                                     Value="@_picked.ContainsKey(PickKey(context.Item))"
+                                     ValueChanged="@(v => Pick(context.Item, v))"
+                                     aria-label="@($"Choose {context.Item.NodeKey} {CoverageVersion(context.Item)} to resync")"
+                                     title="Choose this dependency at this version to resync; its other versions are not chosen."
+                                     data-abom-coverage-pick="@PickKey(context.Item)" />
+                    </CellTemplate>
+                </TemplateColumn>
                 <PropertyColumn Property="x => x.NodeKey" Title="Dependency">
                     <HeaderTemplate><HeaderTip Tip="The dependency and version the crawl is trying to analyze.">Dependency</HeaderTip></HeaderTemplate>
                     <CellTemplate>
@@ -1529,6 +1591,7 @@ else if (_unit != UnitFindings && _countedUnit == _unit)
         _coverage = [];
         StateHasChanged();
         _coverage = await Api.GetFrontierAsync(_coverageState, top: CoverageCap);
+        _coverageAccounts = await Api.ReadOwnedScopeAsync();
         _shown = _coverage.Count;
         _total = _coverage.Count;
         _countedUnit = UnitCoverage;
@@ -1538,7 +1601,108 @@ else if (_unit != UnitFindings && _countedUnit == _unit)
     private async Task ChooseCoverageState(string state)
     {
         _coverageState = state;
+        _picked.Clear();
         await LoadCoverage();
+    }
+
+    private IReadOnlyList<DeclaredAccount>? _coverageAccounts = [];
+    private readonly Dictionary<string, FrontierItem> _picked = [];
+    private readonly HashSet<string> _pickedAccounts = new(StringComparer.OrdinalIgnoreCase);
+    private bool _resyncing;
+    private string? _resyncNote;
+
+    private int PickedCount => _picked.Count + _pickedAccounts.Count;
+
+    private static string PickKey(FrontierItem item) => $"{item.NodeKey}@{item.Ref}";
+
+    private bool AllShownPicked => _coverage.Count > 0 && _coverage.All(i => _picked.ContainsKey(PickKey(i)));
+
+    private void Pick(FrontierItem item, bool picked)
+    {
+        if (picked) _picked[PickKey(item)] = item;
+        else _picked.Remove(PickKey(item));
+    }
+
+    private void PickAllShown(bool picked)
+    {
+        _picked.Clear();
+        if (!picked) return;
+        foreach (var item in _coverage) _picked[PickKey(item)] = item;
+    }
+
+    private void PickAccount(string owner, bool picked)
+    {
+        if (picked) _pickedAccounts.Add(owner);
+        else _pickedAccounts.Remove(owner);
+    }
+
+    private void ClearPicks()
+    {
+        _picked.Clear();
+        _pickedAccounts.Clear();
+    }
+
+    // Switched off is an intention nobody acts on, so only enabled accounts can be waiting on discovery.
+    private IEnumerable<DeclaredAccount> UnlistedAccounts => (_coverageAccounts ?? []).Where(a => a.Enabled &&
+        (a.Contradicted || a.Enumeration is not { } marks || marks.Failures.Count > 0 ||
+         (string.IsNullOrEmpty(marks.ListedAt) && string.IsNullOrEmpty(marks.SweptAt))));
+
+    private static string ListingWords(DeclaredAccount account)
+    {
+        var words = new List<string>();
+        if (account.Contradicted)
+        {
+            words.Add("roots nothing: the organizations GitHub lists for you do not include it");
+        }
+        var failures = account.Enumeration?.Failures ?? [];
+        words.AddRange(failures.Select(f =>
+            (string.Equals(f.Subject, account.Owner, StringComparison.OrdinalIgnoreCase)
+                ? "could not be listed"
+                : $"{f.Subject} could not be read") +
+            (f.FailedAt.Length > 0 ? $" {TimeText.DayAndTime(f.FailedAt)}" : "") + $": {f.Reason}"));
+        if (words.Count == 0)
+        {
+            return "not listed yet; discovery lists it on its next cycle.";
+        }
+        return string.Join("; ", words);
+    }
+
+    private async Task Resync()
+    {
+        _resyncing = true;
+        _resyncNote = null;
+        try
+        {
+            var got = await Api.ResyncAsync(_picked.Values.ToList(), _pickedAccounts.ToList());
+            _resyncNote = ResyncWords(got);
+            ClearPicks();
+            await LoadCoverage();
+        }
+        catch (HttpRequestException e)
+        {
+            _resyncNote = e.Message;
+        }
+        finally
+        {
+            _resyncing = false;
+        }
+    }
+
+    private static string ResyncWords(ResyncResult got)
+    {
+        var parts = new List<string>();
+        if (got.Requeued > 0) parts.Add($"{got.Requeued:N0} put back");
+        if (got.Expedited > 0) parts.Add($"{got.Expedited:N0} moved to the front of the queue");
+        if (got.Running > 0) parts.Add($"{got.Running:N0} already running, left to finish");
+        if (got.Waiting > 0) parts.Add($"{got.Waiting:N0} left waiting for code scanning");
+        if (got.NamesNoRepository > 0) parts.Add($"{got.NamesNoRepository:N0} naming no repository, left unavailable");
+        if (got.NotFound > 0) parts.Add($"{got.NotFound:N0} no longer in the queue");
+        if (got.Reread.Count > 0) parts.Add($"{string.Join(", ", got.Reread)} read again from GitHub first");
+        if (got.Relisted.Count > 0) parts.Add($"{string.Join(", ", got.Relisted)} listed again in full");
+        var said = parts.Count == 0
+            ? "Nothing chosen could be resynced."
+            : char.ToUpperInvariant(parts[0][0]) + string.Join("; ", parts)[1..] + ".";
+        return got.State.Status.IsRunning ? said : said + " Discovery is not running, so this happens once it starts.";
     }
 
     private static string CoverageStateLabel(string state) => state switch

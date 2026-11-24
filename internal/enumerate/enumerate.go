@@ -201,7 +201,13 @@ func Run(ctx context.Context, o Options) (Report, error) {
 			// several independent calls and a partial answer is still worth keeping.
 			report.Failed = append(report.Failed, AccountFailure{
 				Owner: account.Owner, Error: err.Error()})
+			if err := o.Store.RecordEnumerationFailure(account.Owner, err.Error(), o.clock()); err != nil {
+				return Report{}, err
+			}
 			continue
+		}
+		if err := o.Store.ClearEnumerationFailure(account.Owner); err != nil {
+			return Report{}, err
 		}
 		// Before recording, because the schema decides which property scopes count: read after,
 		// a scope saved a moment ago would take nothing in until the next cycle.
@@ -285,7 +291,13 @@ func (o Options) readRepositories(ctx context.Context, declared []store.Declared
 		listing, err := o.ReadRepository(ctx, fullName)
 		if err != nil {
 			report.Failed = append(report.Failed, AccountFailure{Owner: fullName, Error: err.Error()})
+			if err := o.Store.RecordEnumerationFailure(fullName, err.Error(), o.clock()); err != nil {
+				return err
+			}
 			continue
+		}
+		if err := o.Store.ClearEnumerationFailure(fullName); err != nil {
+			return err
 		}
 		one, listed, err := record(o.Store, declared[i], listing, report, o.clock())
 		if err != nil {

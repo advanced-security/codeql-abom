@@ -468,3 +468,57 @@ func TestARepositoryReadThatFailsIsReported(t *testing.T) {
 		t.Errorf("failed = %+v, want has-ghas/new named", report.Failed)
 	}
 }
+
+// What could not be read stays on record beside the account until a read answers, whichever path
+// asked: the hourly cycle reported only its first failure, and only until the next one.
+func TestWhatCouldNotBeReadIsKeptUntilAReadAnswers(t *testing.T) {
+	s := newStore(t)
+	refuse := true
+	read := func(context.Context, string, catalog.Marks) (catalog.Listing, error) {
+		if refuse {
+			return catalog.Listing{}, errors.New("the GitHub App is not installed on this account: has-ghas")
+		}
+		return catalog.Listing{Route: catalog.RouteGraphQL, Full: true}, nil
+	}
+	readOne := func(context.Context, string) (catalog.Listing, error) {
+		if refuse {
+			return catalog.Listing{}, errors.New("Not Found")
+		}
+		return catalog.Listing{Route: catalog.RouteREST, Repositories: []catalog.Repository{
+			repo("has-ghas/new", time.Now())}}, nil
+	}
+	failures := func() []string {
+		t.Helper()
+		marks, _, err := s.EnumerationState("has-ghas")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, f := range marks.Failures {
+			out = append(out, f.Subject+": "+f.Reason)
+		}
+		return out
+	}
+
+	for _, ask := range []Options{{}, {Repositories: []string{"has-ghas/new"}}} {
+		ask.Store, ask.Read, ask.ReadRepository = s, read, readOne
+		if _, err := Run(context.Background(), ask); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := []string{"has-ghas: the GitHub App is not installed on this account: has-ghas", "has-ghas/new: Not Found"}
+	if got := failures(); !slices.Equal(got, want) {
+		t.Errorf("after reads that failed, recorded %q, want %q", got, want)
+	}
+
+	refuse = false
+	for _, ask := range []Options{{}, {Repositories: []string{"has-ghas/new"}}} {
+		ask.Store, ask.Read, ask.ReadRepository = s, read, readOne
+		if _, err := Run(context.Background(), ask); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := failures(); len(got) != 0 {
+		t.Errorf("after reads that answered, still recorded %q", got)
+	}
+}

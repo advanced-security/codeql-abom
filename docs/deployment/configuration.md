@@ -167,6 +167,12 @@ declaration against the accounts last verified. Saving a declaration again, or n
 only what it newly claims; Settings reports whether the role behind what is already declared still
 supports it. A declaration is a claim of responsibility, not proof of license eligibility.
 
+What `own` prints on standard output is unchanged, so scripts that read it keep working. On standard
+error it names each enabled declaration discovery cannot act on: one a complete membership list
+leaves out, which roots nothing, and, when the App beside the database verified the identity, one
+the App is not installed on, which discovery cannot list. A refused declaration exits non-zero and
+writes nothing.
+
 To restrict the organization to explicitly named base repositories, repeat `--include`:
 
 ```bash
@@ -213,8 +219,9 @@ Only include the `includes` or `properties` property when you intend that restri
 `properties` entry is the object `--property` takes. `--declare-file` selects
 another file. This is a declaration channel, not a general application configuration file. It is
 read at startup, missing files are allowed, and malformed files are refused. What it declares is
-judged against the accounts last verified as anything `own` writes is, and a declaration the role on
-record cannot support stops the server with the reason. A valid file does not
+judged against the accounts last verified as anything `own` writes is. A declaration the role on
+record cannot support is not applied: the server says why and starts with nothing declared, so the
+interface is there to make one the role supports. A valid file does not
 replace an existing declaration. Clearing the declaration while leaving this file configured
 can restore it at the next startup. Like `own`, a file-based declaration lists nothing until
 discovery starts.

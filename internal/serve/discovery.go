@@ -3,8 +3,10 @@ package serve
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 
@@ -29,6 +31,9 @@ type Discovery interface {
 	RequeueStale(ctx context.Context) (expand.Selection, error)
 	// RequeueRepository puts back the dependencies one repository answers, ahead of the ranking.
 	RequeueRepository(name string) (expand.Selection, error)
+	// Resync puts back exactly the rows chosen, ahead of the ranking, and has the next cycle read
+	// again each owned repository among them and each account named.
+	Resync(rows []store.NodeRef, accounts []string) (supervisor.Resynced, error)
 }
 
 // RequeueResult is what a selective requeue did, beside the state it left behind.
@@ -374,6 +379,96 @@ func (s *Server) discoveryRequeueRepository(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	s.writeRequeued(w, got)
+}
+
+// ResyncResult is what a resync did, beside the state it left behind.
+type ResyncResult struct {
+	supervisor.Resynced
+	State DiscoveryState `json:"state"`
+}
+
+// resyncLimit bounds the rows of one request to what Coverage lists at once. Accounts need no bound
+// of their own: each must be declared.
+const resyncLimit = 500
+
+// discoveryResync puts back the rows and re-lists the accounts a reader chose in Coverage.
+//
+// Guarded like every requeue, because it spends clones and API calls. Everything is checked before
+// anything is asked, so a refusal names what was wrong and nothing was half done.
+func (s *Server) discoveryResync(w http.ResponseWriter, r *http.Request) {
+	if !s.allowControl(w, r) {
+		return
+	}
+	if s.Discovery == nil {
+		writeError(w, http.StatusServiceUnavailable, "discovery is not available on this server")
+		return
+	}
+	var body struct {
+		Rows []struct {
+			NodeKey string `json:"nodeKey"`
+			Ref     string `json:"ref"`
+		} `json:"rows"`
+		Accounts []string `json:"accounts"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "expected a JSON object naming the rows and accounts to resync")
+		return
+	}
+	switch {
+	case len(body.Rows)+len(body.Accounts) == 0:
+		writeError(w, http.StatusBadRequest, "choose at least one row or account to resync")
+		return
+	case len(body.Rows) > resyncLimit:
+		writeError(w, http.StatusBadRequest, fmt.Sprintf(
+			"%d rows were chosen, and a resync takes at most %d at a time", len(body.Rows), resyncLimit))
+		return
+	}
+	rows := make([]store.NodeRef, 0, len(body.Rows))
+	for _, row := range body.Rows {
+		if strings.TrimSpace(row.NodeKey) == "" {
+			writeError(w, http.StatusBadRequest, "a chosen row names no dependency")
+			return
+		}
+		rows = append(rows, store.NodeRef{NodeKey: row.NodeKey, Ref: row.Ref})
+	}
+	if refused, err := s.unlistable(body.Accounts); err != nil {
+		writeJSON(w, nil, err)
+		return
+	} else if refused != "" {
+		writeError(w, http.StatusBadRequest, refused)
+		return
+	}
+
+	got, err := s.Discovery.Resync(rows, body.Accounts)
+	if err != nil {
+		writeJSON(w, nil, err)
+		return
+	}
+	state, err := s.discoveryState()
+	writeJSON(w, ResyncResult{Resynced: got, State: state}, err)
+}
+
+// unlistable says why an account cannot be listed again, or "" when every one can: enumeration
+// lists only enabled declarations, so asking for any other account would promise a read that never
+// happens.
+func (s *Server) unlistable(accounts []string) (string, error) {
+	if len(accounts) == 0 {
+		return "", nil
+	}
+	declared, err := s.Store.OwnedScope()
+	if err != nil {
+		return "", err
+	}
+	for _, owner := range accounts {
+		i := slices.IndexFunc(declared, func(a store.DeclaredAccount) bool { return strings.EqualFold(a.Owner, owner) })
+		switch {
+		case i < 0:
+			return fmt.Sprintf("%s is not a declared account, so discovery does not list it", owner), nil
+		case !declared[i].Enabled:
+			return fmt.Sprintf("%s is declared but switched off, so discovery does not list it", owner), nil
+		}
+	}
+	return "", nil
 }
 
 // discoveryRetryUnavailable puts back every dependency that could not be fetched.

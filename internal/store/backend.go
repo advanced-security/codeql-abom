@@ -261,6 +261,9 @@ type OwnershipStore interface {
 	RecordRepositoryListing(owner string, seen []string, full bool) (int, error)
 	RecordPropertyJudgement(owner string, unjudged int) error
 	EnumerationState(owner string) (EnumerationMarks, bool, error)
+	RecordEnumerationFailure(subject, reason string, at time.Time) error
+	ClearEnumerationFailure(subject string) error
+	ResyncRows(refs []NodeRef) (Resync, error)
 	RecordFullListing(owner, route string, pages int, highCreated, highPushed time.Time) error
 	RecordSweep(owner, route string, highCreated, highPushed time.Time) error
 	MissingRepositories() (map[string]bool, error)

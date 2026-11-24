@@ -1218,6 +1218,14 @@ code {
 .abom-coverage-version { display: block; font-size: var(--abom-text-sm); line-height: 1.3; }
 .abom-coverage-locked { display: block; }
 
+/* The pick column holds a checkbox and nothing else, so it must not take a share of the width. */
+.abom-grid .mud-table-root .mud-table-cell.abom-coverage-pick { width: 1%; padding-right: 0; }
+
+/* One account per line: what discovery could not do there, beside the box that asks it again. */
+.abom-coverage-account { display: flex; align-items: baseline; gap: 8px; flex-wrap: nowrap; }
+.abom-coverage-account > .mud-checkbox { flex-shrink: 0; align-self: center; }
+.abom-coverage-account-name { flex-shrink: 0; font-weight: 500; }
+
 /* A value and how much of the corpus it accounts for, on one line. Stacked, each row was two
    lines tall and a list of twenty-one rules scrolled for no reason. */
 .abom-picker-value {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/advanced-security/codeql-abom/internal/catalog"
 	"github.com/advanced-security/codeql-abom/internal/sourcepolicy"
+	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
 func TestLocalCheckoutReuseDoesNotRequireRemoteEligibility(t *testing.T) {
@@ -109,5 +110,39 @@ func TestSourcePolicyRefusalsStayVisibleAtEveryDependencyDepth(t *testing.T) {
 		if stats.Unavailable != 1 || stats.Processed != 0 || len(h.built) != 0 {
 			t.Fatalf("depth %d: stats=%+v built=%v", depth, stats, h.built)
 		}
+	}
+}
+
+// Resyncing chosen rows is asked after fixing what failed them, so each runs ahead of the ranking
+// with its source eligibility read again, and a row nobody chose keeps its place in line.
+func TestResyncingRunsTheChosenRowsNextWithTheirEligibilityReadAgain(t *testing.T) {
+	h := newHarness(t)
+	settledRow(t, h, "octo", "mine")
+	settledRow(t, h, "octo", "other")
+	read := &countingSourceReader{}
+	h.expander.SourcePolicy = &sourcepolicy.Policy{Read: read, Owned: func(string) (bool, error) { return false, nil }}
+	for _, repo := range []string{"octo/mine", "octo/other"} {
+		if err := h.expander.SourcePolicy.Check(context.Background(), repo); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, expedited, err := h.expander.Resync([]store.NodeRef{{NodeKey: "octo/mine"}})
+	if err != nil {
+		t.Fatalf("Resync: %v", err)
+	}
+	if got.Requeued != 1 || expedited != 1 {
+		t.Errorf("requeued %d and expedited %d, want the one chosen row put back and run next", got.Requeued, expedited)
+	}
+	if s := statusOfRow(t, h, "octo/other"); s != "done" {
+		t.Errorf("octo/other, which nobody chose, is %q", s)
+	}
+	for _, repo := range []string{"octo/mine", "octo/other"} {
+		if err := h.expander.SourcePolicy.Check(context.Background(), repo); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if read.reads != 3 {
+		t.Errorf("eligibility read %d times, want 3: only the chosen repository is read again", read.reads)
 	}
 }

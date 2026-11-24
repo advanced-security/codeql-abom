@@ -44,6 +44,14 @@ CREATE TABLE IF NOT EXISTS abom_enumeration_state (
 CREATE TABLE IF NOT EXISTS abom_repository_absence (
   repository TEXT PRIMARY KEY COLLATE NOCASE,
   missing_at TEXT NOT NULL
+);
+-- The last read of an account, or of one repository in it ("owner/name"), that did not answer, and
+-- why. A read of the same subject that answers removes it. No row says no failure is on record,
+-- which is not the same as having been read: listed_at says that.
+CREATE TABLE IF NOT EXISTS abom_enumeration_failure (
+  subject   TEXT PRIMARY KEY COLLATE NOCASE,
+  failed_at TEXT NOT NULL,
+  reason    TEXT NOT NULL
 );`
 
 // RecordRepositoryListing records which of an account's declared repositories a listing named,
@@ -113,6 +121,9 @@ type EnumerationMarks struct {
 	// means nothing while the time is zero.
 	PropertiesJudgedAt time.Time `json:"propertiesJudgedAt,omitzero"`
 	PropertiesUnjudged int       `json:"propertiesUnjudged"`
+	// Failures are the last reads of this account, and of repositories in it, that did not answer.
+	// Empty says none is on record, which is not the same as having been read.
+	Failures []EnumerationFailure `json:"failures"`
 }
 
 // RecordPropertyJudgement notes a full listing's verdict on an account's property scopes.
@@ -136,7 +147,8 @@ type RepositoryAbsence struct {
 // EnumerationState reports the marks for one account, and whether it has ever been read.
 func (s *Store) EnumerationState(owner string) (EnumerationMarks, bool, error) {
 	var (
-		marks                                      = EnumerationMarks{Owner: owner, Missing: []RepositoryAbsence{}}
+		marks = EnumerationMarks{Owner: owner, Missing: []RepositoryAbsence{},
+			Failures: []EnumerationFailure{}}
 		route                                      sql.NullString
 		listedAt, sweptAt, highCreated, highPushed sql.NullString
 		pages                                      sql.NullInt64
@@ -155,6 +167,12 @@ SELECT route, listed_at, swept_at, high_created, high_pushed, listed_pages,
 			return marks, false, err
 		}
 		marks.Missing = missing
+		// An account never listed may be exactly one that failed every time.
+		failures, err := s.enumerationFailures(owner)
+		if err != nil {
+			return marks, false, err
+		}
+		marks.Failures = failures
 		return marks, false, nil
 	case err != nil:
 		return marks, false, err
@@ -173,6 +191,11 @@ SELECT route, listed_at, swept_at, high_created, high_pushed, listed_pages,
 		return marks, true, err
 	}
 	marks.Missing = missing
+	failures, err := s.enumerationFailures(owner)
+	if err != nil {
+		return marks, true, err
+	}
+	marks.Failures = failures
 	return marks, true, nil
 }
 

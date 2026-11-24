@@ -435,6 +435,43 @@ func (s *Supervisor) RequeueRepository(name string) (expand.Selection, error) {
 	return s.Expander.RequeueRepository(name)
 }
 
+// Resynced is what a resync put back, and what the next cycle reads before it analyzes anything.
+type Resynced struct {
+	store.Resync
+	Expedited int `json:"expedited"`
+	// Reread names the owned repositories, and Relisted the accounts, read again first. Empty where
+	// this server does not enumerate, because nothing would read them.
+	Reread   []string `json:"reread"`
+	Relisted []string `json:"relisted"`
+}
+
+// Resync puts back the rows somebody chose, ahead of the ranking, and has the next cycle read again
+// what decides them: each owned repository among them, and each named account listed whole. The
+// read comes first because the fix that prompts a resync is as often to the declaration, the App or
+// the token as to the repository.
+func (s *Supervisor) Resync(refs []store.NodeRef, accounts []string) (Resynced, error) {
+	got, expedited, err := s.Expander.Resync(refs)
+	if err != nil {
+		return Resynced{}, err
+	}
+	out := Resynced{Resync: got, Expedited: expedited, Reread: []string{}, Relisted: []string{}}
+	if s.Enumerate != nil {
+		out.Reread, out.Relisted = got.Owned, slices.Clone(accounts)
+	}
+	if out.Requeued+out.Expedited+len(out.Reread)+len(out.Relisted) == 0 {
+		return out, nil
+	}
+	s.ask(func(a *asked) {
+		for _, r := range out.Reread {
+			a.repositories.add(r)
+		}
+		for _, owner := range out.Relisted {
+			a.full.add(owner)
+		}
+	})
+	return out, nil
+}
+
 func (s *Supervisor) signal() {
 	s.mu.Lock()
 	ch := s.wake

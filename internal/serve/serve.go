@@ -280,6 +280,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/discovery/requeue/{tier}", s.discoveryRequeue)
 	mux.HandleFunc("POST /api/discovery/requeue-stale", s.discoveryRequeueStale)
 	mux.HandleFunc("POST /api/discovery/requeue-repository", s.discoveryRequeueRepository)
+	mux.HandleFunc("POST /api/discovery/resync", s.discoveryResync)
 	mux.HandleFunc("POST /api/discovery/retry-unavailable", s.discoveryRetryUnavailable)
 	mux.HandleFunc("POST /api/locks/verify", s.verifyLock)
 	mux.HandleFunc("GET /api/locks/verifications", s.lockVerifications)

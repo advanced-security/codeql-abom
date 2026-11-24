@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -26,6 +27,10 @@ type fakeDiscovery struct {
 	selectErr  error
 	staleAsked bool
 	repoAsked  string
+
+	resynced       supervisor.Resynced
+	resyncRows     []store.NodeRef
+	resyncAccounts []string
 }
 
 func (f *fakeDiscovery) Status() supervisor.Status {
@@ -52,6 +57,11 @@ func (f *fakeDiscovery) RequeueStale(context.Context) (expand.Selection, error) 
 func (f *fakeDiscovery) RequeueRepository(name string) (expand.Selection, error) {
 	f.repoAsked = name
 	return f.selection, f.selectErr
+}
+
+func (f *fakeDiscovery) Resync(rows []store.NodeRef, accounts []string) (supervisor.Resynced, error) {
+	f.resyncRows, f.resyncAccounts = rows, accounts
+	return f.resynced, f.selectErr
 }
 
 func controlRequest(target string) *http.Request {
@@ -527,5 +537,99 @@ func TestDiscoveryStatusAnswersWhenNoLoopIsConfigured(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+}
+
+func resync(t *testing.T, s *Server, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	r := controlRequest("/api/discovery/resync")
+	r.Body = io.NopCloser(strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	return w
+}
+
+// Coverage lists what failed, and the rows and accounts a reader picks there are exactly what is
+// resynced: no tier, no repository's other references, no other account. The answer carries what was
+// done beside the state it left, so the page can say it without polling.
+func TestResyncingDoesExactlyWhatWasChosenAndSaysWhatItDid(t *testing.T) {
+	s, st := newServer(t)
+	if err := st.SetOwnedScope([]store.DeclaredAccount{
+		{Owner: "octo", Kind: store.AccountOrganization, Enabled: true},
+	}, store.DeclaredByInterface); err != nil {
+		t.Fatal(err)
+	}
+	loop := &fakeDiscovery{resynced: supervisor.Resynced{
+		Resync: store.Resync{Requeued: 1, Running: 1, Owned: []string{"octo/app"}}, Expedited: 1,
+		Reread: []string{"octo/app"}, Relisted: []string{"Octo"}}}
+	s.Discovery = loop
+
+	w := resync(t, s, `{"rows":[{"nodeKey":"octo/app","ref":""},{"nodeKey":"actions/checkout","ref":"v4"}],
+		"accounts":["Octo"]}`)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	if want := []store.NodeRef{{NodeKey: "octo/app"}, {NodeKey: "actions/checkout", Ref: "v4"}}; !slices.Equal(loop.resyncRows, want) {
+		t.Errorf("the loop was asked for rows %+v, want %+v", loop.resyncRows, want)
+	}
+	if !slices.Equal(loop.resyncAccounts, []string{"Octo"}) {
+		t.Errorf("the loop was asked to list %v, want the account chosen", loop.resyncAccounts)
+	}
+	var got struct {
+		Requeued, Running, Expedited int
+		Reread, Relisted             []string
+		State                        DiscoveryState
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Requeued != 1 || got.Running != 1 || got.Expedited != 1 || !slices.Equal(got.Reread, []string{"octo/app"}) ||
+		!slices.Equal(got.Relisted, []string{"Octo"}) || !got.State.Available {
+		t.Errorf("answer = %s, want what the loop did beside the state", w.Body.String())
+	}
+}
+
+// Listing an account nobody declared, or one switched off, would do nothing, and saying it was
+// asked would leave a reader waiting on a read that is never going to happen.
+func TestResyncRefusesWhatItCannotDoByName(t *testing.T) {
+	s, st := newServer(t)
+	if err := st.SetOwnedScope([]store.DeclaredAccount{
+		{Owner: "octo", Kind: store.AccountOrganization, Enabled: true},
+		{Owner: "paused-org", Kind: store.AccountOrganization, Enabled: false},
+	}, store.DeclaredByInterface); err != nil {
+		t.Fatal(err)
+	}
+	loop := &fakeDiscovery{}
+	s.Discovery = loop
+	many := strings.TrimSuffix(strings.Repeat(`{"nodeKey":"a/b"},`, 501), ",")
+
+	for body, says := range map[string]string{
+		`{"accounts":["stranger"]}`:   "stranger",
+		`{"accounts":["paused-org"]}`: "paused-org",
+		`{}`:                          "choose",
+		`{"rows":[{"nodeKey":" "}]}`:  "names no dependency",
+		`not json`:                    "JSON",
+		`{"rows":[` + many + `]}`:     "500",
+	} {
+		w := resync(t, s, body)
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), says) {
+			t.Errorf("%.40s: status %d %s, want 400 saying %q", body, w.Code, w.Body.String(), says)
+		}
+	}
+	if loop.resyncRows != nil || loop.resyncAccounts != nil {
+		t.Errorf("a refused resync reached the loop: %+v %v", loop.resyncRows, loop.resyncAccounts)
+	}
+
+	r := localRequest(http.MethodPost, "/api/discovery/resync", strings.NewReader(`{"accounts":["octo"]}`))
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusForbidden || loop.resyncAccounts != nil {
+		t.Errorf("an unguarded resync was answered %d and reached the loop: %v", w.Code, loop.resyncAccounts)
+	}
+
+	s.Discovery = nil
+	if w := resync(t, s, `{"accounts":["octo"]}`); w.Code != http.StatusServiceUnavailable {
+		t.Errorf("with no discovery loop, status = %d, want 503", w.Code)
 	}
 }

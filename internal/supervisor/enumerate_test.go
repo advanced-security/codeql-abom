@@ -5,8 +5,11 @@ import (
 	"errors"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
 // The hole this closes: nothing in the loop re-reads the organization, so a repository created
@@ -161,5 +164,50 @@ func TestAnAdvisoryEventRefreshesOnceTheFloorAllows(t *testing.T) {
 
 	if asked != 1 {
 		t.Errorf("refreshed %d times, want once past the floor and not again for the same ask", asked)
+	}
+}
+
+// A resync follows a fix to whatever failed the rows chosen, and for a repository the operator owns
+// that may be the declaration, the App or the token: the next cycle reads each owned repository again
+// before analyzing it, and lists each chosen account whole. Where nothing enumerates, nothing is
+// promised.
+func TestResyncHasTheNextCycleReadWhatDecidesTheChosenRowsFirst(t *testing.T) {
+	sup, s := newSupervisor(t)
+	if err := s.SetOwnedScope([]store.DeclaredAccount{{Owner: "octo", Kind: store.AccountOrganization, Enabled: true}},
+		store.DeclaredByInterface); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"octo/mine", "other/dep"} {
+		owner, repo, _ := strings.Cut(key, "/")
+		if _, err := s.DB().Exec(`INSERT INTO abom_frontier (node_key, owner, repo, depth, status, score, enqueued_at)
+			VALUES (?, ?, ?, 1, 'done', 1, '2026-01-01')`, key, owner, repo); err != nil {
+			t.Fatal(err)
+		}
+	}
+	chosen := []store.NodeRef{{NodeKey: "octo/mine"}, {NodeKey: "other/dep"}}
+
+	sup.Enumerate = nil
+	got, err := sup.Resync(chosen[:1], []string{"octo"})
+	if err != nil {
+		t.Fatalf("Resync: %v", err)
+	}
+	if len(got.Reread)+len(got.Relisted) != 0 || !sup.takeAsk().empty() {
+		t.Errorf("with nothing to enumerate, resync promised reads: %+v", got)
+	}
+
+	sup.Enumerate = func(context.Context, Ask) (int, error) { return 0, nil }
+	got, err = sup.Resync(chosen, []string{"octo"})
+	if err != nil {
+		t.Fatalf("Resync: %v", err)
+	}
+	if got.Requeued != 1 || got.Queued != 1 || got.Expedited != 2 {
+		t.Errorf("resync = %+v, want other/dep put back and both run next", got)
+	}
+	want := Ask{Full: []string{"octo"}, Repositories: []string{"octo/mine"}}
+	if !slices.Equal(got.Reread, want.Repositories) || !slices.Equal(got.Relisted, want.Full) {
+		t.Errorf("resync says it rereads %v and relists %v, want %+v", got.Reread, got.Relisted, want)
+	}
+	if ask := sup.takeAsk(); !reflect.DeepEqual(ask, want) {
+		t.Errorf("the next cycle reads %+v, want %+v", ask, want)
 	}
 }

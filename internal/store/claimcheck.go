@@ -233,7 +233,8 @@ func (s *Store) refuseUnsupportedClaims(accounts []DeclaredAccount) error {
 			}
 		}
 		if why := ineligible(claimed, v.Accounts[i], v.Login, roles); why != "" {
-			return refuse("declaring %s that way is refused: %s", a.Owner, why)
+			return &DeclarationRefused{ByRole: true,
+				Reason: fmt.Sprintf("declaring %s that way is refused: %s", a.Owner, why)}
 		}
 	}
 	return nil

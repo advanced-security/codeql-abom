@@ -274,6 +274,54 @@ func TestOwnWithGitHubOutOfReachIsJudgedAgainstTheRecord(t *testing.T) {
 	}
 }
 
+// A declaration own accepts can still be one discovery cannot act on: an account a whole membership
+// list leaves out roots nothing, and one the App is not installed on cannot be listed. Both used to
+// print "enabled" and nothing else, so a scripted run declared an organization nothing would crawl.
+// Said on stderr, because scripts read the table on stdout.
+func TestOwnSaysWhichDeclarationsDiscoveryCannotActOn(t *testing.T) {
+	for _, c := range []struct {
+		name, args, cannot, can, why string
+		verify                       func(context.Context) (ghauth.Identity, error)
+	}{
+		{
+			name: "a membership list that leaves the account out", args: "--org admin-org --org elsewhere",
+			cannot: "elsewhere", can: "admin-org", why: "octocat",
+			verify: verifiedAs("octocat", ghauth.Account{Owner: "admin-org", Kind: "organization", Role: "admin"}),
+		},
+		{
+			name: "an App not installed on the account", args: "--org has-ghas --org advanced-security",
+			cannot: "advanced-security", can: "has-ghas", why: "abom-has-ghas[bot]",
+			verify: func(context.Context) (ghauth.Identity, error) {
+				return ghauth.Identity{Login: "abom-has-ghas[bot]", Host: "github.com", VerifiedAt: time.Now().UTC(),
+					Accounts: []ghauth.Account{{Owner: "has-ghas", Kind: "organization", Role: "installation"}}}, nil
+			},
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			db := ownDB(t)
+			asks(t, c.verify, nil)
+
+			for _, args := range []string{c.args, ""} {
+				var stdout, stderr bytes.Buffer
+				argv := append([]string{"--db", db}, strings.Fields(args)...)
+				if err := runOwned(context.Background(), argv, &stdout, &stderr); err != nil {
+					t.Fatalf("own %s: %v", args, err)
+				}
+				if !strings.HasPrefix(stdout.String(), "ACCOUNT") || strings.Contains(stdout.String(), "own:") {
+					t.Errorf("own %s changed what scripts read on stdout:\n%s", args, stdout.String())
+				}
+				note := stderr.String()
+				if !strings.Contains(note, c.cannot) || !strings.Contains(note, c.why) {
+					t.Errorf("own %s did not say discovery cannot act on %s, or why:\n%s", args, c.cannot, note)
+				}
+				if strings.Contains(note, c.can+" ") || strings.Contains(note, c.can+":") {
+					t.Errorf("own %s named %s, which discovery can act on:\n%s", args, c.can, note)
+				}
+			}
+		})
+	}
+}
+
 func ownDB(t *testing.T) string {
 	t.Helper()
 	asks(t, unverified, nil)
