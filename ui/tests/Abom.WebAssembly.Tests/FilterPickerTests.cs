@@ -329,9 +329,9 @@ public sealed class FilterPickerTests : AbomTestContext
         var (popover, page) = Picker();
         page.WaitForAssertion(() => page.Find("[data-abom-add-filter]").Click());
 
-        popover.Find("[data-abom-term-search] input").Input("kind");
+        popover.WaitForElement("[data-abom-term-search] input").Input("kind");
 
-        Assert.Equal(["kinds"], Attributes(popover, "data-abom-term"));
+        popover.WaitForAssertion(() => Assert.Equal(["kinds"], Attributes(popover, "data-abom-term")));
     }
 
     /// A term already set is not offered again: a second Scope chip would be two answers to one
