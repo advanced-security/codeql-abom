@@ -46,15 +46,12 @@ manifests() {
 }
 
 # Every file's content with ABOM's own pack versions blanked, so any other difference is a leak.
+# Hashed in one pass: a pipeline per file was most of this script's time.
 snapshot() {
-	find . -type f | sort | while IFS= read -r file; do
-		case "$file" in
-		./ql/*/lib/codeql-pack.yml | ./ql/*/*/src/codeql-pack.yml | ./ql/*/*/test/codeql-pack.yml)
-			sed 's/^version:.*/version: <abom>/' "$file"
-			;;
-		*) cat "$file" ;;
-		esac | shasum -a 256 | sed "s|-\$|$file|"
-	done
+	find . -type f | grep -vxF -f <(manifests | sed 's|^|./|') | sort | tr '\n' '\0' | xargs -0 shasum -a 256
+	while IFS= read -r manifest; do
+		sed 's/^version:.*/version: <abom>/' "$manifest" | shasum -a 256 | sed "s|-\$|./$manifest|"
+	done < <(manifests)
 }
 
 cli=$(tr -d '[:space:]' <.codeql-version)

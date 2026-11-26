@@ -33,15 +33,30 @@ LDFLAGS := -X main.codeqlVersion=$(CODEQL_VERSION) $(if $(ABOM_VERSION),-X main.
 # What every platform's archive shares: the published interface, its notices and its SDK.
 ABOM_RELEASE ?= $(ABOM_TMP)/release
 
-.PHONY: backend-test bench build chart check-corrupt corpus check-release-version check-versions clean demo demo-check demo-login \
-	demo-reset download e2e e2e-corpus e2e-corpus-run e2e-run test-postgres test-sqlite \
+.PHONY: backend-test bench build chart check check-corrupt corpus check-release-version check-versions clean demo demo-check demo-login \
+	demo-reset download e2e e2e-corpus e2e-corpus-run e2e-run go-test test-postgres test-sqlite \
 	fmt itest js kind-up lint logs package pins publish ql \
 	quality release-archive release-ui restart script-test security-test selfcheck serve start status stop style test ui \
 	ui-test verify vet
 
 .DEFAULT_GOAL := build
 
-verify: check-corrupt check-versions check-release-version pins chart fmt vet lint test script-test js style ql ui ui-test e2e
+## verify: every check, as groups run side by side, each logging under $(ABOM_TMP)/verify; what
+## defines verified. ABOM_VERIFY_JOBS=1 runs one group at a time. CI runs the same targets as jobs.
+verify:
+	@ABOM_VERIFY_LOGS="$(ABOM_TMP)/verify" scripts/verify.sh interface:ui,ui-test,e2e go:test-sqlite \
+		postgres:test-postgres ql:ql \
+		checks:check-corrupt,check-versions,check-release-version,pins,chart,fmt,vet,lint,script-test,js,style
+
+## check: what the diff against main touched, chosen by scripts/check-changed.py and run as verify
+## runs; between changes, never what calls work done.
+check:
+	@ABOM_TMP="$(ABOM_TMP)" python3 scripts/check-changed.py
+
+## go-test: the Go tests of ABOM_GO_PACKAGES, without the race detector; `make check` names them.
+go-test:
+	@mkdir -p "$(ABOM_TMP)/gotest"
+	@TMPDIR="$(ABOM_TMP)/gotest" go test -count=1 -timeout=20m $(ABOM_GO_PACKAGES)
 
 ## bench: time the store read paths against a real corpus.
 ABOM_BENCH_DB ?= $(ABOM_TMP)/bench.db
@@ -60,13 +75,8 @@ download:
 
 ## check-corrupt: catch a duplicated package clause.
 check-corrupt:
-	@fail=0; \
-	for f in $(GO_FILES); do \
-		n=$$(grep -c '^package ' "$$f"); \
-		if [ "$$n" -gt 1 ]; then echo "CORRUPT: $$f has $$n package clauses"; fail=1; fi; \
-	done; \
-	if [ $$fail -ne 0 ]; then exit 1; fi; \
-	echo "corruption: none"
+	@awk '/^package /{n[FILENAME]++} END{for (f in n) if (n[f] > 1) {print "CORRUPT: " f " has " n[f] " package clauses"; bad=1}; exit bad}' \
+		$(GO_FILES) && echo "corruption: none"
 
 clean:
 	@rm -rf bin dist

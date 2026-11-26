@@ -18,6 +18,10 @@ public abstract class AbomTestContext : BunitContext
 {
     private readonly StubHandler _handler = new();
 
+    // A wait returns as soon as it holds, so a longer one costs a passing test nothing. One second
+    // failed on a loaded machine, where `make verify` runs the component tests beside the Go suite.
+    static AbomTestContext() => DefaultWaitTimeout = TimeSpan.FromSeconds(10);
+
     protected AbomTestContext()
     {
         // MudBlazor reaches for the DOM on almost every component. Loose returns defaults rather

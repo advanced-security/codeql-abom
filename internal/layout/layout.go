@@ -313,8 +313,9 @@ type Spline struct {
 	Arrow      *Point
 }
 
-// versionTimeout bounds asking Graphviz its version, which answers at once when it is installed.
-const versionTimeout = 5 * time.Second
+// versionTimeout bounds asking Graphviz its version, which answers at once when it is installed,
+// unless the machine is busy: five seconds reported an installed Graphviz as missing under load.
+const versionTimeout = 30 * time.Second
 
 // Version reports the installed Graphviz version, as `dot -V` states it.
 func Version(ctx context.Context) (string, error) {

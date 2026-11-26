@@ -218,7 +218,7 @@
                     }
                 </div>
             }
-            else if (!HasScope && _declarationRead)
+            else if (!HasScope && _declarationRead && !_loading)
             {
                 @* The third empty frame, and the one that is not a failure. A reader has to be
                    able to tell "choose something" from "you chose too much" and from "there is

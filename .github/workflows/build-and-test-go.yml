@@ -38,6 +38,8 @@ permissions:
   contents: read
 
 jobs:
+  # ABOM_LARGE_RUNNER, a repository variable naming a larger runner's label, runs the two test jobs
+  # on it; unset, every job runs on the standard runner, as a fork does.
   # Each of these is test-go.yml, the job a release tests its tree with, so a release runs nothing
   # that a pull request has not already run.
   checks:
@@ -59,6 +61,7 @@ jobs:
     with:
       targets: test-sqlite
       cache: true
+      runner: ${{ vars.ABOM_LARGE_RUNNER }}
 
   postgres:
     name: Build and Test - Go (PostgreSQL)
@@ -70,6 +73,7 @@ jobs:
       # in containers, and fails rather than skips without a daemon. Ubuntu runners have one.
       targets: test-postgres
       cache: true
+      runner: ${{ vars.ABOM_LARGE_RUNNER }}
 
   # One name to require in branch protection, whichever jobs the run is split into.
   build-and-test-go:

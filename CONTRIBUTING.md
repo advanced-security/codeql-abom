@@ -19,9 +19,19 @@ make verify
 ```
 
 That is the same command CI runs, so if it passes locally it should pass on the pull request. It
+runs its checks as five groups side by side: the interface, Go on SQLite, Go on PostgreSQL, the
+query tests, and everything static. Each group writes its own log under `.abom/verify`, and each is
+reported as it finishes; `ABOM_VERIFY_JOBS=1` runs them one at a time on a smaller machine. It
 needs everything the [README's requirements](README.md#requirements) list, plus Python 3, Node,
 Playwright's Chromium, `golangci-lint`, the `gh actions-lock` extension, Helm (`scripts/setup-helm.sh`
 installs the pinned one) and a running Docker daemon.
+
+Between changes, `make check` runs what your diff against `main` touched: the Go packages you
+changed and everything that imports them, the interface's component tests, the chart, the query
+tests or the workflow pins, each only when a changed file reaches it. A file it cannot place, or
+one such as the Makefile that reaches everything, runs `make verify` instead.
+`python3 scripts/check-changed.py --plan` says what it would run. It never replaces `make verify`
+before a change is called done: it skips the race detector and the browser suite.
 
 `.github/workflows/copilot-setup-steps.yml` installs all of it, and is a working reference if you
 would rather not read a list.

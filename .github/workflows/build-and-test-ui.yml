@@ -191,7 +191,8 @@ jobs:
   suite:
     name: Interface - Browser suite (${{ matrix.spec }})
     needs: build
-    runs-on: ubuntu-26.04
+    # A larger runner where the repository names one in ABOM_LARGE_RUNNER; the standard one otherwise.
+    runs-on: ${{ vars.ABOM_LARGE_RUNNER || 'ubuntu-26.04' }}
 
     strategy:
       # Every shard reports. "Which spec files are broken" is the question a split suite exists to

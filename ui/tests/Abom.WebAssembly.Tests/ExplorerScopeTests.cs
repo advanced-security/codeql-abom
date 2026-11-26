@@ -61,6 +61,29 @@ public sealed class ExplorerScopeTests : AbomTestContext
     }
 
     /// <summary>
+    /// Nor is the chooser drawn while the renderer is still starting: the page has not settled what
+    /// it is showing, and on a loaded machine the browser suite read "Choose what to look at" on a
+    /// first run that had nothing declared.
+    /// </summary>
+    [Fact]
+    public void TheChooserWaitsForTheRendererToStart()
+    {
+        Answer("api/owned-scope", "[]");
+        StubGraphModule(started: false);
+
+        var page = Render<Explorer>();
+        page.WaitForAssertion(() => Assert.Contains(Sent, r => r.Url.EndsWith("api/owned-scope", StringComparison.Ordinal)));
+
+        Assert.Empty(page.FindAll("[data-abom-no-scope]"));
+        _created!.SetResult(true);
+        page.WaitForAssertion(() => Assert.Equal("declare",
+            page.Find("[data-abom-explorer-frame]").GetAttribute("data-abom-explorer-frame")));
+        Assert.Empty(page.FindAll("[data-abom-no-scope]"));
+    }
+
+    private JSRuntimeInvocationHandler<bool>? _created;
+
+    /// <summary>
     /// A declaration that could not be read is not one still arriving: the reader can still
     /// choose, rather than face a canvas waiting for an answer that will never come.
     /// </summary>
@@ -260,10 +283,11 @@ public sealed class ExplorerScopeTests : AbomTestContext
         return (bool)spec.GetType().GetProperty(field)!.GetValue(spec)!;
     }
 
-    private void StubGraphModule()
+    private void StubGraphModule(bool started = true)
     {
         var module = JSInterop.SetupModule("./js/graph.js");
-        module.Setup<bool>("create", _ => true).SetResult(true);
+        _created = module.Setup<bool>("create", _ => true);
+        if (started) _created.SetResult(true);
         module.Setup<Explorer.LoadResult>("loadFull", _ => true)
               .SetResult(new Explorer.LoadResult(0, 0, [], false, 0));
         module.Setup<Explorer.Counts>("applyFilters", _ => true)
