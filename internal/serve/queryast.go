@@ -101,7 +101,7 @@ func (s *Server) findPrintQuery(w http.ResponseWriter, body printQueryASTRequest
 	q, found, err := authoring.Find(s.QueryDir, body.QueryID)
 	switch {
 	case err != nil:
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return authoring.Query{}, false
 	case !found:
 		writeError(w, http.StatusNotFound, body.QueryID+" is not a query in the query directory")
@@ -123,7 +123,7 @@ func (s *Server) queryASTPrintPlan(
 	database, fixtures, why, err := authoring.Printable(s.QueryDir, q)
 	switch {
 	case err != nil:
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return queryASTPrintPlan{}, false
 	case why != "":
 		writeError(w, http.StatusConflict, why)
@@ -131,7 +131,7 @@ func (s *Server) queryASTPrintPlan(
 	}
 	digest, err := authoring.DigestFixtures(s.QueryDir, q.Tests)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return queryASTPrintPlan{}, false
 	}
 	return queryASTPrintPlan{
@@ -160,7 +160,7 @@ func (s *Server) printAndRecordQueryAST(
 	}
 	rel, err := filepath.Rel(s.QueryDir, plan.database)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return false
 	}
 	if _, err := s.Store.RecordAuthoringAST(store.AuthoringAST{
@@ -169,7 +169,7 @@ func (s *Server) printAndRecordQueryAST(
 		Database: filepath.ToSlash(rel), SourceFiles: strings.Join(plan.fixtures, ","),
 		TestDigest: plan.digest, Body: tree.Body, Truncated: tree.Truncated, CLIVersion: cli,
 	}); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return false
 	}
 	return true
@@ -193,7 +193,7 @@ func (s *Server) queryASTs(w http.ResponseWriter, r *http.Request) {
 	}
 	asts, err := s.Store.QueryASTs(id)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return
 	}
 	writeJSON(w, map[string]any{"asts": asts}, nil)

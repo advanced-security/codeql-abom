@@ -51,6 +51,35 @@ public class InventoryHonestyTests : AbomTestContext
     }
 
     /// <summary>
+    /// The size of the match is said once it is read: in flight it is loading, and a page that could
+    /// not be read has no size to state, which "Showing 0 of 0" would claim as an empty match.
+    /// </summary>
+    [Fact]
+    public void TheMatchIsCountedOnlyOnceItHasBeenRead()
+    {
+        Answer("api/actions", """{"items":[],"total":42}""");
+        var release = Withhold("api/actions");
+
+        var page = Render<Pages.Inventory>();
+
+        page.WaitForAssertion(() => Assert.Equal("Loading…", page.Find("[data-abom-unit-count]").TextContent.Trim()));
+        release();
+        page.WaitForAssertion(() => Assert.Contains("of 42 matching", page.Find("[data-abom-unit-count]").TextContent));
+    }
+
+    [Fact]
+    public void AMatchThatCouldNotBeReadIsNotCountedAsEmpty()
+    {
+        Fail("api/actions", System.Net.HttpStatusCode.InternalServerError);
+
+        var page = Render<Pages.Inventory>();
+
+        page.WaitForAssertion(() => Assert.Contains(Sent, r => r.Url.Contains("api/actions", StringComparison.Ordinal)));
+        page.WaitForAssertion(() => Assert.Empty(page.FindAll("[data-abom-unit-count]")));
+        Assert.DoesNotContain("Showing 0", page.Markup);
+    }
+
+    /// <summary>
     /// And the sentence stays away when the whole match is on screen, or a reader learns to skip it
     /// by the time it matters.
     /// </summary>

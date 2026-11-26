@@ -1,0 +1,28 @@
+@using Abom.WebAssembly.Models
+
+@* The components of one query, in a dialog the dialog service owns: it closes from its × and Esc
+   alike, because closing is the service's, not a flag the page has to clear. *@
+<MudDialog ContentClass="abom-components-dialog" data-abom-components-dialog="@QueryId">
+    <TitleContent>
+        <MudText Typo="Typo.h6">Components</MudText>
+        <MudText Typo="Typo.caption" Class="abom-path d-block mud-text-secondary">@QueryId</MudText>
+    </TitleContent>
+    <DialogContent>
+        <QueryComponents QueryId="@QueryId" />
+    </DialogContent>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance Dialog { get; set; } = default!;
+
+    [Parameter, EditorRequired] public string QueryId { get; set; } = string.Empty;
+
+    /// <summary>How every components dialog opens: closable from its title bar and by Esc.</summary>
+    public static readonly DialogOptions Options = new()
+    {
+        CloseButton = true,
+        CloseOnEscapeKey = true,
+        MaxWidth = MaxWidth.ExtraLarge,
+        FullWidth = true,
+    };
+}

@@ -1,0 +1,28 @@
+{{- if .Values.ingress.enabled }}
+{{- if not (include "abom.signedIn" .) }}
+{{- fail "ingress.enabled reaches the coordinator from beyond a port-forward; set signIn.mode to oidc or github so every request needs a session" }}
+{{- end }}
+{{- $host := required "ingress.host is required" .Values.ingress.host }}
+{{- if ne $host (urlParse .Values.signIn.redirectUrl).host }}
+{{- fail (printf "ingress.host %s is not the host of signIn.redirectUrl, which is the only one the coordinator admits" $host) }}
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "abom.name" . }}
+  labels: {{- include "abom.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  rules:
+    - host: {{ $host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: {service: {name: {{ include "abom.name" . }}, port: {name: http}}}
+{{- end }}

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -275,5 +276,25 @@ func TestACallbackWithAStateThisProcessDidNotIssueIsRefused(t *testing.T) {
 	}
 	if calls.Load() != 1 {
 		t.Errorf("the code was exchanged %d times, want once", calls.Load())
+	}
+}
+
+// The publisher is a second App whose manifest asks for one repository's contents and pull requests
+// and nothing else, with no events and no deliveries: it reads nothing and is told nothing.
+func TestThePublishersManifestAsksForItsWritesAndNothingElse(t *testing.T) {
+	s := newSetup(filepath.Join(t.TempDir(), "github-app-publisher"), "", nil)
+	s.Publisher = true
+	rec := guarded(s.Handler(), http.MethodPost, "/manifest", nil)
+	var got manifestAnswer
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); rec.Code != http.StatusOK || err != nil {
+		t.Fatalf("POST /manifest = %d %s", rec.Code, rec.Body.String())
+	}
+	var m ghapp.Manifest
+	if err := json.Unmarshal([]byte(got.Manifest), &m); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"contents": "write", "pull_requests": "write", "metadata": "read"}
+	if !maps.Equal(m.DefaultPermissions, want) || len(m.DefaultEvents) != 0 || m.HookAttributes.Active {
+		t.Errorf("manifest = %+v; want exactly %v, no events and no deliveries", m, want)
 	}
 }

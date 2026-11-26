@@ -5,15 +5,16 @@ import (
 	"maps"
 	"slices"
 
+	"github.com/advanced-security/codeql-abom/internal/expand"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
-// invariants is check 9, one part per invariant, read on the rebuilt copy so all six see one state.
+// invariants is check 9, one part per invariant, read on the rebuilt copy so every part sees one state.
 func invariants(s store.Backend) ([]store.CheckPart, error) {
 	var out []store.CheckPart
 	for _, read := range []func(store.Backend) (store.CheckPart, error){
 		dependencyTotals, rollups, startingPointsOnly, kindAgreement, unobservedCommits,
-		relationshipLines,
+		relationshipLines, unavailableStillTrue, decidedScope,
 	} {
 		p, err := read(s)
 		if err != nil {
@@ -192,6 +193,39 @@ func relationshipLines(s store.Backend) (store.CheckPart, error) {
 			fmt.Sprintf("%d lines listed + %d without a declaration = %d", page.Lines,
 				page.WithoutDeclaration, page.Lines+page.WithoutDeclaration),
 			fmt.Sprintf("%d lines in scope", lines))
+	}
+	return p, nil
+}
+
+// unavailableStillTrue is 9g: unavailable is terminal, so no unavailable row may hold a reason a
+// retry could change. It reads with the decision a server start applies, and a row it names is one
+// that start will put back.
+func unavailableStillTrue(s store.Backend) (store.CheckPart, error) {
+	p := store.CheckPart{Part: "9g no row is unavailable for a reason a retry could change"}
+	rows, err := s.UnavailableRows()
+	if err != nil {
+		return p, err
+	}
+	for _, r := range rows {
+		p.Compared++
+		if expand.Reconsidered(r) {
+			disagree(&p, r.NodeKey+"@"+r.Ref, p.Part, "unavailable", "its reason says a retry could change it: "+r.Reason)
+		}
+	}
+	return p, nil
+}
+
+// decidedScope is 9h: a declaration drives work only under a decision that verifies and matches it,
+// so one that does not is reported here rather than repaired; deciding it is yours to do.
+func decidedScope(s store.Backend) (store.CheckPart, error) {
+	p := store.CheckPart{Part: "9h the declared scope is the one its signed decision allowed"}
+	verdict, err := s.ScopeVerdict()
+	if err != nil || verdict.State == store.ScopeNone {
+		return p, err
+	}
+	p.Compared++
+	if verdict.State != store.ScopeSigned {
+		disagree(&p, "the declared scope", p.Part, "declared", verdict.State+": "+verdict.Reason)
 	}
 	return p, nil
 }

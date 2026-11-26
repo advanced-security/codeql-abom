@@ -53,8 +53,8 @@ type PruneView struct {
 // PruneConflict is a removal that did not happen because its preview no longer holds, with the
 // removal as it now stands, under a proof of its own, to review in its place.
 type PruneConflict struct {
-	Error string    `json:"error"`
-	View  PruneView `json:"view"`
+	problem
+	View PruneView `json:"view"`
 }
 
 // pruneReview is what one preview kept, held until it is applied or expires.
@@ -216,14 +216,8 @@ func (s *Server) staleCheckoutPathsFor(keep []string) ([]string, error) {
 // proof of its own, so the next decision is made about what is true now.
 func (s *Server) refusePrune(w http.ResponseWriter, keep []string, now PruneView, reason string) {
 	now.Proof = s.rememberPrune(keep)
-	body, err := json.Marshal(PruneConflict{Error: reason, View: now})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("encoding response: %v", err))
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusConflict)
-	_, _ = w.Write(body)
+	p := newProblem(problemReviewStale, reason)
+	send(w, p, PruneConflict{problem: p, View: now})
 }
 
 // rememberPrune holds what a preview kept under a proof nobody can name without reading it.
@@ -292,7 +286,7 @@ func (s *Server) pruneCompact(w http.ResponseWriter, r *http.Request) {
 	report, err := s.Store.Compact()
 	if err != nil {
 		// Never a refusal: the epoch bump follows the deletion, so this can come after one happened.
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return
 	}
 	writeJSON(w, PruneView{Removed: report, Applied: true, Checkouts: []string{}}, nil)

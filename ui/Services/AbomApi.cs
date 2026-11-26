@@ -28,7 +28,7 @@ public sealed class AbomApi(HttpClient http, TutorialService? tutorial = null)
     public async Task<AccountIdentity> RefreshAccountsAsync(CancellationToken ct = default)
     {
         using var response = await SendControlRequestAsync(HttpMethod.Post, "api/accounts/refresh", null, ct);
-        response.EnsureSuccessStatusCode();
+        await ThrowUnlessSucceededAsync(response, ct);
         return await response.Content.ReadFromJsonAsync<AccountIdentity>(Json, ct)
                ?? new AccountIdentity();
     }
@@ -140,7 +140,7 @@ public sealed class AbomApi(HttpClient http, TutorialService? tutorial = null)
     /// </summary>
     public Task<(T? Answer, string? Refusal)> SendCodeScanningAsync<T>(
         string path, object? body, CancellationToken ct = default) where T : class =>
-        ControlAsync<T>(HttpMethod.Post, path, body ?? new { }, ct, contextualFailure: true);
+        ControlAsync<T>(HttpMethod.Post, path, body ?? new { }, ct);
 
     /// <summary>What each kind of work may spend, what it spent, and the freshness its rate buys.</summary>
     public async Task<PoolsReport?> GetPoolsAsync(CancellationToken ct = default) =>
@@ -153,7 +153,7 @@ public sealed class AbomApi(HttpClient http, TutorialService? tutorial = null)
     public Task<(PoolsReport? Report, string? Refusal)> SetPoolRateAsync(
         string pool, string unit, int? perHour, int burst, CancellationToken ct = default) =>
         ControlAsync<PoolsReport>(HttpMethod.Put, "api/pools",
-            new { pool, unit, perHour, burst }, ct, contextualFailure: true);
+            new { pool, unit, perHour, burst }, ct);
 
     /// <summary>
     /// Puts a whole dependency tier back in the queue, so a changed or extended query suite can
@@ -184,18 +184,10 @@ public sealed class AbomApi(HttpClient http, TutorialService? tutorial = null)
     /// again each owned repository among them and list each chosen account whole. A refusal throws
     /// with the server's reason, which names what was wrong.
     /// </summary>
-    public async Task<ResyncResult> ResyncAsync(
-        IEnumerable<FrontierItem> rows, IEnumerable<string> accounts, CancellationToken ct = default)
-    {
-        using var response = await SendControlRequestAsync(HttpMethod.Post, "api/discovery/resync",
+    public Task<(ResyncResult? Result, ApiProblem? Refusal)> ResyncAsync(
+        IEnumerable<FrontierItem> rows, IEnumerable<string> accounts, CancellationToken ct = default) =>
+        SendGuardedAsync<ResyncResult>(HttpMethod.Post, "api/discovery/resync",
             new { rows = rows.Select(r => new { nodeKey = r.NodeKey, @ref = r.Ref }), accounts }, ct);
-        if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
-        {
-            throw new HttpRequestException(await RefusalReasonAsync(response, ct), null, response.StatusCode);
-        }
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<ResyncResult>(Json, ct) ?? new ResyncResult();
-    }
 
     /// <summary>
     /// Puts back every dependency that could not be fetched. Nothing does so on its own, because
@@ -265,16 +257,7 @@ public sealed class AbomApi(HttpClient http, TutorialService? tutorial = null)
         {
             return;
         }
-        string? reason = null;
-        try
-        {
-            reason = (await response.Content.ReadFromJsonAsync<ApiError>(Json, ct))?.Error;
-        }
-        catch (Exception ex) when (ex is JsonException or NotSupportedException)
-        {
-            // A body that is not the server's error shape still has its status to report.
-        }
-        throw new HttpRequestException(reason ?? $"the server refused it ({(int)response.StatusCode})", null, response.StatusCode);
+        throw new ApiRefusal(await ProblemOfAsync(response, "it", ct));
     }
 
     public async Task<IReadOnlyList<RemediationItem>> GetRemediationAsync(
@@ -431,8 +414,8 @@ public sealed class AbomApi(HttpClient http, TutorialService? tutorial = null)
         // not recorded. Neither is the server being unavailable, nor an empty log.
         if (response.StatusCode is System.Net.HttpStatusCode.BadRequest or System.Net.HttpStatusCode.NotFound)
         {
-            var problem = await response.Content.ReadFromJsonAsync<Dictionary<string, string>>(Json, ct);
-            throw new AuditFilterException(problem?.GetValueOrDefault("error") ?? "The audit filters were rejected.");
+            var problem = await response.Content.ReadFromJsonAsync<ApiProblem>(Json, ct);
+            throw new AuditFilterException(problem?.Detail is { Length: > 0 } detail ? detail : "The audit filters were rejected.");
         }
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<AuthoringEventPage>(Json, ct)
@@ -458,6 +441,30 @@ public sealed class AbomApi(HttpClient http, TutorialService? tutorial = null)
     /// <summary>The trees printed for a query, by a session or by ABOM, without their bodies.</summary>
     public async Task<IReadOnlyList<AuthoringAst>> GetQueryAstsAsync(string queryId, CancellationToken ct = default) =>
         (await GetAsync<AuthoringAstList>($"api/queries/asts?query={Uri.EscapeDataString(queryId)}", ct))?.Asts ?? [];
+
+    /// <summary>Everything that makes a query on disk run, and its newest test run, or why not.</summary>
+    public Task<(QueryComponentsShown? Shown, ApiProblem? Refusal)> GetQueryComponentsAsync(
+        string queryId, CancellationToken ct = default) =>
+        ReadGuardedAsync<QueryComponentsShown>($"api/queries/components?query={Uri.EscapeDataString(queryId)}", ct);
+
+    /// <summary>One component of a query, as it is on disk, or why it cannot be read.</summary>
+    public Task<(StepFile? File, ApiProblem? Refusal)> GetQueryComponentAsync(
+        string queryId, string path, CancellationToken ct = default) =>
+        ReadGuardedAsync<StepFile>(
+            $"api/queries/component?query={Uri.EscapeDataString(queryId)}&path={Uri.EscapeDataString(path)}", ct);
+
+    /// <summary>
+    /// Opens a pull request of a query in the publisher App's one repository; a refusal names what
+    /// stands in the way, such as a publisher installed more broadly than that.
+    /// </summary>
+    public Task<(QueryExport? Export, ApiProblem? Refusal)> ExportQueryAsync(string queryId, string bundleSha256,
+        CancellationToken ct = default) =>
+        SendGuardedAsync<QueryExport>(HttpMethod.Post,
+            $"api/queries/export?query={Uri.EscapeDataString(queryId)}&bundle={Uri.EscapeDataString(bundleSha256)}",
+            null, ct, "the export");
+
+    /// <summary>Where a query's bundle downloads from.</summary>
+    public static string QueryBundleUrl(string queryId) => $"api/queries/bundle?query={Uri.EscapeDataString(queryId)}";
 
     /// <summary>The files a step of a query on disk was read from, as they are now.</summary>
     public async Task<StepShown?> GetQueryStepAsync(string queryId, string step, CancellationToken ct = default) =>
@@ -497,8 +504,19 @@ public sealed class AbomApi(HttpClient http, TutorialService? tutorial = null)
         ControlAsync<T>(HttpMethod.Post, path, body, ct);
 
     private async Task<(T? Answer, string? Refusal)> ControlAsync<T>(
-        HttpMethod method, string path, object? body, CancellationToken ct,
-        string refused = "it", bool contextualFailure = false)
+        HttpMethod method, string path, object? body, CancellationToken ct, string refused = "it")
+    {
+        var (answer, problem) = await SendGuardedAsync<T>(method, path, body, ct, refused);
+        return (answer, problem is { Code: ApiProblem.UnreachableCode } ? $"{problem.Title}: {problem.Detail}" : problem?.Detail);
+    }
+
+    /// <summary>
+    /// A control, answered or refused: the refusal is the server's problem detail, whose code says
+    /// which kind it is, so a page can say what to do next rather than only that it failed. A
+    /// transport failure is a problem too, with no code the server sent.
+    /// </summary>
+    public async Task<(T? Answer, ApiProblem? Refusal)> SendGuardedAsync<T>(
+        HttpMethod method, string path, object? body, CancellationToken ct, string refused = "it")
     {
         using var request = ControlRequest(method, path, body);
         try
@@ -509,14 +527,58 @@ public sealed class AbomApi(HttpClient http, TutorialService? tutorial = null)
                 LastError = null;
                 return (await response.Content.ReadFromJsonAsync<T>(Json, ct), null);
             }
-            var refusal = await response.Content.ReadFromJsonAsync<ApiError>(Json, ct);
-            return (default, refusal?.Error ?? $"the server refused {refused} ({(int)response.StatusCode})");
+            return (default, await ProblemOfAsync(response, refused, ct));
         }
         catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
         {
             LastError = $"{path}: {ex.Message}";
-            return (default, contextualFailure ? LastError : ex.Message);
+            return (default, ApiProblem.Unreachable(ex.Message));
         }
+    }
+
+    /// <summary>A read whose refusal is the reader's to see, in the server's words and code.</summary>
+    public async Task<(T? Answer, ApiProblem? Refusal)> ReadGuardedAsync<T>(string url, CancellationToken ct)
+    {
+        var started = Stopwatch.GetTimestamp();
+        try
+        {
+            using var response = await http.GetAsync(url, ct);
+            Record(url, started, ok: response.IsSuccessStatusCode);
+            if (response.IsSuccessStatusCode)
+            {
+                LastError = null;
+                return (await response.Content.ReadFromJsonAsync<T>(Json, ct), null);
+            }
+            return (default, await ProblemOfAsync(response, "this read", ct));
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
+        {
+            LastError = $"{url}: {ex.Message}";
+            Record(url, started, ok: false);
+            return (default, ApiProblem.Unreachable(ex.Message));
+        }
+    }
+
+    /// <summary>
+    /// The one reading of a refusal: the server's problem detail, or, where the body is not one, the
+    /// status alone, said as such.
+    /// </summary>
+    private static async Task<ApiProblem> ProblemOfAsync(HttpResponseMessage response, string refused, CancellationToken ct)
+    {
+        var status = (int)response.StatusCode;
+        var body = await response.Content.ReadAsStringAsync(ct);
+        try
+        {
+            if (JsonSerializer.Deserialize<ApiProblem>(body, Json) is { Detail.Length: > 0 } problem)
+            {
+                return problem;
+            }
+        }
+        catch (JsonException)
+        {
+            // Not the server's shape: a proxy's page, or nothing at all, which still has its status.
+        }
+        return new ApiProblem { Status = status, Detail = $"the server refused {refused} ({status})" };
     }
 
     private static HttpRequestMessage ControlRequest(HttpMethod method, string path, object? body)
@@ -531,7 +593,7 @@ public sealed class AbomApi(HttpClient http, TutorialService? tutorial = null)
         HttpMethod method, string path, object? body, CancellationToken ct)
     {
         using var response = await SendControlRequestAsync(method, path, body, ct);
-        response.EnsureSuccessStatusCode();
+        await ThrowUnlessSucceededAsync(response, ct);
         return await response.Content.ReadFromJsonAsync<T>(Json, ct);
     }
 
@@ -653,8 +715,7 @@ public sealed class AbomApi(HttpClient http, TutorialService? tutorial = null)
             using var response = await http.SendAsync(request, ct);
             if (!response.IsSuccessStatusCode)
             {
-                var refusal = await response.Content.ReadFromJsonAsync<ApiError>(Json, ct);
-                LastError = refusal?.Error ?? $"the server refused it ({(int)response.StatusCode})";
+                LastError = (await ProblemOfAsync(response, "it", ct)).Detail;
                 return null;
             }
             LastError = null;
@@ -728,8 +789,7 @@ public sealed class AbomApi(HttpClient http, TutorialService? tutorial = null)
                 LastError = null;
                 return (await response.Content.ReadFromJsonAsync<T>(Json, ct), null);
             }
-            var refusal = await response.Content.ReadFromJsonAsync<ApiError>(Json, ct);
-            return (default, refusal?.Error ?? $"the server refused {refused} ({(int)response.StatusCode})");
+            return (default, (await ProblemOfAsync(response, refused, ct)).Detail);
         }
         catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
         {
@@ -765,9 +825,8 @@ public sealed class AbomApi(HttpClient http, TutorialService? tutorial = null)
                 LastError = null;
                 return (await response.Content.ReadFromJsonAsync<NodeFigure>(Json, ct), null, false);
             }
-            var error = await response.Content.ReadFromJsonAsync<ApiError>(Json, ct);
             var fault = (int)response.StatusCode >= 500;
-            return (null, error?.Error ?? $"the figure could not be drawn ({(int)response.StatusCode})", fault);
+            return (null, (await ProblemOfAsync(response, "the figure", ct)).Detail, fault);
         }
         catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
         {
@@ -788,6 +847,31 @@ public sealed class AbomApi(HttpClient http, TutorialService? tutorial = null)
     public async Task<IReadOnlyList<DeclaredAccount>> GetOwnedScopeAsync(
         CancellationToken ct = default) =>
         await GetListAsync<DeclaredAccount>("api/owned-scope", ct);
+
+    /// <summary>Who is asking and what they may do, or null when it could not be read.</summary>
+    public async Task<Me?> ReadMeAsync(CancellationToken ct = default) =>
+        await GetAsync<Me>("api/me", ct);
+
+    /// <summary>
+    /// Ends this browser's session, answering whether it ended. The identity provider's own session
+    /// is its to end.
+    /// </summary>
+    public async Task<bool> SignOutAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            using var response = await http.PostAsync("auth/logout", null, ct);
+            return response.IsSuccessStatusCode;
+        }
+        catch (HttpRequestException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>The declaration's decision, or null when it could not be read, which says nothing either way.</summary>
+    public async Task<ScopeDecision?> ReadScopeDecisionAsync(CancellationToken ct = default) =>
+        await GetAsync<ScopeDecision>("api/owned-scope/decision", ct);
 
     /// <summary>
     /// The declaration, or null when it could not be read. <see cref="GetOwnedScopeAsync"/> answers
@@ -810,28 +894,12 @@ public sealed class AbomApi(HttpClient http, TutorialService? tutorial = null)
         };
         request.Headers.Add("X-Abom-Control", "1");
         using var response = await http.SendAsync(request, ct);
-        if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+        if (!response.IsSuccessStatusCode)
         {
-            throw new HttpRequestException(await RefusalReasonAsync(response, ct), null, response.StatusCode);
+            throw new ApiRefusal(await ProblemOfAsync(response, "the declaration", ct));
         }
-        response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<IReadOnlyList<DeclaredAccount>>(Json, ct)
                ?? [];
-    }
-
-    // The server's sentence for a refusal, or the status where the body carries none.
-    private static async Task<string> RefusalReasonAsync(HttpResponseMessage response, CancellationToken ct)
-    {
-        var fallback = $"the server refused it ({(int)response.StatusCode})";
-        var body = await response.Content.ReadAsStringAsync(ct);
-        try
-        {
-            return JsonSerializer.Deserialize<ApiError>(body, Json)?.Error is { Length: > 0 } reason ? reason : fallback;
-        }
-        catch (JsonException)
-        {
-            return fallback;
-        }
     }
 
     /// <summary>Turns the declared account scope into repositories.</summary>

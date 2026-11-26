@@ -38,7 +38,7 @@ func listingServer(t *testing.T, answer func(owner string) ([]ghauth.Repository,
 
 func listRepositories(t *testing.T, srv *Server, owner string) (*httptest.ResponseRecorder, listedAccount) {
 	t.Helper()
-	rec := postControl(t, srv, "/api/accounts/"+owner+"/repositories")
+	rec := control(t, srv, http.MethodPost, "/api/accounts/"+owner+"/repositories", "")
 	var out listedAccount
 	if rec.Code == http.StatusOK {
 		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
@@ -186,7 +186,7 @@ func TestTheServerSaysWhichRepositoriesTheReaderMayInclude(t *testing.T) {
 		t.Fatal(err)
 	}
 	declarable := func(owner string) map[string]bool {
-		rec := postControl(t, srv, "/api/accounts/"+owner+"/repositories")
+		rec := control(t, srv, http.MethodPost, "/api/accounts/"+owner+"/repositories", "")
 		var out struct {
 			Repositories []struct {
 				Name       string `json:"name"`

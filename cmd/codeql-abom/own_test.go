@@ -322,6 +322,8 @@ func TestOwnSaysWhichDeclarationsDiscoveryCannotActOn(t *testing.T) {
 	}
 }
 
+// ownDB is a migrated database for own and accounts to run against, with GitHub answering that
+// nobody could be verified until the test says otherwise with asks, so nothing reaches GitHub.
 func ownDB(t *testing.T) string {
 	t.Helper()
 	asks(t, unverified, nil)

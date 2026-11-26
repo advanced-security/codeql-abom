@@ -31,16 +31,13 @@ func runBranches(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		return errors.New("branches: --db is required")
 	}
 
-	s, err := store.OpenBackend(*dbPath, store.Options{})
+	s, err := openDecided(ctx, "branches", args, *dbPath, store.Options{})
 	if err != nil {
-		return fmt.Errorf("opening %s: %w", store.DatabaseLabel(*dbPath), err)
+		return err
 	}
 	defer s.Close()
-	if err := s.Migrate(); err != nil {
-		return fmt.Errorf("migrating %s: %w", store.DatabaseLabel(*dbPath), err)
-	}
 
-	repos, err := s.OwnedRepositories()
+	repos, err := ownedRepositories(s)
 	if err != nil {
 		return fmt.Errorf("branches: %w", err)
 	}

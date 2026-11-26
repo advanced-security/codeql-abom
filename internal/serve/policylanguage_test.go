@@ -138,7 +138,7 @@ func TestAListRefusingATermNamesTheFilter(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, localRequest(http.MethodGet,
 		"/api/actions?advisorySeverity=high", nil))
-	if rec.Code != http.StatusBadRequest || rec.Body.String() != "{\"error\":\"Not applied here: advisorySeverity.\"}\n" {
+	if p := problemOf(t, rec); p.Code != problemUnknownParameter || p.Detail != "Not applied here: advisorySeverity." {
 		t.Errorf("answered %d %s, want the concise refusal", rec.Code, rec.Body.String())
 	}
 }

@@ -1,4 +1,5 @@
 using Bunit;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Abom.WebAssembly.Tests;
@@ -61,6 +62,24 @@ public class OwnedScopeTests : AbomTestContext
         Answer("api/owned-scope", scope);
         Answer("api/owner-candidates", Candidates);
         Answer("api/accounts", Identity);
+    }
+
+    // Settings asks for the role before the accounts, so another part of the page can start that
+    // read first. A second reader waits for it rather than finding nothing declared.
+    [Fact]
+    public async Task ASecondReaderWaitsForTheDeclarationAlreadyBeingRead()
+    {
+        Serve(DeclaresAcme);
+        var release = Withhold("api/owned-scope");
+        var accounts = Services.GetRequiredService<Services.AccountService>();
+
+        var first = accounts.EnsureLoadedAsync(Xunit.TestContext.Current.CancellationToken);
+        var second = accounts.EnsureLoadedAsync(Xunit.TestContext.Current.CancellationToken);
+        Assert.False(second.IsCompleted, "the second reader finished before the declaration was read");
+
+        release();
+        await Task.WhenAll(first, second);
+        Assert.Equal("acme", Assert.Single(accounts.Declared!).Owner);
     }
 
     // The whole complaint: `gh` reports 33 accounts because it reports membership, and being in

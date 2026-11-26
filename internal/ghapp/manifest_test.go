@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -16,6 +17,7 @@ import (
 // sourceOf locates the packages a Use may name.
 var sourceOf = map[string]string{
 	"catalog": "../catalog", "expand": "../expand", "events": "../events", "harness": "../harness",
+	"publish": "../publish", "ghapp": ".",
 }
 
 // writes reports whether a call, as the table names it, changes something on GitHub.
@@ -173,16 +175,17 @@ func checkAccessIsWhatItsCallsDo(t *testing.T, g Grant) {
 	}
 }
 
-// Each requested permission and event names an existing call that makes the request; a write would be
-// requested only for a call that writes, and nothing is requested that no call needs.
-func TestEveryRequestedPermissionAndEventIsTracedToANamedCall(t *testing.T) {
+// checkGrantsAreTraced holds every grant to an existing call that makes its request, a write to a
+// call that writes, and each to something that needs it, answering what the grants request.
+func checkGrantsAreTraced(t *testing.T, grants []Grant, events []Subscription) map[string]bool {
+	t.Helper()
 	requested := map[string]bool{}
 	neededByEvent := map[string]bool{}
-	for _, s := range Events {
+	for _, s := range events {
 		neededByEvent[s.Permission] = true
 		neededByEvent[s.Also] = true
 	}
-	for _, g := range Permissions {
+	for _, g := range grants {
 		if requested[g.Permission] {
 			t.Errorf("%s is listed twice", g.Permission)
 		}
@@ -205,6 +208,22 @@ func TestEveryRequestedPermissionAndEventIsTracedToANamedCall(t *testing.T) {
 			}
 		}
 	}
+	return requested
+}
+
+// The publisher is traced as the reader is: each permission it asks for names the call that needs
+// it, and its tokens carry exactly those.
+func TestEveryPermissionThePublisherRequestsIsTracedToANamedCall(t *testing.T) {
+	checkGrantsAreTraced(t, PublisherGrants, nil)
+	if want := permissionSetOf(PublisherGrants); !maps.Equal(PublisherPermissions, want) {
+		t.Errorf("publisher tokens carry %v; want the traced grants %v", PublisherPermissions, want)
+	}
+}
+
+// Each requested permission and event names an existing call that makes the request; a write would be
+// requested only for a call that writes, and nothing is requested that no call needs.
+func TestEveryRequestedPermissionAndEventIsTracedToANamedCall(t *testing.T) {
+	requested := checkGrantsAreTraced(t, Permissions, Events)
 
 	routes := processorRoutes(t)
 	subscribed := map[string]bool{}
@@ -291,6 +310,30 @@ func TestEveryPathTheReaderBuildsIsCoveredByARequestedPermission(t *testing.T) {
 	}
 }
 
+// A REST path added to the publisher without a grant fails here, as one added to the reader does.
+func TestEveryPathThePublisherBuildsIsCoveredByItsGrants(t *testing.T) {
+	var uses []Use
+	for _, g := range PublisherGrants {
+		uses = append(uses, g.Uses...)
+	}
+	checked := 0
+	for _, f := range parsePackage(t, "publish") {
+		for _, lit := range stringLiterals(f) {
+			// A lone "/" joins the owner to the repository; it names no request.
+			if !strings.HasPrefix(lit, "/") || lit == "/" {
+				continue
+			}
+			checked++
+			if !slices.ContainsFunc(uses, func(u Use) bool { return covers(u.Literal, lit) }) {
+				t.Errorf("the publisher builds %q, and none of its grants covers it", lit)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("found no REST paths in publish; the scan is looking in the wrong place")
+	}
+}
+
 // A token can carry only what the manifest asked for, and a grant no token is minted with is
 // approved by every installation for nothing.
 func TestEveryMintedPermissionSetIsWithinTheManifestAndUsesAllOfIt(t *testing.T) {
@@ -298,7 +341,7 @@ func TestEveryMintedPermissionSetIsWithinTheManifestAndUsesAllOfIt(t *testing.T)
 	for _, g := range Permissions {
 		manifest[g.Permission] = g.Access
 	}
-	sets := map[string]PermissionSet{"crawl": CrawlPermissions, "copilot": CopilotPermissions}
+	sets := map[string]PermissionSet{"crawl": CrawlPermissions, "copilot": CopilotPermissions, "sign-in": MembersPermissions}
 	minted := map[string]string{}
 	for name, set := range sets {
 		if missing := set.missingFrom(manifest); len(missing) > 0 {

@@ -522,3 +522,24 @@ func TestWhatCouldNotBeReadIsKeptUntilAReadAnswers(t *testing.T) {
 		t.Errorf("after reads that answered, still recorded %q", got)
 	}
 }
+
+// Enumeration is the first GitHub read a declaration causes, so it reads only what a decision it can
+// verify allowed. A declaration changed since its decision lists nothing, and the report says why.
+func TestADeclarationThatDoesNotVerifyIsNotListed(t *testing.T) {
+	s := newStore(t)
+	if _, err := s.DB().Exec(`UPDATE abom_owned_scope SET includes_only = 1`); err != nil {
+		t.Fatal(err)
+	}
+	r := &reader{}
+
+	report, err := Run(context.Background(), Options{Store: s, Read: r.read})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.asked) != 0 {
+		t.Errorf("GitHub was asked %d times for a declaration nobody decided", len(r.asked))
+	}
+	if report.Scope.State != store.ScopeUnverified || report.Scope.Reason == "" {
+		t.Errorf("report.Scope = %+v; want the declaration named as not verifying", report.Scope)
+	}
+}

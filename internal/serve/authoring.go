@@ -90,7 +90,7 @@ func (s *Server) requestSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	sessions, err := s.Store.AuthoringSessions(id)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return
 	}
 	flights := []harness.Flight{}
@@ -108,7 +108,7 @@ func (s *Server) requestASTs(w http.ResponseWriter, r *http.Request) {
 	}
 	asts, err := s.Store.AuthoringASTs(id)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return
 	}
 	writeJSON(w, map[string]any{"asts": asts}, nil)
@@ -127,7 +127,7 @@ func (s *Server) authoringAST(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	case err != nil:
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return
 	}
 	writeJSON(w, ast, nil)

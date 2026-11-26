@@ -43,7 +43,7 @@ func (s *Server) startRun(w http.ResponseWriter, r *http.Request) {
 	if body.Held == nil && len(body.Queries) > 0 {
 		suggested, err := s.Store.SuggestFindings(body.Queries)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeJSON(w, nil, err)
 			return
 		}
 		held = !suggested.Findings
@@ -83,7 +83,7 @@ func (s *Server) startRun(w http.ResponseWriter, r *http.Request) {
 	}
 	run, err := s.Store.AnalysisRun(id)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return
 	}
 	writeJSON(w, run, nil)
@@ -93,7 +93,7 @@ func (s *Server) startRun(w http.ResponseWriter, r *http.Request) {
 func (s *Server) runs(w http.ResponseWriter, r *http.Request) {
 	list, err := s.Store.AnalysisRuns()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return
 	}
 	writeJSON(w, map[string]any{"runs": list}, nil)
@@ -122,7 +122,7 @@ func (s *Server) runResults(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	case err != nil:
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return
 	}
 	writeJSON(w, found, nil)
@@ -151,7 +151,7 @@ func (s *Server) runSuggestion(w http.ResponseWriter, r *http.Request) {
 	}
 	suggested, err := s.Store.SuggestFindings(queries)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return
 	}
 	writeJSON(w, suggested, nil)
@@ -206,7 +206,7 @@ func (s *Server) findingTrace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	case err != nil:
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return
 	}
 	writeJSON(w, trace, nil)

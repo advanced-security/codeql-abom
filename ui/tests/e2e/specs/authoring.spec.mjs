@@ -98,4 +98,50 @@ test.describe('authoring', () => {
         const over = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
         expect(over, 'the open request scrolls wider than the window').toBeLessThanOrEqual(0);
     });
+
+    // A file reads as the file: one numbered row per line. Razor trims the newline each line
+    // carries, so only the stylesheet keeps them apart, and no component test can see that.
+    test('a component opens with one row per line of the file', on('/codeql?tab=catalog'), async ({
+        page, request, baseURL,
+    }) => {
+        const working = await workingCopies(request, baseURL);
+        test.skip(working.length === 0, 'this server was given no query directory');
+
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.goto('/codeql?tab=catalog');
+        await ready(page);
+        await page.locator('[data-abom-query-components]').first().click();
+        await page.locator('[data-abom-component-role="query"] .mud-treeview-item-content').first().click();
+        const lines = page.locator('[data-abom-component-view] .abom-line');
+        await expect(lines.nth(2)).toBeVisible();
+
+        const tops = await lines.evaluateAll((all) => all.slice(0, 3).map((l) => l.getBoundingClientRect().top));
+        expect(tops[1], 'the second line sits below the first').toBeGreaterThan(tops[0]);
+        expect(tops[2], 'the third line sits below the second').toBeGreaterThan(tops[1]);
+    });
+
+    // However narrow the dialog, the head is one row: the path gives way, never the copy button.
+    test('a component file head keeps its copy button on the path row at 600px', on('/codeql?tab=catalog'), async ({
+        page, request, baseURL,
+    }) => {
+        const working = await workingCopies(request, baseURL);
+        test.skip(working.length === 0, 'this server was given no query directory');
+
+        await page.setViewportSize({ width: 600, height: 900 });
+        await page.goto('/codeql?tab=catalog');
+        await ready(page);
+        await page.locator('[data-abom-query-components]').first().click();
+        // The widest head the pack draws: a test's expected results, under the longest path.
+        await page.locator('[data-abom-component-role="expected"] .mud-treeview-item-content').first().click();
+        const head = page.locator('.abom-components-viewhead');
+        const copy = head.getByRole('button', { name: 'Copy the file' });
+        await expect(copy).toBeVisible();
+
+        const path = await head.locator('.abom-path').first().boundingBox();
+        const button = await copy.boundingBox();
+        expect(button.y, 'the copy button starts above the path row ends').toBeLessThan(path.y + path.height);
+        expect(button.y + button.height, 'the copy button ends below the path row starts').toBeGreaterThan(path.y);
+        const box = await head.boundingBox();
+        expect(button.x + button.width, 'the copy button is inside the head').toBeLessThanOrEqual(box.x + box.width + 1);
+    });
 });

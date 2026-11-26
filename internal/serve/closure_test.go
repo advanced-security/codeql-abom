@@ -161,7 +161,7 @@ func TestAFigureRefusesADirectionItDoesNotDraw(t *testing.T) {
 	}
 	var body map[string]string
 	_ = json.Unmarshal(rec.Body.Bytes(), &body)
-	if !strings.Contains(body["error"], "LR") {
+	if !strings.Contains(body["detail"], "LR") {
 		t.Errorf("the refusal does not name what it draws: %v", body)
 	}
 }

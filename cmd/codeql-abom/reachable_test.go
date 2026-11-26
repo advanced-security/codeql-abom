@@ -18,8 +18,10 @@ func TestEveryInternalPackageIsReachableFromABinary(t *testing.T) {
 	// relative pattern names the wrong tree or nothing at all.
 	module := goList(t, "-m")[0]
 
+	// infra/tests holds the module's own test tooling, such as the issuer a local cluster signs in
+	// through: binaries too, though no image ships them.
 	reachable := map[string]bool{}
-	for _, pkg := range goList(t, "-deps", module+"/cmd/...") {
+	for _, pkg := range goList(t, "-deps", module+"/cmd/...", module+"/infra/tests/...") {
 		reachable[pkg] = true
 	}
 

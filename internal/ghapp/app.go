@@ -55,6 +55,8 @@ type App struct {
 type tokenKey struct {
 	id    int64
 	perms string
+	// repo narrows the token to one repository; empty is every one the installation covers.
+	repo string
 }
 
 type minted struct {
@@ -194,13 +196,13 @@ func (a *App) remember(list []installation) {
 
 // tokenFor is installation id's crawl token: every read it granted, and nothing else.
 func (a *App) tokenFor(ctx context.Context, id int64, owner string) (string, error) {
-	t, err := a.mint(ctx, id, owner, a.crawlSet(id), false)
+	t, err := a.mint(ctx, id, owner, a.crawlSet(id), "", false)
 	return t.token, err
 }
 
 // mint reuses id's cached token carrying exactly perms until near expiry, unless fresh.
-func (a *App) mint(ctx context.Context, id int64, owner string, perms PermissionSet, fresh bool) (minted, error) {
-	key := tokenKey{id: id, perms: perms.key()}
+func (a *App) mint(ctx context.Context, id int64, owner string, perms PermissionSet, repo string, fresh bool) (minted, error) {
+	key := tokenKey{id: id, perms: perms.key(), repo: repo}
 	if t, ok := a.tokens[key]; ok && !fresh && a.now().Before(t.expires.Add(-refreshBefore)) {
 		return t, nil
 	}
@@ -213,6 +215,9 @@ func (a *App) mint(ctx context.Context, id int64, owner string, perms Permission
 		ExpiresAt time.Time `json:"expires_at"`
 	}
 	body := map[string]any{"permissions": perms}
+	if repo != "" {
+		body["repositories"] = []string{repo}
+	}
 	err = a.send(ctx, http.MethodPost, fmt.Sprintf("/app/installations/%d/access_tokens", id), jwt, body, &out)
 	if refused := new(statusError); errors.As(err, &refused) {
 		switch refused.Status {
@@ -303,7 +308,7 @@ func (a *App) ReadInstallations(ctx context.Context) store.InstallationSync {
 		got := store.AppInstallation{
 			Owner: inst.Account.Login, Kind: strings.ToLower(inst.Account.Type),
 			InstallationID: inst.ID, RepositorySelection: inst.RepositorySelection,
-			Suspended: inst.SuspendedAt != nil,
+			Suspended: inst.SuspendedAt != nil, Permissions: inst.Permissions,
 		}
 		if got.RepositorySelection == "selected" && !got.Suspended {
 			if names, err := a.installationRepositories(ctx, inst.ID, got.Owner); err != nil {

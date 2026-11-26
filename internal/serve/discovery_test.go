@@ -64,13 +64,6 @@ func (f *fakeDiscovery) Resync(rows []store.NodeRef, accounts []string) (supervi
 	return f.resynced, f.selectErr
 }
 
-func controlRequest(target string) *http.Request {
-	r := localRequest(http.MethodPost, target, nil)
-	r.Host = "127.0.0.1:8080"
-	r.Header.Set(controlHeader, "1")
-	return r
-}
-
 func TestRetryUnavailableRefreshesSourceEvidenceOnlyAfterControlAuthorization(t *testing.T) {
 	s, _ := newServer(t)
 	refreshes := 0
@@ -540,15 +533,6 @@ func TestDiscoveryStatusAnswersWhenNoLoopIsConfigured(t *testing.T) {
 	}
 }
 
-func resync(t *testing.T, s *Server, body string) *httptest.ResponseRecorder {
-	t.Helper()
-	r := controlRequest("/api/discovery/resync")
-	r.Body = io.NopCloser(strings.NewReader(body))
-	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, r)
-	return w
-}
-
 // Coverage lists what failed, and the rows and accounts a reader picks there are exactly what is
 // resynced: no tier, no repository's other references, no other account. The answer carries what was
 // done beside the state it left, so the page can say it without polling.
@@ -564,7 +548,7 @@ func TestResyncingDoesExactlyWhatWasChosenAndSaysWhatItDid(t *testing.T) {
 		Reread: []string{"octo/app"}, Relisted: []string{"Octo"}}}
 	s.Discovery = loop
 
-	w := resync(t, s, `{"rows":[{"nodeKey":"octo/app","ref":""},{"nodeKey":"actions/checkout","ref":"v4"}],
+	w := control(t, s, http.MethodPost, "/api/discovery/resync", `{"rows":[{"nodeKey":"octo/app","ref":""},{"nodeKey":"actions/checkout","ref":"v4"}],
 		"accounts":["Octo"]}`)
 
 	if w.Code != http.StatusOK {
@@ -612,7 +596,7 @@ func TestResyncRefusesWhatItCannotDoByName(t *testing.T) {
 		`not json`:                    "JSON",
 		`{"rows":[` + many + `]}`:     "500",
 	} {
-		w := resync(t, s, body)
+		w := control(t, s, http.MethodPost, "/api/discovery/resync", body)
 		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), says) {
 			t.Errorf("%.40s: status %d %s, want 400 saying %q", body, w.Code, w.Body.String(), says)
 		}
@@ -629,7 +613,26 @@ func TestResyncRefusesWhatItCannotDoByName(t *testing.T) {
 	}
 
 	s.Discovery = nil
-	if w := resync(t, s, `{"accounts":["octo"]}`); w.Code != http.StatusServiceUnavailable {
+	if w := control(t, s, http.MethodPost, "/api/discovery/resync", `{"accounts":["octo"]}`); w.Code != http.StatusServiceUnavailable {
 		t.Errorf("with no discovery loop, status = %d, want 503", w.Code)
+	}
+}
+
+// Listing an account again under a declaration no decision holds for would promise a read
+// enumeration refuses, so the resync is refused, saying why, before anything is put back.
+func TestAResyncNamingAccountsWaitsForTheDeclarationToBeDecided(t *testing.T) {
+	s, st := newServer(t)
+	loop := &fakeDiscovery{}
+	s.Discovery = loop
+	if _, err := st.DB().Exec(`INSERT INTO abom_owned_scope (owner, kind, enabled, includes_only, declared_at)
+		VALUES ('acme', 'organization', 1, 0, '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	w := control(t, s, http.MethodPost, "/api/discovery/resync", `{"accounts":["acme"]}`)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "not confirmed") {
+		t.Errorf("resync of acme under an undecided declaration = %d %s; want a conflict saying why", w.Code, w.Body.String())
+	}
+	if len(loop.resyncAccounts) != 0 {
+		t.Errorf("discovery was asked to list %v anyway", loop.resyncAccounts)
 	}
 }

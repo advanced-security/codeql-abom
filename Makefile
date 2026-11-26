@@ -33,15 +33,15 @@ LDFLAGS := -X main.codeqlVersion=$(CODEQL_VERSION) $(if $(ABOM_VERSION),-X main.
 # What every platform's archive shares: the published interface, its notices and its SDK.
 ABOM_RELEASE ?= $(ABOM_TMP)/release
 
-.PHONY: backend-test bench build check-corrupt corpus check-release-version check-versions clean demo demo-check demo-login \
+.PHONY: backend-test bench build chart check-corrupt corpus check-release-version check-versions clean demo demo-check demo-login \
 	demo-reset download e2e e2e-corpus e2e-corpus-run e2e-run test-postgres test-sqlite \
-	fmt itest js lint logs package pins publish ql \
+	fmt itest js kind-up lint logs package pins publish ql \
 	quality release-archive release-ui restart script-test security-test selfcheck serve start status stop style test ui \
 	ui-test verify vet
 
 .DEFAULT_GOAL := build
 
-verify: check-corrupt check-versions check-release-version pins fmt vet lint test script-test js style ql ui ui-test e2e
+verify: check-corrupt check-versions check-release-version pins chart fmt vet lint test script-test js style ql ui ui-test e2e
 
 ## bench: time the store read paths against a real corpus.
 ABOM_BENCH_DB ?= $(ABOM_TMP)/bench.db
@@ -159,6 +159,10 @@ fmt:
 	if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi; \
 	echo "gofmt: clean"
 
+## kind-up: run ABOM on a local kind cluster with its PKI, PostgreSQL and object store; safe to rerun.
+kind-up:
+	@infra/tests/kind/up.sh
+
 ## js: test browser code that Go and Razor checks do not see.
 js:
 	@node --test ui/wwwroot/js/*.test.js ui/tests/e2e/*.test.mjs ui/tools/*.test.mjs && echo "js: ok"
@@ -212,6 +216,10 @@ release-archive:
 	fi
 	@scripts/release/assemble.sh "$(ABOM_VERSION)" "$(ABOM_RELEASE)" dist
 
+## chart: lint and render the Helm chart for each profile, and check its refusals still refuse.
+chart:
+	@scripts/check-chart.sh
+
 ## pins: verify `.github/workflows/actions.lock` without editing it.
 pins:
 	@if ! gh actions-lock --help >/dev/null 2>&1; then \
@@ -256,7 +264,7 @@ itest:
 	fi
 	@ABOM_ITEST_DB="$(ABOM_ITEST_DB)" ABOM_ITEST_SPARSE_DB="$(ABOM_ITEST_SPARSE_DB)" \
 		ABOM_ITEST_OVERLAY_DB="$(ABOM_ITEST_OVERLAY_DB)" ABOM_ITEST_CODEQL=1 TMPDIR="$(ABOM_TMP)/gotest" \
-		go test -p 1 ./internal/runner/ ./internal/pipeline/ ./internal/expand/ -count=1
+		go test -p 1 ./internal/runner/ ./internal/pipeline/ ./internal/expand/ ./internal/querypack/ -count=1
 	@echo "itest: ok"
 
 ## quality: analyze our own source with our own tool, in every language we write.
@@ -270,10 +278,10 @@ quality: selfcheck
 	@go run ./cmd/codeql-abom selfcheck --language=python --source-root=scripts \
 		--suite advanced-security/abom-python-quality-src:codeql-suites/abom-python-quality.qls
 
-## security-test: enforce the HTTP and deployed-query trust boundaries without external services.
+## security-test: enforce the HTTP and deployed-query trust boundaries, and that every way to change
+## ABOM is a signed decision, without external services.
 security-test:
-	@go test ./internal/serve ./internal/customql \
-		-run '^(TestHTTPBoundary|TestQueryLifecycle|TestDeployedSuite)' -count=1
+	@scripts/security-test.sh
 
 ## selfcheck: run security regressions and our own analysis over our own workflows.
 selfcheck: security-test

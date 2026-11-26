@@ -37,6 +37,7 @@ public abstract class AbomTestContext : BunitContext
         Services.AddSingleton<InstanceService>();
         Services.AddSingleton<ThemeService>();
         Services.AddSingleton<AccountService>();
+        Services.AddSingleton<RoleService>();
         Services.AddSingleton<ScopeService>();
         Services.AddSingleton<FollowService>();
         Services.AddSingleton<RunDraft>();
@@ -120,6 +121,17 @@ public abstract class AbomTestContext : BunitContext
     protected void Fail(string path, HttpStatusCode status) => _handler.Fail(path, status);
 
     /// <summary>Refuses a path with the server's own error message.</summary>
+    /// <summary>A refusal as the server answers one: an RFC 9457 problem with a code for its status.</summary>
+    protected static StringContent Problem(HttpStatusCode status, string? detail, string? code = null) =>
+        new(System.Text.Json.JsonSerializer.Serialize(new
+        {
+            type = "urn:abom:problem:" + (code ?? "refused"),
+            title = status.ToString(),
+            status = (int)status,
+            detail,
+            code = code ?? "refused",
+        }), Encoding.UTF8, "application/problem+json");
+
     protected void Refuse(string path, HttpStatusCode status, string message) =>
         _handler.Fail(path, status, message);
 
@@ -259,24 +271,14 @@ public abstract class AbomTestContext : BunitContext
             {
                 if (request.Method != HttpMethod.Get && Matches(url, path))
                 {
-                    return new HttpResponseMessage(status)
-                    {
-                        Content = new StringContent(
-                            System.Text.Json.JsonSerializer.Serialize(new { error = message }),
-                            Encoding.UTF8, "application/json"),
-                    };
+                    return new HttpResponseMessage(status) { Content = Problem(status, message) };
                 }
             }
             foreach (var (path, status, message) in _failures)
             {
                 if (url.Contains(path, StringComparison.Ordinal))
                 {
-                    return new HttpResponseMessage(status)
-                    {
-                        Content = new StringContent(
-                            System.Text.Json.JsonSerializer.Serialize(new { error = message ?? $"refused {path}" }),
-                            Encoding.UTF8, "application/json"),
-                    };
+                    return new HttpResponseMessage(status) { Content = Problem(status, message ?? $"refused {path}") };
                 }
             }
             var answers = request.Method == HttpMethod.Get ? _answers : _writes.Concat(_answers);

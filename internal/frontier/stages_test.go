@@ -3,6 +3,8 @@ package frontier
 import (
 	"testing"
 	"time"
+
+	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
 // unanalyzed queues key at depth, never analyzed.
@@ -296,7 +298,7 @@ func TestTheStagesSayWhatTheNextClaimTakes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stages: %v", err)
 	}
-	want := Stages{Next: StageCurrent, Current: 1, Explore: 1, Refresh: 1, Unreached: 1}
+	want := Stages{Next: store.StageCurrent, Current: 1, Explore: 1, Refresh: 1, Unreached: 1}
 	if got != want {
 		t.Errorf("Stages = %+v, want %+v", got, want)
 	}
@@ -306,7 +308,7 @@ func TestTheStagesSayWhatTheNextClaimTakes(t *testing.T) {
 			t.Fatalf("Claim: %v", err)
 		}
 	}
-	if got, err = q.Stages(); err != nil || got.Next != StageRefresh {
+	if got, err = q.Stages(); err != nil || got.Next != store.StageRefresh {
 		t.Errorf("Stages = %+v, %v; want the refresh next once nothing unanalyzed is left", got, err)
 	}
 }

@@ -1,0 +1,19 @@
+# The chart on a kind cluster: the store and object store deps.yaml runs, and every pool sized for a
+# laptop's node. up.sh layers its environment overrides on these.
+objectStore:
+  endpoint: http://s3.abom-deps:9000
+  pathStyle: true
+  secretName: abom-s3
+
+networkPolicy:
+  workerEgress:
+    - to: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: abom-deps}}, podSelector: {matchLabels: {app: s3}}}]
+      ports: [{port: 9000}]
+
+coordinator:
+  concurrency: 3
+
+workers:
+  discovery: {cpu: "1", memory: 2Gi, timeout: 1h}
+  qlaasTest: {cpu: "1", memory: 2Gi, timeout: 30m}
+  qlaasRun: {cpu: "1", memory: 2Gi, timeout: 1h}

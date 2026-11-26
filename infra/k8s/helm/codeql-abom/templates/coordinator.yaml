@@ -1,0 +1,191 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "abom.name" . }}-coordinator
+  labels: {{- include "abom.labels" . | nindent 4 }}
+    app.kubernetes.io/component: coordinator
+spec:
+  # One scheduler: the store's coordinator lease refuses a second, so a rollout replaces rather than overlaps.
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {{ include "abom.coordinatorSelector" . }}
+  template:
+    metadata:
+      labels: {{- include "abom.labels" . | nindent 8 }}
+        app.kubernetes.io/component: coordinator
+    spec:
+      serviceAccountName: {{ include "abom.name" . }}-coordinator
+      {{- if .Values.priority.create }}
+      priorityClassName: {{ include "abom.name" . }}-control
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      {{- $apps := list }}
+      {{- range $app := fromYamlArray (include "abom.apps" .) }}
+      {{- with (index $.Values $app.key).secretName }}
+      {{- $apps = append $apps (merge (dict "secret" .) $app) }}
+      {{- end }}
+      {{- end }}
+      {{- with $apps }}
+      # The App loader refuses a key any other account can read, and a Secret volume is root-owned,
+      # so each key is copied into memory as this user, mode 0600.
+      initContainers:
+        {{- range $app := . }}
+        - name: {{ $app.dir }}
+          image: {{ include "abom.image" $ }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          command: ["sh", "-c", "cp -L /etc/abom/{{ $app.dir }}-secret/* /run/abom/{{ $app.dir }}/ && chmod 600 /run/abom/{{ $app.dir }}/*"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: {{ $app.dir }}-secret, mountPath: /etc/abom/{{ $app.dir }}-secret, readOnly: true}
+            - {name: {{ $app.dir }}, mountPath: /run/abom/{{ $app.dir }}}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: coordinator
+          image: {{ include "abom.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - serve
+            # Without sign-in nothing beyond a port-forward may reach the interface, so it listens on
+            # loopback alone; the kubelet and a scraper use the probe port.
+            - --addr={{ if include "abom.signedIn" . }}0.0.0.0{{ else }}127.0.0.1{{ end }}:8080
+            - --probe-addr=0.0.0.0:9090
+            - --ui-dir=/opt/abom/ui
+            - --work-dir=/var/lib/abom/work
+            # A replacement for a coordinator that died holding the lease waits it out rather than
+            # restarting into a backoff that outlasts it.
+            - --wait-for-coordinator=2m
+            - --executor=kubernetes
+            - --worker-image={{ include "abom.image" . }}
+            - --worker-instance={{ .Release.Name }}
+            - --worker-trust-configmap={{ include "abom.name" . }}-decision-trust
+            - --spiffe-trust-domain={{ .Values.spiffe.trustDomain }}
+            - --spiffe-roots=/etc/abom/spiffe-roots/ca.crt
+            {{- with .Values.objectStore.secretName }}
+            - --worker-s3-secret={{ . }}
+            {{- end }}
+            {{- if .Values.priority.create }}
+            - --worker-priority-class={{ include "abom.name" . }}-worker
+            {{- end }}
+            {{- range $pool := fromYamlArray (include "abom.pools" .) }}
+            {{- $size := index $.Values.workers $pool.key }}
+            - --{{ $pool.flags }}-service-account={{ include "abom.name" $ }}-{{ $pool.account }}
+            - --{{ $pool.flags }}-cpu={{ $size.cpu }}
+            {{- with $size.cpuLimit }}
+            - --{{ $pool.flags }}-cpu-limit={{ . }}
+            {{- end }}
+            - --{{ $pool.flags }}-memory={{ $size.memory }}
+            - --{{ $pool.flags }}-timeout={{ $size.timeout }}
+            {{- end }}
+            - --expand-concurrency={{ .Values.coordinator.concurrency }}
+            - --max-depth={{ .Values.coordinator.maxDepth }}
+            {{- range $apps }}
+            - --{{ .flag }}=/run/abom/{{ .dir }}
+            {{- end }}
+            {{- with .Values.customQueries.dir }}
+            - --custom-ql-dir={{ . }}
+            {{- end }}
+            {{- if eq .Values.signIn.mode "oidc" }}
+            - --auth=oidc
+            - --oidc-issuer={{ required "signIn.issuer is required for oidc" .Values.signIn.issuer }}
+            - --oidc-client-id={{ required "signIn.clientId is required for oidc" .Values.signIn.clientId }}
+            - --oidc-redirect-url={{ required "signIn.redirectUrl is required for oidc" .Values.signIn.redirectUrl }}
+            {{- with .Values.signIn.rolesClaim }}
+            - --oidc-roles-claim={{ . }}
+            {{- end }}
+            {{- with .Values.signIn.roleMap }}
+            - --oidc-role-map={{ . }}
+            {{- end }}
+            {{- else if eq .Values.signIn.mode "github" }}
+            {{- $_ := required "githubApp.secretName is required for github: people sign in through the reading App" .Values.githubApp.secretName }}
+            {{- $_ := required "signIn.clientSecretName is required for github: a Secret holding the reading App's client secret" .Values.signIn.clientSecretName }}
+            - --auth=github
+            - --github-redirect-url={{ required "signIn.redirectUrl is required for github" .Values.signIn.redirectUrl }}
+            - {{ printf "--github-role-map=%s" (required "signIn.roleMap is required for github: which memberships hold which role" .Values.signIn.roleMap) | quote }}
+            {{- with .Values.signIn.roleRefresh }}
+            - --github-role-refresh={{ . }}
+            {{- end }}
+            {{- end }}
+            {{- range .Values.coordinator.extraArgs }}
+            - {{ . | quote }}
+            {{- end }}
+          # From the environment rather than arguments, which a process listing shows; a command run
+          # in this container with kubectl exec reads the same database, key and App.
+          env:
+            - name: ABOM_DB
+              valueFrom: {secretKeyRef: {name: {{ .Values.database.secretName }}, key: DATABASE_URL}}
+            - {name: ABOM_AUTHZ_DIR, value: /var/lib/abom/authz}
+            {{- if .Values.githubApp.secretName }}
+            - {name: ABOM_APP_DIR, value: /run/abom/github-app}
+            {{- end }}
+            - {name: ABOM_S3_BUCKET, value: {{ .Values.objectStore.bucket | quote }}}
+            - {name: ABOM_S3_REGION, value: {{ .Values.objectStore.region | quote }}}
+            {{- with .Values.objectStore.endpoint }}
+            - {name: ABOM_S3_ENDPOINT, value: {{ . | quote }}}
+            {{- end }}
+            {{- with .Values.objectStore.prefix }}
+            - {name: ABOM_S3_PREFIX, value: {{ . | quote }}}
+            {{- end }}
+            - {name: ABOM_S3_PATH_STYLE, value: {{ .Values.objectStore.pathStyle | quote }}}
+            {{- with .Values.decisions.kmsKey }}
+            - {name: ABOM_AUTHZ_KMS_KEY, value: {{ . | quote }}}
+            {{- /* A key ARN names its region; an alias is the bucket's. */}}
+            - {name: AWS_REGION, value: {{ if hasPrefix "arn:" . }}{{ index (splitList ":" .) 3 | quote }}{{ else }}{{ $.Values.objectStore.region | quote }}{{ end }}}
+            {{- end }}
+            {{- if and (include "abom.signedIn" .) .Values.signIn.clientSecretName }}
+            - name: {{ if eq .Values.signIn.mode "github" }}ABOM_GITHUB_CLIENT_SECRET{{ else }}ABOM_OIDC_CLIENT_SECRET{{ end }}
+              valueFrom: {secretKeyRef: {name: {{ .Values.signIn.clientSecretName }}, key: client-secret}}
+            {{- end }}
+          {{- with .Values.objectStore.secretName }}
+          envFrom: [{secretRef: {name: {{ . }}}}]
+          {{- end }}
+          ports: [{name: http, containerPort: 8080}, {name: probes, containerPort: 9090}]
+          # Health is the process answering, never whether the crawl is running. A start waits out a
+          # predecessor's lease for up to two minutes, so startup allows five.
+          startupProbe: {httpGet: {path: /healthz, port: probes}, periodSeconds: 5, failureThreshold: 60}
+          livenessProbe: {httpGet: {path: /healthz, port: probes}, periodSeconds: 20, failureThreshold: 3}
+          readinessProbe: {httpGet: {path: /healthz, port: probes}, periodSeconds: 5}
+          resources: {{- toYaml .Values.coordinator.resources | nindent 12 }}
+          # Nothing in the image changes at run time: state is on its volume and scratch in memory.
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: state, mountPath: /var/lib/abom}
+            - {name: scratch, mountPath: /tmp}
+            - {name: spiffe-roots, mountPath: /etc/abom/spiffe-roots, readOnly: true}
+            {{- range $apps }}
+            - {name: {{ .dir }}, mountPath: /run/abom/{{ .dir }}}
+            {{- end }}
+      volumes:
+        - name: state
+          persistentVolumeClaim: {claimName: {{ include "abom.name" . }}-state}
+        - name: spiffe-roots
+          configMap: {name: {{ .Values.spiffe.rootsConfigMap }}}
+        - name: scratch
+          emptyDir: {medium: Memory, sizeLimit: 256Mi}
+        {{- range $apps }}
+        - name: {{ .dir }}-secret
+          secret: {secretName: {{ .secret }}, defaultMode: 0440}
+        - name: {{ .dir }}
+          emptyDir: {medium: Memory, sizeLimit: 1Mi}
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "abom.name" . }}
+  labels: {{- include "abom.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector: {{ include "abom.coordinatorSelector" . }}
+  ports: [{name: http, port: 8080, targetPort: http}, {name: probes, port: 9090, targetPort: probes}]

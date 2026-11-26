@@ -1,0 +1,14 @@
+# The decision key and the coordinator's working directory. Kept on uninstall: the key is what every
+# signature in the log verifies against.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "abom.name" . }}-state
+  labels: {{- include "abom.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ .Values.coordinator.storage }}

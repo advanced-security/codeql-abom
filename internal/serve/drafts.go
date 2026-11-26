@@ -53,7 +53,7 @@ func (s *Server) startDraft(w http.ResponseWriter, r *http.Request) {
 	}
 	picked, err := s.picked(run, body.QueryID, body.Evidence)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return
 	}
 	session, err := s.Authoring.Draft(run, body.QueryID, picked, body.By)
@@ -98,7 +98,7 @@ func (s *Server) runDrafts(w http.ResponseWriter, r *http.Request) {
 	}
 	drafts, err := s.Store.DraftSessions(run)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return
 	}
 	writeJSON(w, map[string]any{"drafts": drafts}, nil)

@@ -135,6 +135,10 @@ func runExpandAll(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return fmt.Errorf("expand: acquiring coordinator ownership: %w", err)
 	}
 	defer func() { result = errors.Join(result, releaseLease()) }()
+	// Decided once it holds the lease: a command refused the lease does nothing, so it decides nothing.
+	if _, err := decideCommand(ctx, s, "expand-all", args); err != nil {
+		return err
+	}
 
 	if cfg.tokens, err = dbReaderTokens(cfg.dbPath); err != nil {
 		return fmt.Errorf("expand-all: %w", err)
@@ -342,7 +346,7 @@ func newExpander(
 		Databases: databases,
 		OnEvent:   logFailures(stdout),
 	}
-	wireSourcePolicy(context.Background(), e, s, defaultAPIURL(), cfg.tokens, stdout)
+	wireSourcePolicy(context.Background(), e, s, defaultAPIURL(), cfg.tokens)
 	return e, cache, cleanup, nil
 }
 

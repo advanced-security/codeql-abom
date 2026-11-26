@@ -1,0 +1,62 @@
+@using Abom.WebAssembly.Models
+
+@* A refusal, said one way everywhere: what kind it is, the server's sentence for it, the next step
+   where there is an obvious one, and the provider's own words behind Details, where a person who
+   needs them can read them and nobody else has to. *@
+@if (Problem is { } problem)
+{
+    <MudAlert Severity="@SeverityOf(problem)" Dense="true" Class="@Class" data-abom-alert="@problem.Code">
+        <div class="abom-alert">
+            <MudText Typo="Typo.subtitle2">@TitleOf(problem)</MudText>
+            <MudText Typo="Typo.body2" data-abom-alert-detail>@problem.Detail</MudText>
+            @if (NextStep(problem) is { } next)
+            {
+                <MudLink Href="@next.Href" Typo="Typo.body2" title="Go where this is put right." data-abom-alert-next>@next.Label</MudLink>
+            }
+            @if (OnRetry.HasDelegate && Retryable(problem))
+            {
+                <div>
+                    <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="OnRetry"
+                               title="Ask ABOM again, reading what is there now." data-abom-alert-retry>Read again</MudButton>
+                </div>
+            }
+            @if (!string.IsNullOrEmpty(problem.Upstream))
+            {
+                <details class="abom-alert-details" data-abom-alert-details>
+                    <summary>Details</summary>
+                    <pre class="abom-code">@problem.Upstream</pre>
+                </details>
+            }
+        </div>
+    </MudAlert>
+}
+
+@code {
+    [Parameter] public ApiProblem? Problem { get; set; }
+
+    /// <summary>Reads again whatever changed underneath, for the codes that mean exactly that.</summary>
+    [Parameter] public EventCallback OnRetry { get; set; }
+
+    [Parameter] public string? Class { get; set; }
+
+    // Refusals a person can act on are warnings; the server failing, or not being reached, is an error.
+    private static Severity SeverityOf(ApiProblem p) =>
+        p.Status >= 500 || p.Code is ApiProblem.UnreachableCode or "internal" ? Severity.Error : Severity.Warning;
+
+    private static string TitleOf(ApiProblem p) =>
+        p.Title.Length > 0 ? p.Title : p.Status >= 500 ? "ABOM could not answer" : "Refused";
+
+    // What changed underneath, and what may answer on a second asking; a refusal of who is asking,
+    // or of how ABOM is installed, answers the same way again.
+    private static bool Retryable(ApiProblem p) => p.Code is "component-changed" or "bundle-changed" or "review-stale"
+        or ApiProblem.UnreachableCode or "unavailable" or "too-many-requests" or "bad-gateway" or "upstream-failed";
+
+    private static (string Label, string Href)? NextStep(ApiProblem p) => p.Code switch
+    {
+        "scope-undecided" => ("Confirm the declaration in Settings", "/settings#declared-accounts"),
+        "declaration-refused" or "declaration-refused-by-role" or "account-not-listable" =>
+            ("Review the declaration in Settings", "/settings#declared-accounts"),
+        "sign-in-required" => ("Sign in", p.Login ?? "/auth/login"),
+        _ => null,
+    };
+}

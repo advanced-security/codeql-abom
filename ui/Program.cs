@@ -11,12 +11,16 @@ builder.RootComponents.Add<HeadOutlet>("head::after");
 builder.Services.AddScoped<TutorialService>();
 builder.Services.AddScoped(sp => new HttpClient(new TutorialRequestHandler(sp.GetRequiredService<TutorialService>())
 {
-    InnerHandler = new HttpClientHandler(),
+    InnerHandler = new SignInRequestHandler(sp.GetRequiredService<Microsoft.AspNetCore.Components.NavigationManager>())
+    {
+        InnerHandler = new HttpClientHandler(),
+    },
 }) { BaseAddress = new Uri(builder.HostEnvironment.BaseAddress) });
 builder.Services.AddScoped<AbomApi>();
 builder.Services.AddScoped<InstanceService>();
 builder.Services.AddScoped<ThemeService>();
 builder.Services.AddScoped<AccountService>();
+builder.Services.AddScoped<RoleService>();
 // Shared so every surface reads and acts on the same scope.
 builder.Services.AddSingleton<ScopeService>();
 // Shared so open surfaces refresh on one follow cadence.

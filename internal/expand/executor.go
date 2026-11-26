@@ -31,6 +31,8 @@ type Executor struct {
 	Ingester *ingest.Ingester
 	// Crawl builds a member's missing database through the crawl's own fetch, caches and lock.
 	Crawl *Expander
+	// Remote analyzes a member with no database here in a worker of the run pool; nil builds here.
+	Remote RemoteRunner
 	// Suites are where a query id is resolved to a path. A run names ids because that is what a
 	// catalog holds; only the CLI can say which file an id came from.
 	Suites []string
@@ -166,6 +168,9 @@ func (e *Executor) carryOut(
 			return err
 		}
 	}
+	if !held && e.Remote != nil {
+		return e.carryOutRemote(ctx, runID, dir, member, want, planned, hold)
+	}
 	if !held {
 		if err := e.Store.SetAnalysisMemberStatus(
 			runID, member.DatabaseIdentity, store.AnalysisRunning, building); err != nil {
@@ -229,6 +234,14 @@ func (e *Executor) skipAnswered(
 func (e *Executor) unbuilt(
 	ctx context.Context, runID int64, id store.DatabaseIdentity, cause error,
 ) error {
+	return e.unanalyzed(ctx, runID, id, "building its database", cause)
+}
+
+// unanalyzed records why a member produced nothing at stage, unless the run was stopped: nothing to
+// analyze is a settled answer, and anything else a failure.
+func (e *Executor) unanalyzed(
+	ctx context.Context, runID int64, id store.DatabaseIdentity, stage string, cause error,
+) error {
 	if ctx.Err() != nil {
 		return e.interrupted(runID, id, ctx.Err())
 	}
@@ -239,8 +252,20 @@ func (e *Executor) unbuilt(
 		})
 	}
 	return e.Store.RecordAnalysisMemberResult(runID, id, store.MemberResult{
-		Status: store.AnalysisFailed, Detail: "building its database: " + cause.Error(),
+		Status: store.AnalysisFailed, Detail: stage + ": " + cause.Error(),
 	})
+}
+
+// regularRepository names the repository of a member a run can build: a regular database's.
+func regularRepository(id store.DatabaseIdentity) (owner, repo string, err error) {
+	if id.Mode != store.AnalysisModeRegular {
+		return "", "", fmt.Errorf("a run builds only regular databases, not %s ones", id.Mode)
+	}
+	owner, repo, ok := splitRepository(id.Repository)
+	if !ok {
+		return "", "", fmt.Errorf("%q does not name a repository", id.Repository)
+	}
+	return owner, repo, nil
 }
 
 // interrupted puts a member the run was stopped during back to pending, which can be started again.
@@ -276,12 +301,9 @@ type builtDatabase struct {
 func (e *Expander) buildDatabase(
 	ctx context.Context, want store.DatabaseIdentity, dir, cliVersion string,
 ) (builtDatabase, error) {
-	if want.Mode != store.AnalysisModeRegular {
-		return builtDatabase{}, fmt.Errorf("a run builds only regular databases, not %s ones", want.Mode)
-	}
-	owner, repo, ok := splitRepository(want.Repository)
-	if !ok {
-		return builtDatabase{}, fmt.Errorf("%q does not name a repository", want.Repository)
+	owner, repo, err := regularRepository(want)
+	if err != nil {
+		return builtDatabase{}, err
 	}
 	built := builtDatabase{release: func() { os.RemoveAll(dir) }}
 	fail := func(err error) (builtDatabase, error) {
@@ -350,6 +372,59 @@ func (e *Executor) analyze(
 		return e.Store.RecordAnalysisMemberResult(runID, member.DatabaseIdentity,
 			store.MemberResult{Status: store.AnalysisFailed, Detail: err.Error()})
 	}
+	return e.record(runID, out, member, want, planned, hold)
+}
+
+// carryOutRemote has a worker fetch, build and analyze a member with no database here, at the
+// commit on record, and records what comes back exactly as a member analyzed here. The source
+// policy admits it first, as it admits every repository the crawl hands a worker.
+func (e *Executor) carryOutRemote(
+	ctx context.Context, runID int64, dir string, member store.AnalysisMember,
+	want []store.AnalysisQuery, planned tierPlan, hold bool,
+) error {
+	id := member.DatabaseIdentity
+	if err := e.Store.SetAnalysisMemberStatus(runID, id, store.AnalysisRunning, "analyzing in a worker"); err != nil {
+		return err
+	}
+	fail := func(cause error) error { return e.unanalyzed(ctx, runID, id, "analyzing in a worker", cause) }
+	owner, repo, err := regularRepository(id)
+	if err != nil {
+		return fail(err)
+	}
+	admitted, err := e.Crawl.admit(ctx, member.Repository)
+	if err != nil {
+		return fail(err)
+	}
+	task := RemoteTask{Owner: owner, Repo: repo, Ref: member.Commit,
+		Findings: planned.findings, Admitted: admitted}
+	scratch := filepath.Join(dir, cacheName(member.Repository))
+	// Only the findings are kept, moved out below; the rest goes as a member built here does.
+	defer func() { _ = os.RemoveAll(scratch) }()
+	got, err := e.Remote.Run(ctx, task, scratch)
+	e.report(member.Repository, "analyze", err)
+	if err != nil {
+		return fail(err)
+	}
+	if got.SarifPath == "" {
+		return fail(errors.New("the worker returned no findings document"))
+	}
+	at := store.DatabaseIdentity{Repository: member.Repository, Commit: got.Commit,
+		SourceFilter: e.Crawl.sourceFilter(), Mode: member.Mode}
+	if err := e.Store.SetAnalysisMemberDatabase(runID, id, at, ""); err != nil {
+		return err
+	}
+	member.DatabaseIdentity = at
+	out := filepath.Join(dir, cacheName(member.Repository)+".sarif")
+	if err := os.Rename(got.SarifPath, out); err != nil {
+		return err
+	}
+	return e.record(runID, out, member, want, planned, hold)
+}
+
+// record stores what one member's SARIF at out holds: held apart, or ingested where the crawl's go.
+func (e *Executor) record(
+	runID int64, out string, member store.AnalysisMember, want []store.AnalysisQuery, planned tierPlan, hold bool,
+) error {
 	if hold {
 		return e.hold(runID, out, member, want, planned)
 	}

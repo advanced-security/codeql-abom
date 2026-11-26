@@ -27,7 +27,7 @@ func (s *Server) queryStep(w http.ResponseWriter, r *http.Request) {
 	id, step := r.URL.Query().Get("query"), r.URL.Query().Get("step")
 	switch {
 	case s.QueryDir == "":
-		writeError(w, http.StatusServiceUnavailable, "this server has no query directory to read a step "+
+		writeProblem(w, problemNoQueryDirectory, "this server has no query directory to read a step "+
 			"from; start it with --custom-ql-dir")
 		return
 	case id == "":
@@ -41,15 +41,15 @@ func (s *Server) queryStep(w http.ResponseWriter, r *http.Request) {
 	q, found, err := authoring.Find(s.QueryDir, id)
 	switch {
 	case err != nil:
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return
 	case !found:
-		writeError(w, http.StatusNotFound, id+" is not a query in the query directory")
+		writeProblem(w, problemQueryNotFound, id+" is not a query in the query directory")
 		return
 	}
 	files, absent, err := s.stepFiles(q, step)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return
 	}
 	writeJSON(w, map[string]any{"step": step, "files": files, "absent": absent}, nil)
@@ -122,9 +122,14 @@ func (s *Server) readStepFile(path string) (stepFile, bool, error) {
 	if err != nil {
 		return stepFile{}, false, err
 	}
+	return s.stepFileOf(path, body), true, nil
+}
+
+// stepFileOf shows a file's bytes as they are on disk, cut short past the limit.
+func (s *Server) stepFileOf(path string, body []byte) stepFile {
 	out := stepFile{Path: s.rel(path), Truncated: len(body) > stepFileLimit}
 	out.Body = string(body[:min(len(body), stepFileLimit)])
-	return out, true, nil
+	return out
 }
 
 func (s *Server) newestTree(q authoring.Query) ([]stepFile, string, error) {

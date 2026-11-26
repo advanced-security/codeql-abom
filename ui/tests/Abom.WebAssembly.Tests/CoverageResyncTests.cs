@@ -63,6 +63,24 @@ public class CoverageResyncTests : AbomTestContext
     private IEnumerable<SentRequest> Resyncs =>
         Sent.Where(r => r.Method == "POST" && r.Url.Contains("api/discovery/resync", StringComparison.Ordinal));
 
+    // A role that may not steer discovery may still choose rows, and is told what resync needs.
+    [Fact]
+    public void AResyncTheRoleDoesNotAllowStaysDisabledNamingTheRole()
+    {
+        Answer("api/me", """
+            {"mode":"signed-in","user":{"id":"https://idp.example#s","name":"Grace Hopper","username":"","role":"viewer"},"may":[],
+             "needs":{"abom/discovery-control":"operator"}}
+            """);
+        var page = Coverage();
+
+        Input(page.Find("[data-abom-coverage-pick='actions/checkout@v4']")).Change(true);
+
+        page.WaitForAssertion(() => Assert.Equal("Resync 1 chosen", page.Find("[data-abom-coverage-resync]").TextContent.Trim()));
+        var resync = page.Find("[data-abom-coverage-resync]");
+        Assert.True(resync.HasAttribute("disabled"));
+        Assert.Contains("needs the operator role", resync.Closest("[data-abom-tip]")!.GetAttribute("data-abom-tip"));
+    }
+
     // One reference of a dependency is one row and one unit of work; choosing v4 must not resync v5.
     [Fact]
     public void OnlyTheRowsAndAccountsChosenAreResynced()
@@ -74,7 +92,7 @@ public class CoverageResyncTests : AbomTestContext
         Input(page.Find("[data-abom-coverage-pick='actions/checkout@v4']")).Change(true);
         page.WaitForAssertion(() => Assert.NotEmpty(page.FindAll("[data-abom-coverage-account-pick='advanced-security']")));
         Input(page.Find("[data-abom-coverage-account-pick='advanced-security']")).Change(true);
-        page.WaitForAssertion(() => Assert.Contains("2", page.Find("[data-abom-coverage-resync]").TextContent));
+        page.WaitForAssertion(() => Assert.Equal("Resync 2 chosen", page.Find("[data-abom-coverage-resync]").TextContent.Trim()));
         page.Find("[data-abom-coverage-resync]").Click();
 
         page.WaitForAssertion(() => Assert.Single(Resyncs));
@@ -128,7 +146,7 @@ public class CoverageResyncTests : AbomTestContext
     {
         var page = Coverage();
         Input(page.Find("[data-abom-coverage-pick-all]")).Change(true);
-        page.WaitForAssertion(() => Assert.Contains("3", page.Find("[data-abom-coverage-resync]").TextContent));
+        page.WaitForAssertion(() => Assert.Equal("Resync 3 chosen", page.Find("[data-abom-coverage-resync]").TextContent.Trim()));
 
         page.Find("[data-abom-coverage-state='unavailable']").Click();
         page.WaitForAssertion(() => Assert.True(page.Find("[data-abom-coverage-resync]").HasAttribute("disabled")));

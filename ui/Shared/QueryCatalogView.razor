@@ -7,6 +7,7 @@
 @inject NavigationManager Nav
 @inject RunDraft Draft
 @inject ScopeService Scope
+@inject IDialogService Dialogs
 
 @if (_refusal is not null)
 {
@@ -156,6 +157,15 @@ else
                                                Disabled="true"
                                                aria-label="Tests of an older version"
                                                data-abom-query-superseded-test />
+                            </Tip>
+                        }
+                        @if (context.Item.Source == "custom" && context.Item.Working)
+                        {
+                            <Tip Text="Show every file that makes this query run, and download them as one bundle.">
+                                <MudIconButton Icon="@Icons.Material.Outlined.Inventory2" Size="Size.Small"
+                                               OnClick="@(() => ShowComponents(context.Item.QueryId))"
+                                               aria-label="@($"Show the components of {context.Item.QueryId}")"
+                                               data-abom-query-components />
                             </Tip>
                         }
                         <Tip Text="@RunTooltip(context.Item)">
@@ -332,6 +342,10 @@ else
 }
 
 @code {
+    private Task ShowComponents(string queryId) =>
+        Dialogs.ShowAsync<QueryComponentsDialog>(null,
+            new DialogParameters<QueryComponentsDialog> { { d => d.QueryId, queryId } }, QueryComponentsDialog.Options);
+
     /// <summary>A query to open on arrival, such as the one a request or a run named.</summary>
     [Parameter] public string FocusQuery { get; set; } = string.Empty;
 

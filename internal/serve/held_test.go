@@ -2,7 +2,6 @@ package serve
 
 import (
 	"net/http"
-	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
@@ -26,16 +25,6 @@ func publishUnpinnedTag(t *testing.T, st *store.Store) {
 	); err != nil {
 		t.Fatalf("RecordSuiteContents: %v", err)
 	}
-}
-
-func control(t *testing.T, srv *Server, path, body string) *httptest.ResponseRecorder {
-	t.Helper()
-	rec := httptest.NewRecorder()
-	req := localRequest(http.MethodPost, path, strings.NewReader(body))
-	req.Host = "127.0.0.1:8080"
-	req.Header.Set(controlHeader, "1")
-	srv.Handler().ServeHTTP(rec, req)
-	return rec
 }
 
 // A run that does not say takes the server's suggestion: a published version stores findings and
@@ -155,7 +144,7 @@ func TestConvertingHeldResultsOverTheAPI(t *testing.T) {
 	if code := post(t, s, path).Code; code != http.StatusForbidden {
 		t.Errorf("an unguarded conversion answered %d, want 403", code)
 	}
-	got := decode[store.Conversion](t, control(t, s, path, body))
+	got := decode[store.Conversion](t, control(t, s, http.MethodPost, path, body))
 	if got.Converted != 1 {
 		t.Errorf("converting over the API reads %+v, want the 1 result held", got)
 	}
@@ -174,14 +163,14 @@ func TestConvertingHeldResultsOverTheAPI(t *testing.T) {
 		"/api/runs/999/convert": http.StatusNotFound,
 		"/api/runs/one/convert": http.StatusBadRequest,
 	} {
-		if code := control(t, s, target, body).Code; code != want {
+		if code := control(t, s, http.MethodPost, target, body).Code; code != want {
 			t.Errorf("%s answered %d, want %d", target, code, want)
 		}
 	}
-	if code := control(t, s, path, `{"repository":"`+m.Repository+`"}`).Code; code != http.StatusBadRequest {
+	if code := control(t, s, http.MethodPost, path, `{"repository":"`+m.Repository+`"}`).Code; code != http.StatusBadRequest {
 		t.Errorf("a conversion nobody signed answered %d, want 400", code)
 	}
-	if code := control(t, s, path, `not json`).Code; code != http.StatusBadRequest {
+	if code := control(t, s, http.MethodPost, path, `not json`).Code; code != http.StatusBadRequest {
 		t.Errorf("a conversion with no readable body answered %d, want 400", code)
 	}
 }

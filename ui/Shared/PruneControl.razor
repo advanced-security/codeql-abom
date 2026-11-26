@@ -1,6 +1,7 @@
 @using Abom.WebAssembly.Models
 @using Abom.WebAssembly.Services
 @inject AbomApi Api
+@inject RoleService Roles
 
 @* Deliberately quiet: removal is rare, and the two halves are separated because only one of them
    is reversible. It sits with the declaration because that is what defines the closure it prunes
@@ -58,8 +59,8 @@ else
     <div class="d-flex flex-wrap align-center gap-3 mb-8">
         @if (!_prune.RemovesNothing)
         {
-            <Tip Text="Read exactly what would be removed, as it stands now, before anything is.">
-                <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="_pruning"
+            <Tip Text="@(_mayNotPrune ?? "Read exactly what would be removed, as it stands now, before anything is.")">
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="@(_pruning || _mayNotPrune is not null)"
                            OnClick="Review" data-abom-prune-review>Review removal&hellip;</MudButton>
             </Tip>
         }
@@ -68,9 +69,9 @@ else
            rather than as a button that could never have done anything. *@
         @if (_prune.Tombstoned > 0)
         {
-            <Tip Text="Delete what is already removed from view, permanently. You are asked first.">
+            <Tip Text="@(_mayNotPrune ?? "Delete what is already removed from view, permanently. You are asked first.")">
                 <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error"
-                           Disabled="_pruning" OnClick="@(() => _compacting = true)" data-abom-prune-compact>
+                           Disabled="@(_pruning || _mayNotPrune is not null)" OnClick="@(() => _compacting = true)" data-abom-prune-compact>
                     Delete @_prune.Tombstoned.ToString("N0") permanently&hellip;
                 </MudButton>
             </Tip>
@@ -181,8 +182,14 @@ else
     // drawing it.
     private MudDialog? _reviewDialog, _compactDialog;
     private string? _pruneOutcome;
+    private string? _mayNotPrune;
 
-    protected override async Task OnInitializedAsync() => await Load();
+    protected override async Task OnInitializedAsync()
+    {
+        _mayNotPrune = await Roles.RefusalAsync("abom/prune");
+        StateHasChanged();
+        await Load();
+    }
 
     private async Task Load()
     {
@@ -275,7 +282,7 @@ else
             {
                 // Nothing moved. What would go now is reviewed afresh, and a majority asked again.
                 _review = changed.View;
-                _changed = changed.Error;
+                _changed = changed.Detail;
                 _majority = false;
                 return;
             }

@@ -39,6 +39,10 @@ func openTestStore(t *testing.T, path string, opts Options) (*Store, error) {
 	if strings.HasPrefix(t.Name(), "TestSQLite") || backend == "sqlite" {
 		return Open(path, opts)
 	}
+	// Beside the path the test named, as SQLite would put it, so a reopened target keeps its key.
+	if opts.AuthzDir == "" {
+		opts.AuthzDir = DefaultAuthzDir(path)
+	}
 	if dsn == "" {
 		if backend == "postgres" {
 			t.Fatal("ABOM_TEST_STORE_BACKEND=postgres requires ABOM_TEST_POSTGRES_DSN")

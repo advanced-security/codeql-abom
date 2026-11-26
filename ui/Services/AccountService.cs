@@ -8,7 +8,7 @@ namespace Abom.WebAssembly.Services;
 public sealed class AccountService(AbomApi api)
 {
     private HashSet<string> _owned = new(StringComparer.OrdinalIgnoreCase);
-    private bool _loaded;
+    private Task? _loading;
 
     public event Action? Changed;
 
@@ -20,17 +20,24 @@ public sealed class AccountService(AbomApi api)
     /// <summary>False when nothing is declared and enabled, which is what stops discovery.</summary>
     public bool ScopeDeclared => _owned.Count > 0;
 
-    public async Task EnsureLoadedAsync(CancellationToken ct = default)
+    /// <summary>
+    /// One read shared by every caller, so one that arrives while it is in flight waits for it
+    /// rather than finding nothing declared. A read that failed is tried again by the next caller.
+    /// </summary>
+    public Task EnsureLoadedAsync(CancellationToken ct = default)
     {
-        if (_loaded) return;
-        _loaded = true;
+        if (_loading is null || _loading.IsFaulted || _loading.IsCanceled) _loading = LoadAsync(ct);
+        return _loading;
+    }
+
+    private async Task LoadAsync(CancellationToken ct)
+    {
         Adopt(await api.GetAccountsAsync(ct));
         AdoptScope(await api.GetOwnedScopeAsync(ct));
     }
 
     public async Task RefreshAsync(CancellationToken ct = default)
     {
-        _loaded = true;
         CheckAttempted = true;
         Adopt(await api.RefreshAccountsAsync(ct));
     }

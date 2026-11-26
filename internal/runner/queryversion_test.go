@@ -3,6 +3,7 @@ package runner
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -265,5 +266,34 @@ func TestTheLibrariesAreListedOncePerPackNotOncePerQuery(t *testing.T) {
 	}
 	if listed != 1 {
 		t.Errorf("listed the libraries %d times for three queries in one pack, want once", listed)
+	}
+}
+
+// A query handed over must carry every library of its own pack it imports, however far away, and
+// nothing else of the pack; what another pack supplies is named, since the lock says where from.
+func TestAQuerysImportsAreTheLibrariesOfItsPackItReachesAndTheModulesOutsideIt(t *testing.T) {
+	dir := versionPack(t, map[string]string{
+		"src/Q.ql":             "import actions\nprivate import lib.Helper\nfrom int i select i\n",
+		"src/lib/Helper.qll":   "import Shared\nimport codeql.actions.Ast\n",
+		"src/lib/Shared.qll":   "import Helper\n",
+		"src/lib/Unused.qll":   "import actions\n",
+		"src/Other.ql":         "import lib.Unused\nfrom int i select i\n",
+		"test/Q/Q.qlref":       "query: src/Q.ql\n",
+		"test/Q/fixture.yml":   "on: push\n",
+		"src/README.md":        "nothing\n",
+		"src/lib/Helper.md":    "nothing\n",
+		"src/lib/nested/X.qll": "import actions\n",
+	})
+
+	got, err := QueryImports(filepath.Join(dir, "src", "Q.ql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{filepath.Join(dir, "src", "lib", "Helper.qll"), filepath.Join(dir, "src", "lib", "Shared.qll")}
+	if !slices.Equal(got.Libraries, want) {
+		t.Errorf("libraries = %v, want %v", got.Libraries, want)
+	}
+	if want := []string{"actions", "codeql.actions.Ast"}; !slices.Equal(got.Outside, want) {
+		t.Errorf("outside = %v, want %v", got.Outside, want)
 	}
 }

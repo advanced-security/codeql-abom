@@ -1,0 +1,18 @@
+{{- if include "abom.signedIn" . }}
+ABOM answers at {{ .Values.signIn.redirectUrl | replace "/auth/callback" "" }}, and everyone signs in
+{{- if eq .Values.signIn.mode "github" }} with GitHub through the reading App{{ else }} through {{ .Values.signIn.issuer }}{{ end }}.
+{{- else }}
+Nobody signs in, so the interface listens on the pod's loopback and only a port-forward reaches it:
+
+  kubectl -n {{ .Release.Namespace }} port-forward deploy/{{ include "abom.name" . }}-coordinator 8080
+
+then open http://127.0.0.1:8080.
+{{- end }}
+
+Analysis runs as Jobs under the worker pools' ServiceAccounts. Nothing is crawled until a
+declaration is confirmed in Settings.
+{{- if .Values.priority.create }}
+
+The chart created the PriorityClasses {{ include "abom.name" . }}-control and {{ include "abom.name" . }}-worker, which are
+cluster-wide: installing it needs the right to create them, or priority.create=false.
+{{- end }}

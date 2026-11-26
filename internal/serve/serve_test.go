@@ -2,61 +2,16 @@ package serve
 
 import (
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
 
+	"github.com/advanced-security/codeql-abom/internal/expand"
 	"github.com/advanced-security/codeql-abom/internal/graph"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
-
-func localRequest(method, target string, body io.Reader) *http.Request {
-	r := httptest.NewRequest(method, target, body)
-	// httptest's implicit example.com Host does not represent a local ABOM client.
-	if strings.HasPrefix(target, "/") {
-		r.Host = "127.0.0.1:8080"
-	}
-	return r
-}
-
-func newServer(t *testing.T) (*Server, *store.Store) {
-	t.Helper()
-	s, err := store.Open(filepath.Join(t.TempDir(), "abom.db"), store.Options{BulkLoad: true})
-	if err != nil {
-		t.Fatalf("store.Open: %v", err)
-	}
-	t.Cleanup(func() { s.Close() })
-	if err := s.Migrate(); err != nil {
-		t.Fatalf("Migrate: %v", err)
-	}
-	return &Server{Store: s}, s
-}
-
-func get(t *testing.T, srv *Server, path string) *httptest.ResponseRecorder {
-	t.Helper()
-	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, localRequest(http.MethodGet, path, nil))
-	return rec
-}
-
-func decode[T any](t *testing.T, rec *httptest.ResponseRecorder) T {
-	t.Helper()
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
-	}
-	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
-		t.Errorf("Content-Type = %q", ct)
-	}
-	var out T
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-		t.Fatalf("decoding %s: %v", rec.Body.String(), err)
-	}
-	return out
-}
 
 // seedGraph gives the server something to answer with: one repository using one action.
 func seedGraph(t *testing.T, s *store.Store) {
@@ -141,7 +96,7 @@ func TestGraphEndpointRequiresAFocus(t *testing.T) {
 	}
 	var body map[string]string
 	json.Unmarshal(rec.Body.Bytes(), &body)
-	if body["error"] == "" {
+	if body["detail"] == "" {
 		t.Error("no error message returned")
 	}
 }
@@ -212,6 +167,33 @@ func TestFrontierEndpoint(t *testing.T) {
 	pending := decode[[]store.FrontierItem](t, get(t, srv, "/api/frontier?status=pending"))
 	if len(pending) != 1 {
 		t.Errorf("filtered to %d items, want 1", len(pending))
+	}
+}
+
+// A row past the attempt ceiling is retried like any other but no longer holds its depth open, so a
+// reader sees it as stuck rather than as one on its second try, against the very ceiling the
+// objective counts by. An unavailable row says whether access or a gone reference is the cause.
+func TestTheFrontierSaysWhatIsStuckAndWhyARowIsUnavailable(t *testing.T) {
+	srv, s := newServer(t)
+	if _, err := s.DB().Exec(`
+		INSERT INTO abom_frontier (node_key, owner, repo, depth, status, score, enqueued_at, attempts, reason)
+		VALUES ('a/stuck','a','stuck',1,'pending',3,'2026-01-01',?, 'exit status 32'),
+		       ('a/trying','a','trying',1,'pending',2,'2026-01-01',?, 'exit status 32'),
+		       ('a/private','a','private',1,'unavailable',1,'2026-01-01',0,
+		        'dependency unavailable: cloning https://github.com/a/private.git at "": remote: Repository not found.')`,
+		store.DefaultStuckAfter, store.DefaultStuckAfter-1); err != nil {
+		t.Fatalf("seeding frontier: %v", err)
+	}
+
+	got := map[string]store.FrontierItem{}
+	for _, it := range decode[[]store.FrontierItem](t, get(t, srv, "/api/frontier")) {
+		got[it.NodeKey] = it
+	}
+	if !got["a/stuck"].Stuck || got["a/trying"].Stuck || got["a/private"].Stuck {
+		t.Errorf("stuck = %v, %v, %v; want only a/stuck", got["a/stuck"].Stuck, got["a/trying"].Stuck, got["a/private"].Stuck)
+	}
+	if got["a/private"].Cause != expand.CauseAccess || got["a/stuck"].Cause != "" {
+		t.Errorf("causes = %q and %q, want access for the refused clone alone", got["a/private"].Cause, got["a/stuck"].Cause)
 	}
 }
 

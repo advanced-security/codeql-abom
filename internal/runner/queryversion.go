@@ -242,3 +242,56 @@ func within(root, path string) bool {
 	}
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
+
+// Imports is what a query imports, as files of its own pack and module names from outside it.
+type Imports struct {
+	Libraries []string
+	Outside   []string
+}
+
+// QueryImports walks a query's imports as its version does: Libraries are the files of the query's
+// own pack it transitively imports, and Outside the modules it imports that its pack does not hold,
+// each sorted. A module another pack supplies is named rather than read; the pack's lock says which.
+func QueryImports(queryPath string) (Imports, error) {
+	abs, err := filepath.Abs(queryPath)
+	if err != nil {
+		return Imports{}, fmt.Errorf("resolving %s: %w", queryPath, err)
+	}
+	_, _, packDir := PackOf(abs)
+	if packDir == "" {
+		packDir = filepath.Dir(abs)
+	}
+	roots := listRoots(packDir)
+	libraries, outside := map[string]bool{}, map[string]bool{}
+	seen := map[string]bool{abs: true}
+	pending := []string{abs}
+	for len(pending) > 0 {
+		file := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		source, err := os.ReadFile(file)
+		if err != nil {
+			return Imports{}, fmt.Errorf("reading %s: %w", file, err)
+		}
+		for _, module := range importsIn(string(source)) {
+			next, ok := resolveModule(module, filepath.Dir(file), roots)
+			if !ok || !within(packDir, next) {
+				outside[module] = true
+				continue
+			}
+			if !seen[next] {
+				seen[next], libraries[next] = true, true
+				pending = append(pending, next)
+			}
+		}
+	}
+	out := Imports{Libraries: make([]string, 0, len(libraries)), Outside: make([]string, 0, len(outside))}
+	for file := range libraries {
+		out.Libraries = append(out.Libraries, file)
+	}
+	for module := range outside {
+		out.Outside = append(out.Outside, module)
+	}
+	sort.Strings(out.Libraries)
+	sort.Strings(out.Outside)
+	return out, nil
+}

@@ -6,15 +6,6 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/enumerate"
 )
 
-// The enumeration report and its parts live in internal/enumerate, so that a person clicking a
-// button and a loop running on a timer produce the same answer from the same code. Aliased rather
-// than re-declared: the JSON these serialize to is what the interface reads.
-type (
-	EnumerationReport  = enumerate.Report
-	AccountEnumeration = enumerate.AccountEnumeration
-	AccountFailure     = enumerate.AccountFailure
-)
-
 // enumerate turns the declared scope into repositories.
 //
 // It writes the corpus and spends the operator's rate limit, so it is control-guarded like the

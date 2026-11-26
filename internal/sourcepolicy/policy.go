@@ -1,11 +1,10 @@
-// Package sourcepolicy makes best-effort eligibility checks before remote content is acquired.
+// Package sourcepolicy decides whether remote content may be acquired, refusing what it cannot confirm.
 package sourcepolicy
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 	"sync"
 	"time"
@@ -26,7 +25,6 @@ type Policy struct {
 	Read     Reader
 	Owned    func(string) (bool, error)
 	Evidence func(string) (string, error)
-	Warn     func(repository, reason string)
 	entries  sync.Map
 }
 
@@ -37,7 +35,6 @@ type entry struct {
 	err      error
 	probed   bool
 	probeErr error
-	warning  string
 }
 
 // Denied is a source left remote, not a failed CodeQL analysis.
@@ -77,8 +74,17 @@ func (p *Policy) InvalidateAll() {
 }
 
 func (p *Policy) Check(ctx context.Context, repository string) error {
+	_, err := p.Admission(ctx, repository)
+	return err
+}
+
+// Admission decides whether a repository's content may be read and says why it may: public, or
+// declared owned with evidence that code scanning is licensed there. Eligibility GitHub cannot
+// confirm is refused; a read that failed for a reason a retry could change is returned as an error
+// that is not a refusal, so the work is asked about again rather than settled.
+func (p *Policy) Admission(ctx context.Context, repository string) (string, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return "", err
 	}
 	e := p.item(repository)
 	e.mu.Lock()
@@ -86,7 +92,7 @@ func (p *Policy) Check(ctx context.Context, repository string) error {
 	if time.Since(e.at) >= 5*time.Minute {
 		e.meta, e.err = p.Read.SourceAccess(ctx, repository)
 		if err := ctx.Err(); err != nil {
-			return err
+			return "", err
 		}
 		e.at, e.probed, e.probeErr = time.Now(), false, nil
 	}
@@ -95,47 +101,59 @@ func (p *Policy) Check(ctx context.Context, repository string) error {
 		name = repository
 	}
 	if e.err == nil && e.meta.Visibility == "public" {
-		e.warning = ""
-		return nil
+		return "public", nil
 	}
 	owned, err := p.Owned(name)
 	if err != nil {
-		return fmt.Errorf("checking source ownership of %s: %w", name, err)
+		return "", fmt.Errorf("checking source ownership of %s: %w", name, err)
 	}
 	if !owned {
 		reason := "not declared owned and not confirmed public; declare ownership or check public access"
 		if e.err != nil {
 			reason += ": " + e.err.Error()
 		}
-		return &Denied{name, reason}
+		return "", &Denied{name, reason}
 	}
 	if e.err != nil {
-		p.warn(e, name, e.err.Error())
-		return nil
+		return "", unconfirmed(name, e.err)
 	}
 	if e.meta.Visibility != "private" && e.meta.Visibility != "internal" {
-		p.warn(e, name, "GitHub did not report repository visibility")
-		return nil
+		return "", &Denied{name, notConfirmed + "GitHub did not report the repository's visibility"}
 	}
 	return p.checkPrivate(ctx, e, name)
 }
 
-func (p *Policy) checkPrivate(ctx context.Context, e *entry, repository string) error {
-	if e.meta.CodeSecurity == "enabled" || e.meta.AdvancedSecurity == "enabled" {
-		e.warning = ""
-		return nil
+// notConfirmed opens every refusal of eligibility nobody could establish, so it reads as not known
+// rather than as ineligible.
+const notConfirmed = "code-scanning eligibility not confirmed: "
+
+// unconfirmed is what a failed read of eligibility means: GitHub declining to say is a refusal, and
+// anything else is asked again.
+func unconfirmed(repository string, err error) error {
+	var status *catalog.StatusError
+	if errors.As(err, &status) && (status.Code == 401 || status.Code == 403 || status.Code == 404) {
+		return &Denied{repository, notConfirmed + err.Error() + "; grant the App access to read it, then resync"}
 	}
-	if e.meta.CodeSecurity == "disabled" || e.meta.AdvancedSecurity == "disabled" {
-		return &Denied{repository, "GitHub reports Code Security/Advanced Security disabled; enable it and retry"}
+	return fmt.Errorf("the eligibility of %s could not be read, and is asked again: %w", repository, err)
+}
+
+func (p *Policy) checkPrivate(ctx context.Context, e *entry, repository string) (string, error) {
+	const owned = "declared owned; "
+	switch {
+	case e.meta.CodeSecurity == "enabled":
+		return owned + "GitHub reports Code Security enabled", nil
+	case e.meta.AdvancedSecurity == "enabled":
+		return owned + "GitHub reports Advanced Security enabled", nil
+	case e.meta.CodeSecurity == "disabled" || e.meta.AdvancedSecurity == "disabled":
+		return "", &Denied{repository, "GitHub reports Code Security/Advanced Security disabled; enable it and retry"}
 	}
 	if p.Evidence != nil {
 		evidence, err := p.Evidence(repository)
 		if err != nil {
-			return fmt.Errorf("reading scanning evidence for %s: %w", repository, err)
+			return "", fmt.Errorf("reading scanning evidence for %s: %w", repository, err)
 		}
 		if evidence != "" {
-			e.warning = ""
-			return nil
+			return owned + evidence, nil
 		}
 	}
 	if !e.probed {
@@ -149,32 +167,17 @@ func (p *Policy) checkPrivate(ctx context.Context, e *entry, repository string) 
 			e.probeErr = p.Read.CheckScanningAccess(ctx, repository)
 		}
 		if err := ctx.Err(); err != nil {
-			return err
+			return "", err
 		}
 		e.probed = true
 	}
 	if scanningDisabled(e.probeErr) {
-		return &Denied{repository, "GitHub reports code scanning disabled; enable it and retry"}
+		return "", &Denied{repository, "GitHub reports code scanning disabled; enable it and retry"}
 	}
 	if e.probeErr != nil {
-		p.warn(e, repository, e.probeErr.Error())
-	} else {
-		e.warning = ""
+		return "", unconfirmed(repository, e.probeErr)
 	}
-	return nil
-}
-
-func (p *Policy) warn(e *entry, repository, reason string) {
-	if e.warning == reason {
-		return
-	}
-	e.warning = reason
-	message := "code-scanning eligibility could not be confirmed; continuing for this declared repository: " + reason
-	if p.Warn != nil {
-		p.Warn(repository, message)
-	} else {
-		log.Printf("source policy: %s: %s", repository, message)
-	}
+	return owned + "code scanning answers for it", nil
 }
 
 func scanningDisabled(err error) bool {

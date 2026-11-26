@@ -82,8 +82,9 @@ license inspection; private/internal repositories must be within declared owners
 
 Enabled Code Security/GHAS or scanning configuration, recorded analyses, or successful
 code-scanning access provide sufficient evidence. Alerts and an Actions database are not required.
-Explicit disablement skips the download; inconclusive evidence warns and continues for owned
-repositories. See [retry guidance](operations.md#source-policy-warnings-and-retry).
+Explicit disablement skips the download, and so does eligibility GitHub cannot confirm, such as a
+permission the App lacks; a read that failed transiently is asked again. See
+[retry guidance](operations.md#source-policy-refusals-and-retry).
 
 Local source and cached databases remain trusted, and custom query/library development is
 unrestricted by these checks. Use synthetic or anonymized test fixtures.
@@ -100,8 +101,8 @@ export ABOM_DB="$(cat /secure/abom-primary-dsn)"
 
 A PostgreSQL deployment starts from its own crawl; ABOM does not import a SQLite database into it.
 The coordinator initializes its schema and needs schema-owner permissions. A network database has
-no adjacent directory, so name a configured GitHub App with `--app-dir` rather than expecting it to
-be discovered beside the URL. Use verified TLS for non-loopback database connections. Application
+no adjacent directory, so name a configured GitHub App with `--app-dir`, and a publisher App with
+`--publisher-app-dir`, rather than expecting either to be discovered beside the URL. Use verified TLS for non-loopback database connections. Application
 errors redact connection passwords and URL parameters.
 
 One coordinator holds the database-backed discovery lease. It renews the lease while running and
@@ -167,8 +168,13 @@ declaration against the accounts last verified. Saving a declaration again, or n
 only what it newly claims; Settings reports whether the role behind what is already declared still
 supports it. A declaration is a claim of responsibility, not proof of license eligibility.
 
-What `own` prints on standard output is unchanged, so scripts that read it keep working. On standard
-error it names each enabled declaration discovery cannot act on: one a complete membership list
+Every declaration, from `own`, Settings or a local file, is a decision signed with the key in
+`authz/` beside the database and logged; a PostgreSQL database names that directory with
+`--authz-dir` or `ABOM_AUTHZ_DIR`. A declaration no decision holds for drives nothing until it is
+confirmed: press **Confirm** at the head of Settings, or run the same `own` command again. In a pod,
+`own` reads as the App `ABOM_APP_DIR` names, and its decision names the pod's ServiceAccount.
+
+On standard error `own` names each enabled declaration discovery cannot act on: one a complete membership list
 leaves out, which roots nothing, and, when the App beside the database verified the identity, one
 the App is not installed on, which discovery cannot list. A refused declaration exits non-zero and
 writes nothing.
@@ -235,6 +241,8 @@ environment variables that the executable automatically interprets:
 | --- | --- | --- |
 | `ABOM_TMP` | `.abom/` | Parent of the default runtime paths; not all of its contents are disposable. |
 | `ABOM_DB` | `.abom/db/abom.db` | Durable SQLite path or PostgreSQL URL; supply URL credentials through the environment. |
+| `ABOM_AUTHZ_DIR` | `authz/` beside a SQLite `ABOM_DB` | Decision key and trust bundle; required for a PostgreSQL `ABOM_DB` to declare or act on a declaration. |
+| `ABOM_AUTHZ_KMS_KEY` | unset | An AWS KMS key (`ECC_NIST_P256`, `SIGN_VERIFY`) decisions are signed with instead of the key in `ABOM_AUTHZ_DIR`, whose bundle still verifies them. Naming a new key retires every key trusted before it. |
 | `ABOM_WORK` | `.abom/work/` | Checkout and analysis work area; may also contain run/authoring artifacts. |
 | `ABOM_UI` | `.abom/ui/` | Generated published UI; `make start` rebuilds it. |
 | `ABOM_LOG` | `.abom/logs/serve.log` | Background-server output. |
@@ -269,6 +277,7 @@ choice explicit. Do not add `--expand` to installation commands merely to prove 
 | Resource limits | `--expand-concurrency`, `--expand-threads`, `--expand-ram` and `--rate-limit-per-hour`. Set budgets appropriate to the host; no universal organization-size default is promised. |
 | Custom queries | `--custom-ql-dir` names a writable operator pack and scaffolds it if empty. Preserve it as authored state, not as a disposable cache. |
 | AI authoring | Custom-query workspace plus `--copilot-cli` or `COPILOT_CLI_PATH`, supported Copilot CLI credentials and the configured ql-mcp/Node command. It is off without an executable explicitly named. Use authoring time and credit limits. Settings → *What agent sessions run on* lists the server's own check of each dependency (`GET /api/authoring/readiness`, `?fresh=1` to probe again) and can name the CodeQL and Copilot CLIs (`PUT /api/authoring/tools/{codeql\|copilot}`). Settings takes only an absolute path to a file named `codeql` or `copilot` that no other account can change, since the server runs it as itself; name any other program with the flag or variable. A saved path is run before it is kept, and is used ahead of `--codeql`, `--copilot-cli` and `COPILOT_CLI_PATH`; an empty one returns to them. A Copilot CLI applies from the next session, a CodeQL CLI from the next start. |
+| Query export | A second GitHub App, created with `codeql-abom app create --publisher` and installed on the one repository exports go to; `serve` finds it in `github-app-publisher` beside `--db`, or in `--publisher-app-dir` (the chart's `publisherApp.secretName`). `app status --publisher` names that repository or why it is refused. Off without one. See [`infra/qlaas-repo-template/`](../../infra/qlaas-repo-template/README.md) for the repository's workflows. |
 | Explicit workflow-lock verification | The `gh actions-lock` extension; use the supported tool version and contracts described by the [lock-tooling plan](../../plans/tools/actions-lock.md). It is distinct from ABOM reading lockfiles during analysis. |
 | Diagnostics | `--diagnostics` enables performance endpoints. Keep these local; they are not an authenticated monitoring service. |
 
@@ -277,9 +286,36 @@ bindings are configured through their existing interface controls, not guessed J
 
 ## Network boundary
 
-The local service has neither browser-user authentication nor built-in TLS. `X-Abom-Control`,
-loopback Host checks and `--allow-remote-control` are not user identities. Do not expose it through
-a public listener or proxy as part of source setup.
+By default the service has no browser sign-in and no built-in TLS: `X-Abom-Control`, loopback Host
+checks and `--allow-remote-control` are not user identities. Do not expose it through a public
+listener or proxy as part of source setup.
+
+### Sign-in
+
+With sign-in on, every API request needs a session, each control is refused below the role its
+operation needs, and every decision names who asked by an identifier their provider keeps for
+them: the issuer and subject, or the GitHub account ID. What they were called is kept beside it.
+The interface offers a control your role does not allow disabled, naming the role it needs. TLS is
+the ingress's to terminate. Choose one provider:
+
+- **`--auth=oidc`**, through an OpenID Connect provider: `--oidc-issuer`, `--oidc-client-id`,
+  `--oidc-redirect-url` (this deployment's `/auth/callback`) and the client secret in
+  `ABOM_OIDC_CLIENT_SECRET` or `--oidc-client-secret-file`. Roles come from the claim
+  `--oidc-roles-claim` names, a list or a single value, through `--oidc-role-map`:
+  - Entra ID: app roles in `roles`, by default `ABOM.Viewer`, `ABOM.Analyst`, `ABOM.Operator` and
+    `ABOM.Admin`. Where an MFA or conditional access policy is required, use this.
+  - Okta or Keycloak: groups, with `--oidc-roles-claim=groups` and a map such as
+    `abom-operators=operator`.
+  - Dex with its GitHub connector: teams in `groups` as `org:team`.
+- **`--auth=github`**, through the reading App: `--github-redirect-url`, added as a callback URL in
+  the App's settings; a client secret generated there, in `ABOM_GITHUB_CLIENT_SECRET` or
+  `--github-client-secret-file`; and `--github-role-map`, whose keys are `org/team` for a team's
+  members, `org` for every member and `org:owners` for owners alone. Memberships are read with the
+  App's `members: read` permission, which each organization's owners approve;
+  `codeql-abom app installations` names an installation that has not. A change made with a role
+  read more than `--github-role-refresh` ago (5 minutes) reads it again first, so someone removed
+  from a team loses what it granted within that time. The token GitHub issues for signing in is used
+  once, to learn who signed in, and revoked.
 
 Every request, including reads and diagnostics, requires a loopback Host by default. A hostname
 that resolves to loopback is not enough, and forwarded headers do not grant access.

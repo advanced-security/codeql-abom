@@ -9,6 +9,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/advanced-security/codeql-abom/internal/authz"
 	"github.com/advanced-security/codeql-abom/internal/declare"
 	"github.com/advanced-security/codeql-abom/internal/serve"
 	"github.com/advanced-security/codeql-abom/internal/store"
@@ -38,6 +39,8 @@ func runOwned(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	fs.Var(&properties, "property",
 		`a property scope as JSON, {"org": "...", "match": [{"name": "...", "value": "..."}]} (repeatable; terms in one all hold)`)
 	clear := fs.Bool("clear", false, "discard the declaration, which stops discovery")
+	authzDir := fs.String("authz-dir", "",
+		"directory holding the key declarations are signed with (default: authz beside --db)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -46,7 +49,7 @@ func runOwned(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return errors.New("own: --db is required")
 	}
 
-	s, err := store.OpenBackend(*dbPath, store.Options{})
+	s, err := store.OpenBackend(*dbPath, store.Options{AuthzDir: *authzDir})
 	if err != nil {
 		return fmt.Errorf("opening %s: %w", store.DatabaseLabel(*dbPath), err)
 	}
@@ -55,9 +58,16 @@ func runOwned(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return fmt.Errorf("migrating %s: %w", store.DatabaseLabel(*dbPath), err)
 	}
 
+	if *clear || len(orgs) > 0 || len(users) > 0 {
+		command, err := decideCommand(ctx, s, "own", args)
+		if err != nil {
+			return err
+		}
+		ctx = authz.WithRequester(ctx, authz.Requester{Principal: command.Principal(), Route: command.Digest()})
+	}
 	switch {
 	case *clear:
-		if err := s.SetOwnedScope(nil, store.DeclaredByCLI); err != nil {
+		if err := s.DeclareOwnedScope(ctx, nil, store.DeclaredByCLI); err != nil {
 			return fmt.Errorf("own: %w", err)
 		}
 	case len(orgs) > 0 || len(users) > 0:
@@ -76,7 +86,7 @@ func runOwned(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		if err := judgeDeclarer(ctx, s, *dbPath, accounts, stderr); err != nil {
 			return fmt.Errorf("own: %w", err)
 		}
-		if err := s.SetOwnedScope(accounts, store.DeclaredByCLI); err != nil {
+		if err := s.DeclareOwnedScope(ctx, accounts, store.DeclaredByCLI); err != nil {
 			return fmt.Errorf("own: %w", err)
 		}
 	case len(includes) > 0 || len(properties) > 0:
@@ -179,4 +189,21 @@ func writeDeclaredScope(w io.Writer, accounts []store.DeclaredAccount) {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", a.Owner, a.Kind, state, scope)
 	}
 	_ = tw.Flush()
+}
+
+// undecidedRemedy is how a declaration no decision holds for is decided.
+const undecidedRemedy = "save it again in Settings, or run codeql-abom own, to decide it"
+
+// ownedRepositories are the repositories the declared scope reaches, refused while no decision holds
+// for the declaration: that is not knowing what is owned, which is not owning nothing.
+func ownedRepositories(s store.Backend) ([]string, error) {
+	verdict, err := s.ScopeVerdict()
+	if err != nil {
+		return nil, err
+	}
+	if verdict.Undecided() {
+		return nil, fmt.Errorf("the declared scope is not confirmed, so what is owned is not known: %s; %s",
+			verdict.Reason, undecidedRemedy)
+	}
+	return s.OwnedRepositories()
 }

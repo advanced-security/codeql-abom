@@ -42,6 +42,9 @@ type Credentials struct {
 	WebhookURL string          `json:"webhookUrl"`
 	CreatedAt  string          `json:"createdAt"`
 	Key        *rsa.PrivateKey `json:"-"`
+	// ClientSecret signs people in with GitHub. Never stored with the App, since nothing else reads
+	// it: whoever turns sign-in on generates one in the App's settings and gives it to serve.
+	ClientSecret string `json:"-"`
 }
 
 // Conversion is GitHub's answer to exchanging a manifest code: the App, and its secrets.
@@ -68,11 +71,17 @@ type Rotation struct {
 }
 
 // DefaultDir is the App directory beside the database it serves.
-func DefaultDir(dbPath string) string {
+func DefaultDir(dbPath string) string { return besideDatabase(dbPath, "github-app") }
+
+// DefaultPublisherDir is where the publisher App's identity lives: beside the reader's, apart from it.
+func DefaultPublisherDir(dbPath string) string { return besideDatabase(dbPath, "github-app-publisher") }
+
+// besideDatabase is the directory leaf beside a SQLite database; a PostgreSQL one has no beside.
+func besideDatabase(dbPath, leaf string) string {
 	if store.IsPostgresTarget(dbPath) {
 		return ""
 	}
-	return filepath.Join(filepath.Dir(dbPath), "github-app")
+	return filepath.Join(filepath.Dir(dbPath), leaf)
 }
 
 // KeyFile is where the App's private key lives.

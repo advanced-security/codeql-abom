@@ -431,11 +431,24 @@ func (s *Server) discoveryResync(w http.ResponseWriter, r *http.Request) {
 		}
 		rows = append(rows, store.NodeRef{NodeKey: row.NodeKey, Ref: row.Ref})
 	}
+	if len(body.Accounts) > 0 {
+		// Enumeration lists only a decided declaration's accounts: asking now promises a read it refuses.
+		verdict, err := s.Store.ScopeVerdict()
+		if err != nil {
+			writeJSON(w, nil, err)
+			return
+		}
+		if verdict.Undecided() {
+			writeProblem(w, problemScopeUndecided, "the declared scope is not confirmed, so no account is listed again until it is: "+
+				verdict.Reason)
+			return
+		}
+	}
 	if refused, err := s.unlistable(body.Accounts); err != nil {
 		writeJSON(w, nil, err)
 		return
 	} else if refused != "" {
-		writeError(w, http.StatusBadRequest, refused)
+		writeProblem(w, problemAccountNotListable, refused)
 		return
 	}
 
@@ -525,7 +538,7 @@ const controlHeader = "X-Abom-Control"
 
 func (s *Server) allowHost(w http.ResponseWriter, r *http.Request) bool {
 	if !s.AllowRemoteControl && !isLoopback(r.Host) && !s.allowedHost(r.Host) {
-		writeError(w, http.StatusForbidden,
+		writeProblem(w, problemHostNotAllowed,
 			"ABOM is accessible only over a loopback address; "+
 				"restart with --allow-remote-control to change that")
 		return false
@@ -539,11 +552,11 @@ func (s *Server) allowControl(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
-		writeError(w, http.StatusForbidden, "cross-site requests cannot control ABOM")
+		writeProblem(w, problemCrossSite, "cross-site requests cannot control ABOM")
 		return false
 	}
 	if r.Header.Get(controlHeader) == "" {
-		writeError(w, http.StatusForbidden, "missing "+controlHeader)
+		writeProblem(w, problemControlHeaderMissing, "missing "+controlHeader)
 		return false
 	}
 	return true

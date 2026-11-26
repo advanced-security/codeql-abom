@@ -1,0 +1,6 @@
+apiVersion: v2
+name: codeql-abom
+description: ABOM's coordinator and its independently scalable CodeQL analysis workers.
+type: application
+version: 0.1.0
+appVersion: "dev"

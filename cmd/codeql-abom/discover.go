@@ -36,14 +36,11 @@ func runDiscover(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		return errors.New("discover: --db and --org are required")
 	}
 
-	s, err := store.OpenBackend(*dbPath, store.Options{BulkLoad: true})
+	s, err := openDecided(ctx, "discover", args, *dbPath, store.Options{BulkLoad: true})
 	if err != nil {
-		return fmt.Errorf("opening %s: %w", store.DatabaseLabel(*dbPath), err)
+		return err
 	}
 	defer s.Close()
-	if err := s.Migrate(); err != nil {
-		return fmt.Errorf("migrating %s: %w", store.DatabaseLabel(*dbPath), err)
-	}
 
 	tokens, err := dbReaderTokens(*dbPath)
 	if err != nil {
@@ -149,7 +146,7 @@ func githubClient(ctx context.Context, apiURL string, s store.Backend, tokens gh
 	c.Pace = githubPace
 	c.REST = processPools.Pool(work.PoolEnumeration, work.UnitREST)
 	c.GraphQL = processPools.Pool(work.PoolEnumeration, work.UnitGraphQL)
-	protectSources(s, c, os.Stderr)
+	protectSources(s, c)
 	return c
 }
 

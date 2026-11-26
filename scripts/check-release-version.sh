@@ -17,10 +17,10 @@ tree="$scratch/tree"
 
 # The working tree, not HEAD, and whatever check-versions reads beyond scripts/ and ql/, found
 # rather than listed so the copy keeps up with it.
-{
-	git ls-files --cached --others --exclude-standard -- scripts ql .codeql-version
-	grep -o 'internal/[A-Za-z0-9_/]*\.go' scripts/check-versions.sh | sort -u
-} | sort -u | while IFS= read -r file; do
+read_by_check=$(grep -oE '(\.github|infra|internal)/[A-Za-z0-9_./*-]*[A-Za-z0-9_*]|go\.mod' scripts/check-versions.sh | sort -u)
+# shellcheck disable=SC2086 # each path is a pathspec, globs included
+git ls-files --cached --others --exclude-standard -- scripts ql .codeql-version $read_by_check |
+	sort -u | while IFS= read -r file; do
 	[ -f "$file" ] || continue
 	mkdir -p "$tree/$(dirname "$file")"
 	cp -p "$file" "$tree/$file"
@@ -32,6 +32,12 @@ bad() {
 	echo "check-release-version: $1" >&2
 	fail=1
 }
+
+# A copy check-versions already refuses would make every planted leak below pass for nothing.
+if ! ./scripts/check-versions.sh >"$scratch/.err" 2>&1; then
+	echo "check-release-version: check-versions refuses the unaltered copy: $(cat "$scratch/.err")" >&2
+	exit 1
+fi
 
 manifests() {
 	for manifest in ql/*/lib/codeql-pack.yml ql/*/*/src/codeql-pack.yml ql/*/*/test/codeql-pack.yml; do

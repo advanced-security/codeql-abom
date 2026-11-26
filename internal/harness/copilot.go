@@ -197,7 +197,7 @@ func (c *Copilot) Run(ctx context.Context, s Setup) (string, error) {
 // minted token is the only one the child can find.
 func (c *Copilot) clientOptions(s Setup, token string) *copilot.ClientOptions {
 	opts := &copilot.ClientOptions{
-		Connection:       copilot.StdioConnection{Path: c.CLI},
+		Connection:       copilot.StdioConnection{Path: c.CLI, Env: withoutServerSecrets(os.Environ())},
 		Mode:             copilot.ModeEmpty,
 		BaseDirectory:    s.Home,
 		WorkingDirectory: s.Workspace,
@@ -207,7 +207,7 @@ func (c *Copilot) clientOptions(s Setup, token string) *copilot.ClientOptions {
 	}
 	if c.Mint != nil {
 		opts.UseLoggedInUser = copilot.Bool(false)
-		opts.Connection = copilot.StdioConnection{Path: c.CLI, Env: withoutGitHubTokens(os.Environ())}
+		opts.Connection = copilot.StdioConnection{Path: c.CLI, Env: withoutGitHubTokens(withoutServerSecrets(os.Environ()))}
 	}
 	return opts
 }
@@ -263,10 +263,28 @@ var gitHubTokenVariables = []string{
 }
 
 func withoutGitHubTokens(env []string) []string {
+	return without(env, func(name string) bool {
+		return slices.ContainsFunc(gitHubTokenVariables, func(v string) bool { return strings.EqualFold(v, name) })
+	})
+}
+
+// serverSecrets are what the server itself signs in with: its database, its identity provider, its
+// webhook and the cloud account its object store and decision key live in. The agent reads what a
+// repository and a prompt put in front of it, so none of them reaches it.
+var serverSecrets = []string{"DATABASE_URL", "ABOM_DB", "ABOM_READ_REPLICA", "ABOM_OIDC_CLIENT_SECRET",
+	"ABOM_WEBHOOK_SECRET", "ABOM_AUTHZ_KMS_KEY"}
+
+func withoutServerSecrets(env []string) []string {
+	return without(env, func(name string) bool {
+		return strings.HasPrefix(strings.ToUpper(name), "AWS_") ||
+			slices.ContainsFunc(serverSecrets, func(v string) bool { return strings.EqualFold(v, name) })
+	})
+}
+
+func without(env []string, drop func(name string) bool) []string {
 	out := make([]string, 0, len(env))
 	for _, kv := range env {
-		name, _, _ := strings.Cut(kv, "=")
-		if !slices.ContainsFunc(gitHubTokenVariables, func(v string) bool { return strings.EqualFold(v, name) }) {
+		if name, _, _ := strings.Cut(kv, "="); !drop(name) {
 			out = append(out, kv)
 		}
 	}

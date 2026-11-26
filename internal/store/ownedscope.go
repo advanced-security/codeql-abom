@@ -1,10 +1,13 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/advanced-security/codeql-abom/internal/authz"
 )
 
 // ownedScopeDDL records the operator's responsibility boundary, distinct from origin or access.
@@ -21,7 +24,10 @@ CREATE TABLE IF NOT EXISTS abom_owned_scope (
   -- NULL means nobody knows, which is the honest answer for every row written before this
   -- existed. See plans/db/declaration-provenance.md.
   declared_by   TEXT,
-  declared_at   TEXT NOT NULL
+  declared_at   TEXT NOT NULL,
+  -- The signed decision in abom_authz_log that allowed this declaration. A row naming none, as one
+  -- written before declarations were signed or around the store would, is shown and honored nowhere.
+  decision_digest TEXT
 );
 CREATE TABLE IF NOT EXISTS abom_owned_include (
   owner TEXT NOT NULL,
@@ -81,12 +87,21 @@ const sawWholeMembershipList = `EXISTS (
 	   AND (',' || COALESCE(a.scopes, '') || ',' LIKE '%,read:org,%'
 	        OR ',' || COALESCE(a.scopes, '') || ',' LIKE '%,admin:org,%'))`
 
-// honoredScopeDDL centralizes the membership gate for every ownership read.
-// Only contradicted declarations are held back; incomplete evidence leaves them unproven.
+// honoredScopeDDL centralizes the gates every ownership read passes: the declaration names a decision
+// the authorization log holds, and no complete membership list contradicts it. Whether that
+// decision verifies is the Go side's to say, in VerifiedScope, before anything works from it.
+//
+// Recreated on every Migrate, after the setup view that reads it, so a changed rule reaches every
+// database on either backend.
 const honoredScopeDDL = `
-CREATE VIEW IF NOT EXISTS abom_owned_scope_honored AS
+DROP VIEW IF EXISTS abom_setup_class;
+DROP VIEW IF EXISTS abom_owned_scope_honored;
+CREATE VIEW abom_owned_scope_honored AS
 SELECT * FROM abom_owned_scope o
- WHERE NOT (` + sawWholeMembershipList + `
+ WHERE EXISTS (SELECT 1 FROM abom_authz_decision d
+                WHERE d.digest = o.decision_digest AND d.operation = '` + authz.OpDeclareScope + `'
+                  AND d.verdict = '` + authz.VerdictAllow + `')
+   AND NOT (` + sawWholeMembershipList + `
             AND NOT EXISTS (SELECT 1 FROM abom_account b
                              WHERE LOWER(b.owner) = LOWER(o.owner)));`
 
@@ -172,6 +187,9 @@ type DeclaredAccount struct {
 	// DeclaredBy is output only: the store sets it from the write path and ignores whatever a
 	// caller sends. Empty means the row predates the column and nobody knows who wrote it.
 	DeclaredBy string `json:"declaredBy"`
+	// DecisionDigest is output only: the signed decision this row was written under, empty for a
+	// row that names none, which nothing honors.
+	DecisionDigest string `json:"decisionDigest"`
 }
 
 // Covers reports whether a repository falls inside this account's declaration.
@@ -308,16 +326,25 @@ func refuse(format string, args ...any) error {
 	return &DeclarationRefused{Reason: fmt.Sprintf(format, args...)}
 }
 
-// SetOwnedScope records the declaration wholesale, discarding whatever preceded it.
-// `by` is the code path doing the writing, not anything the caller supplied.
+// SetOwnedScope declares for whoever reaches the store with no route decision behind them: the
+// command line, by default.
 func (s *Store) SetOwnedScope(accounts []DeclaredAccount, by string) error {
+	return s.DeclareOwnedScope(context.Background(), accounts, by)
+}
+
+// DeclareOwnedScope records the declaration wholesale, discarding whatever preceded it, for the
+// requester ctx carries. `by` is the code path doing the writing, not anything the caller supplied.
+//
+// The write is the decision point's alone: it judges the declaration, signs the verdict, and writes
+// only what was allowed, carrying the decision's digest. A refusal is signed before it is returned.
+func (s *Store) DeclareOwnedScope(ctx context.Context, accounts []DeclaredAccount, by string) error {
 	if err := validateOwnedScope(accounts, by); err != nil {
 		return err
 	}
-	if err := s.refusePropertyScopes(accounts); err != nil {
-		return err
-	}
-	if err := s.refuseUnsupportedClaims(accounts); err != nil {
+	// Decided before it is written, and logged even if the write then fails: a decision allows an
+	// act, it is not the act, and the declaration verifies only once a row names its digest.
+	decision, err := s.decideDeclaration(ctx, accounts, by)
+	if err != nil {
 		return err
 	}
 
@@ -330,7 +357,7 @@ func (s *Store) SetOwnedScope(accounts []DeclaredAccount, by string) error {
 	if err := clearOwnedScope(tx); err != nil {
 		return err
 	}
-	if err := insertOwnedScope(tx, accounts, by, now()); err != nil {
+	if err := insertOwnedScope(tx, accounts, by, now(), decision.Digest()); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -516,7 +543,7 @@ func clearOwnedScope(tx *transaction) error {
 	return nil
 }
 
-func insertOwnedScope(tx *transaction, accounts []DeclaredAccount, by, at string) error {
+func insertOwnedScope(tx *transaction, accounts []DeclaredAccount, by, at, decision string) error {
 	seen := map[string]bool{}
 	for _, a := range accounts {
 		owner := strings.TrimSpace(a.Owner)
@@ -525,18 +552,18 @@ func insertOwnedScope(tx *transaction, accounts []DeclaredAccount, by, at string
 			continue
 		}
 		seen[key] = true
-		if err := insertOwnedAccount(tx, owner, a, by, at); err != nil {
+		if err := insertOwnedAccount(tx, owner, a, by, at, decision); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func insertOwnedAccount(tx *transaction, owner string, a DeclaredAccount, by, at string) error {
+func insertOwnedAccount(tx *transaction, owner string, a DeclaredAccount, by, at, decision string) error {
 	if _, err := tx.Exec(`
-		INSERT INTO abom_owned_scope (owner, kind, enabled, includes_only, declared_by, declared_at)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		owner, a.Kind, a.Enabled, a.IncludesOnly, by, at); err != nil {
+		INSERT INTO abom_owned_scope (owner, kind, enabled, includes_only, declared_by, declared_at, decision_digest)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		owner, a.Kind, a.Enabled, a.IncludesOnly, by, at, decision); err != nil {
 		return fmt.Errorf("declaring %s: %w", owner, err)
 	}
 	for _, repo := range a.Includes {
@@ -575,12 +602,13 @@ func insertOwnedAccount(tx *transaction, owner string, a DeclaredAccount, by, at
 func (s *Store) OwnedScope() ([]DeclaredAccount, error) {
 	accounts, err := queryAll(s, "reading the declared scope", func(r *sql.Rows) (DeclaredAccount, error) {
 		var a DeclaredAccount
-		var by sql.NullString
+		var by, decision sql.NullString
 		a.Includes = []string{}
-		err := r.Scan(&a.Owner, &a.Kind, &a.Enabled, &a.IncludesOnly, &by, &a.DeclaredAt)
+		err := r.Scan(&a.Owner, &a.Kind, &a.Enabled, &a.IncludesOnly, &by, &a.DeclaredAt, &decision)
 		a.DeclaredBy = by.String
+		a.DecisionDigest = decision.String
 		return a, err
-	}, `SELECT owner, kind, enabled, includes_only, declared_by, declared_at
+	}, `SELECT owner, kind, enabled, includes_only, declared_by, declared_at, decision_digest
 	      FROM abom_owned_scope ORDER BY kind DESC, owner`)
 	if err != nil {
 		return nil, err
@@ -712,6 +740,9 @@ func (s *Store) ownedIncludes() (map[string][]string, error) {
 // the discovery gate asks. Nothing declared and everything disabled are the same answer, and so
 // is a scope whose every account `gh` answered against.
 func (s *Store) OwnedScopeDeclared() (bool, error) {
+	if ok, err := s.scopeActionable(); err != nil || !ok {
+		return false, err
+	}
 	var n int
 	if err := s.db.QueryRow(
 		`SELECT COUNT(*) FROM abom_owned_scope_honored WHERE enabled = 1`).Scan(&n); err != nil {
@@ -737,6 +768,9 @@ func (s *Store) AllRepositories() ([]string, error) {
 // A declared account contributes nothing here until it has been enumerated, which is honest: a
 // declaration is a statement of intent, and enumeration is what turns it into repositories.
 func (s *Store) OwnedRepositories() ([]string, error) {
+	if ok, err := s.scopeActionable(); err != nil || !ok {
+		return []string{}, err
+	}
 	return queryAll(s, "reading owned repositories", func(r *sql.Rows) (string, error) {
 		var name string
 		return name, r.Scan(&name)
@@ -763,6 +797,9 @@ func (s *Store) OwnedAmong(fullNames []string) (map[string]bool, error) {
 	out := map[string]bool{}
 	if len(fullNames) == 0 {
 		return out, nil
+	}
+	if ok, err := s.scopeActionable(); err != nil || !ok {
+		return out, err
 	}
 	values := make([]string, 0, len(fullNames))
 	args := make([]any, 0, len(fullNames))

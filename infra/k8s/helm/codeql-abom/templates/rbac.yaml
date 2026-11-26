@@ -1,0 +1,65 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "abom.name" . }}-coordinator
+  labels: {{- include "abom.labels" . | nindent 4 }}
+# What launching attempts needs and no more: a Job starts suspended and is resumed once the Secret
+# it owns exists, so no Secret is ever read or changed, and the only ConfigMap changed is the bundle
+# workers verify grants with.
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ printf "%s-decision-trust" (include "abom.name" .) | quote }}]
+    verbs: ["update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "abom.name" . }}-coordinator
+  labels: {{- include "abom.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "abom.name" . }}-coordinator
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "abom.name" . }}-coordinator
+---
+# csi-driver-spiffe requests each worker's certificate with the worker's own token, so the approver
+# can bind the SPIFFE ID to the ServiceAccount that asked. The worker can do nothing else here.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "abom.name" . }}-worker-svid
+  labels: {{- include "abom.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["cert-manager.io"]
+    resources: ["certificaterequests"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "abom.name" . }}-worker-svid
+  labels: {{- include "abom.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "abom.name" . }}-worker-svid
+subjects:
+  {{- range $pool := fromYamlArray (include "abom.pools" .) }}
+  - kind: ServiceAccount
+    name: {{ include "abom.name" $ }}-{{ $pool.account }}
+  {{- end }}

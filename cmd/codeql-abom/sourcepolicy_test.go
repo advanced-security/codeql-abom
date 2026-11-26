@@ -19,7 +19,7 @@ import (
 )
 
 func TestRemoteContentCannotBypassPrivateSourceOwnership(t *testing.T) {
-	s := gateStore(t)
+	s := openStore(t)
 	var downloads int
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -69,7 +69,7 @@ func TestRemoteContentCannotBypassPrivateSourceOwnership(t *testing.T) {
 }
 
 func TestExpansionRefusesDisabledPrivateSourcesBeforeInvokingGit(t *testing.T) {
-	s := gateStore(t)
+	s := openStore(t)
 	if err := s.SetOwnedScope([]store.DeclaredAccount{
 		{Owner: "acme", Kind: store.AccountOrganization, Enabled: true},
 	}, store.DeclaredByCLI); err != nil {
@@ -105,7 +105,7 @@ func TestExpansionRefusesDisabledPrivateSourcesBeforeInvokingGit(t *testing.T) {
 }
 
 func TestSecurityEventsRefreshSourcePolicyEvenWithDatabaseReuseDisabled(t *testing.T) {
-	s := gateStore(t)
+	s := openStore(t)
 	if err := s.SetOwnedScope([]store.DeclaredAccount{
 		{Owner: "acme", Kind: store.AccountOrganization, Enabled: true},
 	}, store.DeclaredByCLI); err != nil {
@@ -137,7 +137,7 @@ func TestSecurityEventsRefreshSourcePolicyEvenWithDatabaseReuseDisabled(t *testi
 	}))
 	defer api.Close()
 	reader := catalog.New(api.URL, "", nil)
-	policy := protectSources(s, reader, io.Discard)
+	policy := protectSources(s, reader)
 	err := policy.Check(context.Background(), "acme/repo")
 	if !sourcepolicy.IsDenied(err) {
 		t.Fatalf("initial decision = %v", err)
@@ -160,7 +160,7 @@ func TestSecurityEventsRefreshSourcePolicyEvenWithDatabaseReuseDisabled(t *testi
 func TestThePolicyAndGitFetchCannotReferToDifferentGitHubHosts(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "test-token")
 	t.Setenv("GITHUB_API_URL", "https://github.example/api/v3")
-	e, cache, closeRunner, err := newExpander(gateStore(t), nil, expandAllConfig{}, io.Discard)
+	e, cache, closeRunner, err := newExpander(openStore(t), nil, expandAllConfig{}, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}

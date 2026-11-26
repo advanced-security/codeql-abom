@@ -161,6 +161,9 @@ func cycleLine(cycle int, stats expand.Stats) string {
 	if stats.Nothing > 0 {
 		line += fmt.Sprintf("; %d with nothing to analyze", stats.Nothing)
 	}
+	if stats.Remote > 0 {
+		line += fmt.Sprintf("; %d analyzed by workers", stats.Remote)
+	}
 	if stats.CodeScanning.Asked() {
 		line += "; code scanning " + stats.CodeScanning.String()
 	}
@@ -234,8 +237,8 @@ func (n names) sorted() []string {
 }
 
 type asked struct {
-	owners, full, repositories names
-	advisories                 bool
+	owners, full, repositories, reprobe names
+	advisories                          bool
 }
 
 // readOrganization re-reads the declared accounts when the period has elapsed, and reads what
@@ -293,6 +296,10 @@ func (s *Supervisor) ReadSoon(fullName string) {
 	s.ask(func(a *asked) { a.repositories.add(fullName) })
 }
 
+// ReprobeSoon has an account's unavailable references probed on the next cycle, whenever they were
+// last probed: an installation is when access to them arrives.
+func (s *Supervisor) ReprobeSoon(owner string) { s.ask(func(a *asked) { a.reprobe.add(owner) }) }
+
 // RefreshAdvisoriesSoon has the advisory set refreshed once the floor allows, however fresh it is.
 func (s *Supervisor) RefreshAdvisoriesSoon() { s.ask(func(a *asked) { a.advisories = true }) }
 
@@ -310,6 +317,15 @@ func (s *Supervisor) takeAsk() Ask {
 	a := s.asked
 	s.asked.owners, s.asked.full, s.asked.repositories = nil, nil, nil
 	return Ask{Owners: a.owners.sorted(), Full: a.full.sorted(), Repositories: a.repositories.sorted()}
+}
+
+// takeReprobeAsk takes the accounts events asked to have probed again since the last cycle.
+func (s *Supervisor) takeReprobeAsk() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	owners := s.asked.reprobe.sorted()
+	s.asked.reprobe = nil
+	return owners
 }
 
 // takeAdvisoryAsk reports whether an event asked for an advisory refresh, and clears the ask.
@@ -644,6 +660,9 @@ func (s *Supervisor) cycle(ctx context.Context) time.Duration {
 	if err := s.recheck(ctx, progress); err != nil && ctx.Err() == nil {
 		return s.fail("rechecking analyzed dependencies", err)
 	}
+	if err := s.reprobe(ctx); err != nil && ctx.Err() == nil {
+		return s.fail("probing unavailable references", err)
+	}
 	// After the recheck, so the probes it spent are in the cycle's own accounting rather than
 	// the next one's.
 	s.recordSpend(stats, progress, started)
@@ -853,6 +872,30 @@ func (s *Supervisor) recheck(ctx context.Context, progress []frontier.DepthProgr
 	if stats.Checked > 0 {
 		s.logf("probed %d analyzed dependencies for drift, %d had moved",
 			stats.Checked, stats.Drifted)
+	}
+	return err
+}
+
+// reprobe probes unavailable references on the recheck's clock, and those of accounts an
+// installation named at once. Not gated on completeness as the recheck is: a reference that answers
+// again closes a gap in coverage, which is the first stage's work, not freshness.
+func (s *Supervisor) reprobe(ctx context.Context) error {
+	owners := s.takeReprobeAsk()
+	if s.Rechecker == nil {
+		return nil
+	}
+	stats, err := s.Rechecker.Reprobe(ctx, s.recheckTTL(), owners, s.recheckLimit())
+	if err != nil && len(owners) > 0 {
+		// Asked again, so a probe that stopped part-way does not leave them to the daily clock.
+		s.ask(func(a *asked) {
+			for _, owner := range owners {
+				a.reprobe.add(owner)
+			}
+		})
+	}
+	if stats.Back > 0 {
+		s.logf("probed %d unavailable references; %d answered again and were queued", stats.Checked, stats.Back)
+		s.signal()
 	}
 	return err
 }

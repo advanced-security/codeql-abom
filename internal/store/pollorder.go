@@ -42,6 +42,15 @@ var pollable = `
 // PollDue lists references unread since a time: most reach first, unmeasured before zero, a branch before a tag.
 func (s *Store) PollDue(since time.Time, limit int) ([]PollCandidate, error) {
 	cutoff := since.UTC().Format(time.RFC3339Nano)
+	query := `SELECT node_key, ref, owner, repo, resolved_sha, reach FROM (` + pollable + `)
+	     WHERE (checked_at IS NULL OR checked_at <= ?) AND (analyzed_at IS NULL OR analyzed_at <= ?)
+	     ORDER BY CASE WHEN reach > 0 THEN 0 WHEN reach IS NULL THEN 1 ELSE 2 END, reach DESC,
+	              tag, checked_at IS NOT NULL, checked_at, node_key, ref`
+	args := []any{cutoff, cutoff}
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
 	return queryAll(s, "reading the references due a poll", func(r *sql.Rows) (PollCandidate, error) {
 		var c PollCandidate
 		var reach sql.NullInt64
@@ -51,11 +60,7 @@ func (s *Store) PollDue(since time.Time, limit int) ([]PollCandidate, error) {
 			c.Reach = &n
 		}
 		return c, err
-	}, `SELECT node_key, ref, owner, repo, resolved_sha, reach FROM (`+pollable+`)
-	     WHERE (checked_at IS NULL OR checked_at <= ?) AND (analyzed_at IS NULL OR analyzed_at <= ?)
-	     ORDER BY CASE WHEN reach > 0 THEN 0 WHEN reach IS NULL THEN 1 ELSE 2 END, reach DESC,
-	              tag, checked_at IS NOT NULL, checked_at, node_key, ref
-	     LIMIT ?`, cutoff, cutoff, limit)
+	}, query, args...)
 }
 
 // PollReach counts references whose version that many starting points run.

@@ -1,0 +1,41 @@
+# Tests every pull request ABOM opens, and every change merged, with the CodeQL CLI named in
+# .codeql-version; publish.yml calls it before it writes anything. Copy to .github/workflows/ and
+# lock it with `gh actions-lock`.
+name: Test queries
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      # Pinned by commit: a moved tag would change what runs in a step holding a token.
+      - name: Install CodeQL
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_CODEQL_COMMIT: a6311fd2f257d5c8bf11b1d4a8702492f7c9f556
+        run: |
+          gh extension install github/gh-codeql --pin "$GH_CODEQL_COMMIT"
+          gh codeql set-version "$(cat .codeql-version)"
+          mkdir -p "$HOME/.local/bin"
+          gh codeql install-stub "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install packs
+        run: |
+          codeql pack install .
+          codeql pack install test
+
+      - name: Run the tests
+        run: codeql test run --threads=0 test

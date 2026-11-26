@@ -64,7 +64,7 @@ func TestARemovalNamingNoReviewedPreviewRemovesNothing(t *testing.T) {
 			t.Errorf("proof %q: a removal nobody reviewed was applied: %s", proof, rec.Body.String())
 		}
 	}
-	if rec := postControl(t, srv, "/api/prune/apply"); rec.Code == http.StatusOK {
+	if rec := control(t, srv, http.MethodPost, "/api/prune/apply", ""); rec.Code == http.StatusOK {
 		t.Errorf("a removal with no body was applied: %s", rec.Body.String())
 	}
 	if n := tombstoned(t, s); n != 0 {
@@ -94,8 +94,8 @@ func TestARemovalReviewedAgainstAWiderScopeRemovesNothingAndSaysWhatChanged(t *t
 		t.Fatalf("%d nodes were tombstoned that the reviewed preview kept", n)
 	}
 	changed := refused(t, rec)
-	if !strings.Contains(changed.Error, "stranger/thing") {
-		t.Errorf("the refusal does not name what it would have removed that was kept: %q", changed.Error)
+	if !strings.Contains(changed.Detail, "stranger/thing") {
+		t.Errorf("the refusal does not name what it would have removed that was kept: %q", changed.Detail)
 	}
 	if changed.View.Removed.Nodes == 0 || changed.View.Proof == "" || changed.View.Proof == reviewed.Proof {
 		t.Errorf("the refusal does not carry the removal as it now stands, to review afresh: %+v", changed.View)
@@ -315,7 +315,7 @@ func TestADeletionThatFailsIsTheServersFailureNotARefusal(t *testing.T) {
 	seedGraph(t, s)
 	srv.Store = compactFails{s}
 
-	rec := postControl(t, srv, "/api/prune/compact")
+	rec := control(t, srv, http.MethodPost, "/api/prune/compact", "")
 	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "disk I/O error") {
 		t.Fatalf("a deletion that failed answered %d: %s", rec.Code, rec.Body.String())
 	}

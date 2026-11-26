@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/url"
 	"strings"
 
@@ -15,7 +14,7 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/work"
 )
 
-func protectSources(s store.Backend, reader *catalog.Client, log io.Writer) *sourcepolicy.Policy {
+func protectSources(s store.Backend, reader *catalog.Client) *sourcepolicy.Policy {
 	p := &sourcepolicy.Policy{
 		Read: reader, Owned: s.RepositoryIsOwned,
 		Evidence: func(repository string) (string, error) {
@@ -36,22 +35,19 @@ func protectSources(s store.Backend, reader *catalog.Client, log io.Writer) *sou
 			}
 			return "", nil
 		},
-		Warn: func(repository, reason string) {
-			fmt.Fprintf(log, "source policy: %s: %s\n", repository, reason)
-		},
 	}
 	reader.SourcePolicy = p.Check
 	return p
 }
 
 func wireSourcePolicy(
-	ctx context.Context, e *expand.Expander, s store.Backend, apiURL string, tokens ghapp.TokenSource, log io.Writer,
+	ctx context.Context, e *expand.Expander, s store.Backend, apiURL string, tokens ghapp.TokenSource,
 ) {
 	reader := newReader(ctx, apiURL, tokens)
 	reader.Pace = githubPace
 	reader.REST = processPools.Pool(work.PoolFetching, work.UnitREST)
 	reader.MaxRetries = 0
-	p := protectSources(s, reader, log)
+	p := protectSources(s, reader)
 	e.SourcePolicy = p
 	if checkout, ok := e.Fetcher.(*expand.Checkout); ok {
 		bindSourcePolicy(checkout, apiURL, p.Check)

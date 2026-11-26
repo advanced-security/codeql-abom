@@ -68,6 +68,13 @@ type FrontierItem struct {
 	// queued because a lock chose it, and UsedBy alone would call it used by nobody.
 	LockedBy      []string `json:"lockedBy"`
 	LockedByCount int      `json:"lockedByCount"`
+	// LastAttemptAt is when a retrying row last failed, or when an unavailable one was settled;
+	// empty when nothing failed or the time is not recorded. ProbedAt is when an unavailable row's
+	// reference was last probed to see whether it answers again, empty when it never was.
+	LastAttemptAt string `json:"lastAttemptAt"`
+	ProbedAt      string `json:"probedAt"`
+	Stuck         bool   `json:"stuck"`
+	Cause         string `json:"cause"`
 }
 
 // usedBySample bounds the names carried inline. The count is exact; the list is a preview, so a
@@ -292,7 +299,10 @@ func frontierSnapshotQuery(table, status string, limit int) (string, []any) {
 		       COALESCE(discovered_from,''), COALESCE(reason,''),
 		       COALESCE(claimed_at,''), COALESCE(next_attempt_at,''), supply_chain,
 		       COALESCE(analyzed_at,''), ` + tierOfRow + `, ref,` + selectSuites + `,` +
-		selectUsedBy + `, COALESCE(awaiting_code_scanning, '')
+		selectUsedBy + `, COALESCE(awaiting_code_scanning, ''),
+		       CASE WHEN status = 'unavailable' THEN COALESCE(completed_at, '')
+		            WHEN status = 'pending' AND attempts > 0 THEN COALESCE(failed_at, '') ELSE '' END,
+		       CASE WHEN status = 'unavailable' THEN COALESCE(checked_at, '') ELSE '' END
 		FROM abom_frontier
 		LEFT JOIN users u ON u.nk = abom_frontier.node_key AND u.rf = abom_frontier.ref`
 	where, args := frontierWhere(status)
@@ -327,7 +337,8 @@ func (s *Store) FrontierSnapshot(status string, limit int) ([]FrontierItem, erro
 			&it.Score, &it.Attempts, &it.AnalysisCount, &it.ResolvedSHA,
 			&it.DiscoveredFrom, &it.Reason, &it.ClaimedAt, &it.NextAttemptAt, &it.SupplyChain,
 			&it.AnalyzedAt, &it.Tier, &it.Ref, &suites, &cli,
-			&it.UsedByCount, &it.UsedByOwned, &users, &it.AwaitingCodeScanning); err != nil {
+			&it.UsedByCount, &it.UsedByOwned, &users, &it.AwaitingCodeScanning,
+			&it.LastAttemptAt, &it.ProbedAt); err != nil {
 			return it, err
 		}
 		it.UsedBy = []string{}

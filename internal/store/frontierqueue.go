@@ -16,6 +16,7 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 )
 
@@ -392,6 +393,8 @@ type Recheck struct {
 	Ref       string
 	SHA       string
 	Score     float64
+	// Reason is why an unavailable row was settled; empty for an analyzed one.
+	Reason string
 }
 
 // Key identifies one unit of work: a dependency at a reference.
@@ -491,6 +494,56 @@ func (q *Queue) DueForRecheck(ttl time.Duration, limit int) ([]Recheck, error) {
 	return due, rows.Err()
 }
 
+// DueForReprobe returns unavailable rows whose reason probeable says a probe of the reference could
+// change, settled and last probed more than every ago, or owned by one of owners, longest unprobed
+// first. A requested commit is never due: no ref listing names one, so a probe would always fail.
+//
+// The reason is judged by the caller because only the code that wrote it knows its format; the
+// unavailable rows are few, so they are read whole and the limit applies after that judgement.
+func (q *Queue) DueForReprobe(every time.Duration, owners []string, limit int, probeable func(string) bool) ([]Recheck, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	cutoff := q.now().Add(-every).Format(time.RFC3339Nano)
+	inside, bound, err := q.bound()
+	if err != nil {
+		return nil, err
+	}
+	due := `((checked_at IS NULL OR checked_at <= ?) AND COALESCE(completed_at, '') <= ?)`
+	args := []any{StatusUnavailable, cutoff, cutoff}
+	if len(owners) > 0 {
+		due = `(` + due + ` OR lower(owner) IN (` + strings.TrimSuffix(strings.Repeat("?,", len(owners)), ",") + `))`
+		for _, o := range owners {
+			args = append(args, strings.ToLower(o))
+		}
+	}
+	rows, err := queryAll(q.Store, "finding unavailable rows to probe", func(r *sql.Rows) (Recheck, error) {
+		var it Recheck
+		return it, r.Scan(&it.NodeKey, &it.Owner, &it.Repo, &it.Subpath, &it.Score, &it.Requested, &it.Reason)
+	}, `SELECT node_key, COALESCE(owner, ''), COALESCE(repo, ''), COALESCE(subpath, ''), score, ref,
+	           COALESCE(reason, '')
+	      FROM abom_frontier
+	     WHERE status = ?
+	       AND NOT (length(ref) = 40 AND ref NOT GLOB '*[^0-9a-fA-F]*')
+	       AND `+due+`
+	       AND `+inside+`
+	     ORDER BY checked_at IS NOT NULL, checked_at ASC, completed_at ASC, node_key, ref`,
+		append(args, bound...)...)
+	if err != nil {
+		return nil, err
+	}
+	var out []Recheck
+	for _, it := range rows {
+		if len(out) == limit {
+			break
+		}
+		if NamesARepository(it.Owner, it.Repo) && probeable(it.Reason) {
+			out = append(out, it)
+		}
+	}
+	return out, nil
+}
+
 // Touch records that a ref was probed and had not moved.
 func (q *Queue) Touch(k Key) error {
 	_, err := q.Store.DB().Exec(
@@ -549,13 +602,14 @@ func (q *Queue) Fail(k Key, reason string) error {
 	}
 	attempts++
 
-	retryAt := q.now().Add(backoff(attempts)).Format(time.RFC3339Nano)
+	failed := q.now()
 	_, err := q.Store.DB().Exec(`
 		UPDATE abom_frontier
-		SET status = ?, attempts = ?, reason = ?, next_attempt_at = ?, claimed_at = NULL,
+		SET status = ?, attempts = ?, reason = ?, next_attempt_at = ?, failed_at = ?, claimed_at = NULL,
 		    awaiting_code_scanning = NULL
 		WHERE node_key = ? AND ref = ?`,
-		StatusPending, attempts, nullable(reason), retryAt, k.NodeKey, k.Ref)
+		StatusPending, attempts, nullable(reason), failed.Add(backoff(attempts)).Format(time.RFC3339Nano),
+		failed.UTC().Format(time.RFC3339Nano), k.NodeKey, k.Ref)
 	if err != nil {
 		return fmt.Errorf("failing %q: %w", k.NodeKey, err)
 	}

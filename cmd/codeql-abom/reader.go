@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 
 	"github.com/advanced-security/codeql-abom/internal/serve"
@@ -35,7 +34,7 @@ func runReader(ctx context.Context, cfg serveConfig, stdout, stderr io.Writer) e
 		defer replica.Close()
 		srv.SetReplica(replica, cfg.replicaMaxLag)
 	}
-	return serveHTTP(ctx, &http.Server{Addr: cfg.addr, Handler: srv.Handler()}, cfg.addr, stdout)
+	return serveWithProbes(ctx, cfg, srv, stdout)
 }
 
 func openReadReplica(cfg serveConfig, primary store.Backend) (store.Backend, error) {

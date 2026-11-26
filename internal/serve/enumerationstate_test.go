@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/advanced-security/codeql-abom/internal/catalog"
+	"github.com/advanced-security/codeql-abom/internal/enumerate"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
@@ -40,7 +41,7 @@ func TestTheScopeSaysWhenAnAccountWasLastReadAndHow(t *testing.T) {
 	srv.Enumerate = fakeEnumerator(map[string][]string{
 		"advanced-security": {"advanced-security/one"},
 	})
-	var report EnumerationReport
+	var report enumerate.Report
 	postJSON(t, srv, "/api/owned-scope/enumerate", &report)
 
 	after := readScope(t, srv)
@@ -67,7 +68,7 @@ func TestASweptAccountIsNotReportedAsFullyListed(t *testing.T) {
 	srv.Enumerate = func(context.Context, string, catalog.Marks) (catalog.Listing, error) {
 		return catalog.Listing{Route: catalog.RouteGraphQL, Full: false}, nil
 	}
-	var report EnumerationReport
+	var report enumerate.Report
 	postJSON(t, srv, "/api/owned-scope/enumerate", &report)
 
 	after := readScope(t, srv)[0].Enumeration
@@ -112,7 +113,7 @@ func TestTheScopeNamesWhatAFullListingNoLongerHolds(t *testing.T) {
 	srv.Enumerate = fakeEnumerator(map[string][]string{
 		"advanced-security": {"advanced-security/one"},
 	})
-	var report EnumerationReport
+	var report enumerate.Report
 	postJSON(t, srv, "/api/owned-scope/enumerate", &report)
 
 	missing := readScope(t, srv)[0].Enumeration.Missing
@@ -135,7 +136,7 @@ func TestPreviewingTheSameDeclarationDoesNotBringAMissingRepositoryBack(t *testi
 	srv.Enumerate = fakeEnumerator(map[string][]string{
 		"advanced-security": {"advanced-security/one"},
 	})
-	var report EnumerationReport
+	var report enumerate.Report
 	postJSON(t, srv, "/api/owned-scope/enumerate", &report)
 
 	preview, err := srv.scopePreview([]store.DeclaredAccount{

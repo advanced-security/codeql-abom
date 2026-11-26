@@ -53,7 +53,7 @@ const teamA = `[{"owner":"acme","kind":"organization","enabled":true,"includesOn
 // than the terms alone.
 func TestAPropertyScopeIsServedWithWhatItCovers(t *testing.T) {
 	srv, _ := propertyScopedServer(t)
-	if rec := put(t, srv, "/api/owned-scope", teamA); rec.Code != http.StatusOK {
+	if rec := control(t, srv, http.MethodPut, "/api/owned-scope", teamA); rec.Code != http.StatusOK {
 		t.Fatalf("PUT: %d %s", rec.Code, rec.Body)
 	}
 
@@ -69,7 +69,7 @@ func TestAPropertyScopeIsServedWithWhatItCovers(t *testing.T) {
 // The schema's refusal reaches the reader in its own words, as a request they can correct.
 func TestAPropertyScopeTheSchemaRulesOutIsRefusedWithTheReason(t *testing.T) {
 	srv, _ := propertyScopedServer(t)
-	rec := put(t, srv, "/api/owned-scope", `[{"owner":"acme","kind":"organization","enabled":true,
+	rec := control(t, srv, http.MethodPut, "/api/owned-scope", `[{"owner":"acme","kind":"organization","enabled":true,
 	  "includesOnly":true,"properties":[{"terms":[{"name":"business_id","value":"7"}]}]}]`)
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "repository administrators") ||
 		strings.Contains(rec.Body.String(), "store:") {
@@ -82,7 +82,7 @@ func TestAPropertyScopeTheSchemaRulesOutIsRefusedWithTheReason(t *testing.T) {
 func TestADeclarationTheStoreCouldNotWriteIsAFault(t *testing.T) {
 	srv, s := propertyScopedServer(t)
 	s.Close()
-	if rec := put(t, srv, "/api/owned-scope", teamA); rec.Code < 500 {
+	if rec := control(t, srv, http.MethodPut, "/api/owned-scope", teamA); rec.Code < 500 {
 		t.Errorf("PUT on a closed store answered %d %s, want a server fault", rec.Code, rec.Body)
 	}
 }
@@ -94,7 +94,7 @@ func TestThePreviewJudgesACandidatePropertyScope(t *testing.T) {
 	if _, err := s.InsertOwnedRepository("acme/delta"); err != nil {
 		t.Fatal(err)
 	}
-	put(t, srv, "/api/owned-scope", `[{"owner":"acme","kind":"organization","enabled":true}]`)
+	control(t, srv, http.MethodPut, "/api/owned-scope", `[{"owner":"acme","kind":"organization","enabled":true}]`)
 
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, localRequest(http.MethodPost, "/api/owned-scope/preview",
@@ -276,7 +276,7 @@ func TestReadingAnAccountsPropertiesIsAControl(t *testing.T) {
 // what it covers.
 func TestAHeldPropertyScopeIsServedWithItsReasonAndNoCount(t *testing.T) {
 	srv, s := propertyScopedServer(t)
-	if rec := put(t, srv, "/api/owned-scope", teamA); rec.Code != http.StatusOK {
+	if rec := control(t, srv, http.MethodPut, "/api/owned-scope", teamA); rec.Code != http.StatusOK {
 		t.Fatalf("PUT: %d %s", rec.Code, rec.Body)
 	}
 	if err := s.ReplacePropertySchema("acme", []store.PropertyDefinition{

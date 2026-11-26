@@ -29,7 +29,7 @@ public sealed class ApiControlTests
             }
             if (action == "cancel") Assert.Null(request.Content);
             if (action == "scanning") Assert.Equal("{}", await request.Content!.ReadAsStringAsync(TestContext.Current.CancellationToken));
-            return Response(HttpStatusCode.Conflict, "{\"error\":null}");
+            return Response(HttpStatusCode.Conflict, "{\"status\":409,\"code\":\"conflict\",\"detail\":null}");
         });
         using var http = new HttpClient(handler) { BaseAddress = new Uri("http://localhost/") };
         var api = new AbomApi(http);
@@ -37,18 +37,18 @@ public sealed class ApiControlTests
         Assert.Null(api.LastError);
     }
 
+    // The reader is told ABOM did not answer, in words; the address it asked stays in LastError.
     [Theory]
-    [InlineData("test", "api/queries/test", false)]
-    [InlineData("cancel", "api/runs/7/cancel", false)]
-    [InlineData("pool", "api/pools", true)]
-    [InlineData("scanning", "api/code-scanning/previews", true)]
-    public async Task TransportFailuresKeepTheExistingContext(
-        string action, string path, bool contextual)
+    [InlineData("test", "api/queries/test")]
+    [InlineData("cancel", "api/runs/7/cancel")]
+    [InlineData("pool", "api/pools")]
+    [InlineData("scanning", "api/code-scanning/previews")]
+    public async Task ATransportFailureSaysABOMCouldNotBeReached(string action, string path)
     {
         using var handler = new Handler(_ => throw new HttpRequestException("offline"));
         using var http = new HttpClient(handler) { BaseAddress = new Uri("http://localhost/") };
         var api = new AbomApi(http);
-        Assert.Equal(contextual ? $"{path}: offline" : "offline", await Call(api, action));
+        Assert.Equal("ABOM could not be reached: offline", await Call(api, action));
         Assert.Equal($"{path}: offline", api.LastError);
     }
 
@@ -70,12 +70,12 @@ public sealed class ApiControlTests
             Assert.Equal(path, request.RequestUri!.AbsolutePath);
             Assert.Equal(method, request.Method.Method);
             Assert.Equal("1", Assert.Single(request.Headers.GetValues("X-Abom-Control")));
-            return Task.FromResult(Response(HttpStatusCode.Forbidden, "{\"error\":\"held\"}"));
+            return Task.FromResult(Response(HttpStatusCode.Forbidden, "{\"status\":403,\"code\":\"forbidden\",\"detail\":\"held\"}"));
         });
         using var http = new HttpClient(handler) { BaseAddress = new Uri("http://localhost/") };
         var api = new AbomApi(http);
         var ct = TestContext.Current.CancellationToken;
-        await Assert.ThrowsAsync<HttpRequestException>(() => action switch
+        var refusal = await Assert.ThrowsAsync<ApiRefusal>(() => action switch
         {
             "start" => api.SetDiscoveryAsync(true, ct),
             "pause" => api.SetDiscoveryAsync(false, ct),
@@ -89,6 +89,7 @@ public sealed class ApiControlTests
             "refresh" => api.RefreshAccountsAsync(ct),
             _ => throw new InvalidOperationException(action),
         });
+        Assert.Equal(("forbidden", "held"), (refusal.Problem.Code, refusal.Message));
     }
 
     private static async Task<string?> Call(AbomApi api, string action) => action switch

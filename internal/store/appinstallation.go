@@ -76,6 +76,8 @@ type AppInstallation struct {
 	Suspended    bool
 	// RepositoriesUnread says why a selected installation's repositories could not be read.
 	RepositoriesUnread string
+	// Permissions is what the installation granted, as GitHub listed it.
+	Permissions map[string]string
 }
 
 // InstallationSync is one attempt to read the App's installations.

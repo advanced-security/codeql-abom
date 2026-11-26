@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -32,10 +33,13 @@ func (r *reader) CheckScanningAccess(context.Context, string) error {
 	return r.scanningErr
 }
 
-func TestRemoteSourcingUsesAnySufficientEvidenceWithoutBlockingUnknownLicensing(t *testing.T) {
+// Eligibility GitHub cannot confirm is refused rather than assumed: a private repository is cloned
+// only on evidence that scanning is licensed there. A read that failed for a reason a retry could
+// change is neither: it is retried, so one transient failure never becomes a refusal.
+func TestRemoteSourcingRefusesEligibilityItCannotConfirm(t *testing.T) {
 	for _, tt := range []struct {
 		name, visibility, codeSecurity, advanced, setup, recorded string
-		owned, denied, warning                                    bool
+		owned, denied, retry                                      bool
 		metaErr, setupErr, scanningErr                            error
 	}{
 		{name: "public unowned", visibility: "public"},
@@ -54,11 +58,16 @@ func TestRemoteSourcingUsesAnySufficientEvidenceWithoutBlockingUnknownLicensing(
 			scanningErr: &catalog.StatusError{Code: 403, Message: "Code scanning is not enabled for this repository"}},
 		{name: "setup reports license disabled", visibility: "private", owned: true, denied: true,
 			setupErr: &catalog.StatusError{Code: 403, Message: "Advanced Security must be enabled for this repository"}},
-		{name: "permission unknown", visibility: "private", owned: true, warning: true,
+		{name: "permission unknown", visibility: "private", owned: true, denied: true,
 			scanningErr: &catalog.StatusError{Code: 403, Message: "Resource not accessible by integration"}},
-		{name: "ambiguous missing", visibility: "private", owned: true, warning: true,
+		{name: "ambiguous missing", visibility: "private", owned: true, denied: true,
 			scanningErr: &catalog.StatusError{Code: 404}},
-		{name: "metadata unknown owned", owned: true, warning: true, metaErr: errors.New("rate limited")},
+		{name: "scanning unreachable", visibility: "private", owned: true, retry: true,
+			scanningErr: &catalog.StatusError{Code: 502, Message: "Bad Gateway"}},
+		{name: "visibility unreported", owned: true, denied: true},
+		{name: "metadata refused owned", owned: true, denied: true,
+			metaErr: &catalog.StatusError{Code: 403, Message: "Resource not accessible by integration"}},
+		{name: "metadata unreachable owned", owned: true, retry: true, metaErr: errors.New("dial tcp: i/o timeout")},
 		{name: "metadata unknown unowned", denied: true, metaErr: errors.New("rate limited")},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -66,22 +75,20 @@ func TestRemoteSourcingUsesAnySufficientEvidenceWithoutBlockingUnknownLicensing(
 				CodeSecurity: tt.codeSecurity, AdvancedSecurity: tt.advanced},
 				metaErr: tt.metaErr, setup: catalog.DefaultSetup{State: tt.setup, Languages: []string{"go"}},
 				setupErr: tt.setupErr, scanningErr: tt.scanningErr}
-			warnings := 0
 			p := &Policy{Read: r, Owned: func(string) (bool, error) { return tt.owned, nil },
-				Evidence: func(string) (string, error) { return tt.recorded, nil },
-				Warn:     func(string, string) { warnings++ }}
+				Evidence: func(string) (string, error) { return tt.recorded, nil }}
 			for range 3 {
 				err := p.Check(context.Background(), "acme/repo")
-				if IsDenied(err) != tt.denied || (err != nil && !tt.denied) {
-					t.Fatalf("Check = %v, want denied=%v", err, tt.denied)
+				if IsDenied(err) != tt.denied || (err != nil) != (tt.denied || tt.retry) {
+					t.Fatalf("Check = %v, want denied=%v retry=%v", err, tt.denied, tt.retry)
+				}
+				if tt.denied && tt.owned && tt.codeSecurity == "" && tt.scanningErr != nil && !scanningDisabled(tt.scanningErr) &&
+					!strings.Contains(err.Error(), "eligibility not confirmed") {
+					t.Errorf("refusal %q does not say eligibility was not confirmed", err)
 				}
 			}
-			wantWarnings := 0
-			if tt.warning {
-				wantWarnings = 1
-			}
-			if warnings != wantWarnings || r.reads != 1 || r.probes > 1 {
-				t.Errorf("warnings=%d reads=%d probes=%d", warnings, r.reads, r.probes)
+			if r.reads != 1 || r.probes > 1 {
+				t.Errorf("reads=%d probes=%d", r.reads, r.probes)
 			}
 			if (!tt.owned || tt.visibility == "public") && r.probes != 0 {
 				t.Error("asked scanning about a public or unowned repository")

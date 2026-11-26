@@ -147,6 +147,9 @@ func (s *Store) migratePostgres() error {
 	if err := createPostgresTables(tx); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(authzLogTriggersPostgres); err != nil {
+		return fmt.Errorf("making the PostgreSQL authorization log append-only: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}

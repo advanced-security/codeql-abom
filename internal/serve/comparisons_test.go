@@ -63,7 +63,7 @@ func finishedHeldRun(t *testing.T, s *Server, st *store.Store, query, cli string
 
 func compareOver(t *testing.T, s *Server, run int64) (store.Comparison, *strings.Builder, int) {
 	t.Helper()
-	w := control(t, s, "/api/runs/"+strconv.FormatInt(run, 10)+"/comparisons", `{"by":"operator"}`)
+	w := control(t, s, http.MethodPost, "/api/runs/"+strconv.FormatInt(run, 10)+"/comparisons", `{"by":"operator"}`)
 	var c store.Comparison
 	if w.Code == http.StatusOK {
 		if err := json.Unmarshal(w.Body.Bytes(), &c); err != nil {

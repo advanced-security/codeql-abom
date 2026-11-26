@@ -74,10 +74,12 @@ server's environment, and has no logged-in user to fall back to.
 **An installation token is not refreshed under a session.** The client token is the only route
 the CLI accepts for it, and that route takes no refresh, so a session ends a few minutes before the
 hour its token was minted for. A longer `--authoring-limit` is cut to that hour rather than failing
-mid-turn. The user-token route — readers signing in through the App, in
-[enterprise-server.md](enterprise-server.md) — is what the provider was built for.
+mid-turn. The provider's user-token route is not taken: signing in with GitHub uses a user token
+once, to learn who signed in, and revokes it ([access.md](access.md)), so sessions stay on the
+installation.
 
-**A server reading as the App writes nothing.** Not with the App, which asks for no write, and not
+**A server reading as the App writes nothing.** Exporting a query is a second App's write, to one
+repository; it never widens this App. Not with the App, which asks for no write, and not
 with the operator's token, which a production pod does not have. A write target named beside an App
 stops the server rather than being ignored. [dependency-submission.md](dependency-submission.md)
 still defers any new publisher.

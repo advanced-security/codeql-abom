@@ -78,7 +78,7 @@ func (s *Server) testQuery(w http.ResponseWriter, r *http.Request) {
 	q, found, err := authoring.Find(s.QueryDir, body.QueryID)
 	switch {
 	case err != nil:
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return
 	case !found:
 		writeError(w, http.StatusNotFound, fmt.Sprintf(
@@ -154,17 +154,17 @@ type catalogRow struct {
 func (s *Server) writeCatalog(w http.ResponseWriter) {
 	working, steps, err := s.workingCopy()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return
 	}
 	catalog, err := s.Store.QueryCatalog(working...)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return
 	}
 	requests, err := s.Store.QueryRequests()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return
 	}
 	asked := map[string][]int64{}
@@ -188,7 +188,7 @@ func (s *Server) writeCatalog(w http.ResponseWriter) {
 	}
 	review, err := s.Store.ReviewRefusals(cli)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return
 	}
 	rows := make([]catalogRow, 0, len(catalog))
@@ -289,7 +289,7 @@ func (s *Server) advanceQuery(w http.ResponseWriter, r *http.Request) {
 	}
 	refusal, err := s.queryVersionRefusal(body.QueryID, body.Version)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return
 	}
 	if refusal != "" {
@@ -299,7 +299,7 @@ func (s *Server) advanceQuery(w http.ResponseWriter, r *http.Request) {
 	if body.Stage == store.StageExtendedTest {
 		refusal, err := s.extendedTestRefusal(r.Context(), body.QueryID, body.Version)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeJSON(w, nil, err)
 			return
 		}
 		if refusal != "" {
@@ -320,7 +320,7 @@ func (s *Server) advanceQuery(w http.ResponseWriter, r *http.Request) {
 	// The deployed suite is a projection of what is at the deploy stage, so it is rewritten on
 	// every advance rather than only on one: taking a query back out has to remove it too.
 	if err := s.writeDeployedSuite(); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return
 	}
 	s.writeCatalog(w)

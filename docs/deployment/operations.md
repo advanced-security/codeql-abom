@@ -49,11 +49,13 @@ finding counts. An empty new database is not a security assessment.
 The local `--diagnostics` flag enables additional performance endpoints; it is not required for
 installation. Do not publish them or run expensive measurements against an active crawl.
 
-## Source-policy warnings and retry
+## Source-policy refusals and retry
 
-A `source policy:` warning allows analysis to continue; a refusal leaves the source unavailable
-with a reason. Correct the reported ownership or scanning configuration, then requeue from
-Discovery or use `expand-all --requeue owner/repository` with your database options.
+A `source policy:` refusal leaves the source unavailable with a reason, including
+`code-scanning eligibility not confirmed` when GitHub would not say whether scanning is licensed
+there; a read that failed transiently is retried on its own. Correct the reported ownership,
+scanning configuration or the App's access, then resync the row from Coverage, requeue from
+Discovery, or use `expand-all --requeue owner/repository` with your database options.
 Retry refreshes the evidence immediately; setup refreshes and GitHub events also reconsider skips.
 
 ## State and backups
@@ -127,7 +129,7 @@ existing corpus; direct-database CLI commands belong outside a running server's 
 | Query or pack cannot be found | Run from the checkout, match the CodeQL pin and rerun [workspace pack installation](source.md#install-query-dependencies). A copied executable is insufficient. |
 | Database cannot open | Create its parent directory and confirm permissions, path and exclusive process ownership. A directory override for Make is not a flag passed to a direct CLI command. |
 | Private repositories are missing from the listing | The server reads its token at startup, so a listing made before authenticating is incomplete. Run `make restart` after `gh auth login` or `gh auth refresh`. The next listing uses the new token: saving a changed declaration, or the first cycle after **Start analysis**. **Check with gh** succeeding does not prove the running server's reader has the same token. |
-| Private repositories are unavailable | Git could not fetch them, and nothing retries them on its own. Fix access until the [`git ls-remote` check](source.md#configure-authentication) succeeds, then choose the rows in the **Unavailable** view of the Coverage unit, which shows why each one failed, and press **Resync**. **Re-analyze unavailable** in **Settings**, under **How discovery runs**, puts back all of them, and **Or one repository** every reference of one. A reference built from an expression names no repository and stays unavailable. |
+| Private repositories are unavailable | Git could not fetch them. Each is probed again once a day, and at once when an installation that can grant access names its owner. Fix access until the [`git ls-remote` check](source.md#configure-authentication) succeeds, then choose the rows in the **Unavailable** view of the Coverage unit, which shows why each one failed, and press **Resync**. **Re-analyze unavailable** in **Settings**, under **How discovery runs**, puts back all of them, and **Or one repository** every reference of one. A reference built from an expression names no repository and stays unavailable. |
 | A declared account has nothing queued | Coverage lists each enabled declaration discovery has not acted on, with why: the reason its last read failed — for example an App that is not installed on the account — or that the organizations GitHub lists for you leave it out, so it roots nothing. Fix that, choose the account there and press **Resync** to list it whole on the next cycle. |
 | Ownership is unknown or contradicted | Check the declared account and refresh identity through the interface, or stop the server before `accounts --refresh`. A missing scope is not proof that the account has no repositories. |
 | Discovery does not start | Read its stated problem: scope, missing Git/CodeQL, query path or writable work directory. New installations deliberately start stopped. |

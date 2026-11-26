@@ -6,6 +6,7 @@
 @inject InstanceService Instance
 @inject ThemeService Theme
 @inject AccountService Accounts
+@inject RoleService Roles
 @inject RunDraft Draft
 @inject IJSRuntime Js
 
@@ -92,6 +93,22 @@
             Run queries
         </MudButton>
     </span>
+
+    @* The coverage unit's own action: what was chosen in its rows and accounts, read again. *@
+    @if (_unit == UnitCoverage)
+    {
+        <Tip Text="@(_mayNotResync ?? "Put the chosen rows back ahead of the ranking, read the owned repositories among them again, and list the chosen accounts again in full.")">
+            <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh"
+                       Disabled="@(_resyncing || PickedCount == 0 || _mayNotResync is not null)" OnClick="Resync"
+                       data-abom-coverage-resync>Resync @(PickedCount > 0 ? $"{PickedCount:N0} chosen" : "chosen")</MudButton>
+        </Tip>
+        @if (PickedCount > 0)
+        {
+            <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="ClearPicks"
+                       title="Choose nothing: no row and no account."
+                       data-abom-coverage-clear>Clear</MudButton>
+        }
+    }
 </div>
 
 @* Refused whole and said by name: rows under a term dropped in silence answer a wider question
@@ -840,40 +857,47 @@
     }
     else if (UnlistedAccounts.Any())
     {
-        <div class="abom-coverage-accounts mb-3" data-abom-coverage-accounts>
-            <MudText Typo="Typo.subtitle2">Declared accounts discovery has not acted on</MudText>
-            @foreach (var account in UnlistedAccounts)
-            {
-                <div class="abom-coverage-account" data-abom-coverage-account="@account.Owner">
-                    <MudCheckBox T="bool" Size="Size.Small" Dense="true"
-                                 Value="@_pickedAccounts.Contains(account.Owner)"
-                                 ValueChanged="@(v => PickAccount(account.Owner, v))"
-                                 aria-label="@($"Choose {account.Owner} to list again")"
-                                 title="Choose this account to list again in full when you resync."
-                                 data-abom-coverage-account-pick="@account.Owner" />
-                    <span class="abom-coverage-account-name">@account.Owner</span>
-                    <MudText Typo="Typo.caption" Class="mud-text-secondary">@ListingWords(account)</MudText>
-                </div>
-            }
+        <div class="mb-3" data-abom-coverage-accounts>
+            <MudText Typo="Typo.subtitle2" Class="mb-1">Declared accounts discovery has not acted on</MudText>
+            <MudSimpleTable Dense="true" Hover="true" Elevation="0" Outlined="true" Class="abom-coverage-accounts">
+                <thead>
+                    <tr>
+                        <th></th>
+                        <th><HeaderTip Tip="The declared account discovery has not listed in full.">Account</HeaderTip></th>
+                        <th><HeaderTip Tip="Why discovery has not listed it: never tried, refused by GitHub, or rooting nothing.">Why</HeaderTip></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var account in UnlistedAccounts)
+                    {
+                        <tr data-abom-coverage-account="@account.Owner">
+                            <td>
+                                <MudCheckBox T="bool" Size="Size.Small" Dense="true"
+                                             Value="@_pickedAccounts.Contains(account.Owner)"
+                                             ValueChanged="@(v => PickAccount(account.Owner, v))"
+                                             aria-label="@($"Choose {account.Owner} to list again")"
+                                             title="Choose this account to list again in full when you resync."
+                                             data-abom-coverage-account-pick="@account.Owner" />
+                            </td>
+                            <td class="abom-path">@account.Owner</td>
+                            <td class="mud-text-secondary">@ListingWords(account)</td>
+                        </tr>
+                    }
+                </tbody>
+            </MudSimpleTable>
         </div>
     }
 
-    <div class="d-flex align-center flex-wrap gap-2 mb-2" data-abom-coverage-actions>
-        <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Refresh"
-                   Disabled="@(_resyncing || PickedCount == 0)" OnClick="Resync"
-                   title="Put the chosen rows back ahead of the ranking, read the owned repositories among them again, and list the chosen accounts again in full."
-                   data-abom-coverage-resync>Resync @(PickedCount > 0 ? $"{PickedCount:N0} chosen" : "chosen")</MudButton>
-        @if (PickedCount > 0)
-        {
-            <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="ClearPicks"
-                       title="Choose nothing: no row and no account."
-                       data-abom-coverage-clear>Clear</MudButton>
-        }
-        @if (_resyncNote is { } note)
-        {
-            <MudText Typo="Typo.caption" Class="mud-text-secondary" data-abom-coverage-resync-note>@note</MudText>
-        }
-    </div>
+    @if (_resyncNote is { } note)
+    {
+        <MudAlert Severity="Severity.Success" Dense="true" Class="mb-2" data-abom-coverage-resync-note>@note</MudAlert>
+    }
+    @if (_resyncRefused is not null)
+    {
+        <div data-abom-coverage-resync-note data-abom-coverage-resync-refused>
+            <AbomAlert Problem="@_resyncRefused" Class="mb-2" />
+        </div>
+    }
 
     @if (_coverageLoading)
     {
@@ -927,11 +951,23 @@
                 <PropertyColumn Property="x => x.State" Title="State">
                     <HeaderTemplate><HeaderTip Tip="Where this dependency stands in the analysis queue.">State</HeaderTip></HeaderTemplate>
                     <CellTemplate>
-                        <span class="abom-status-cell">
-                            <span class="abom-state-dot mr-1"
-                                  style="--abom-state-color:@CoverageColor(context.Item.State)"></span>
-                            @CoverageStateLabel(context.Item.State)
-                        </span>
+                        @* A stuck row is still retried, so it keeps retrying's colour; only its name says it stopped helping. *@
+                        @if (context.Item.Stuck)
+                        {
+                            <Tip Text="@($"Failed {context.Item.Attempts:N0} times. ABOM still retries it, waiting longer each time up to a day, and it no longer holds its depth open.")">
+                                <span class="abom-status-cell" data-abom-coverage-row-state="@PickKey(context.Item)">
+                                    <span class="abom-state-dot mr-1"
+                                          style="--abom-state-color:@CoverageColor(context.Item.State)"></span>stuck
+                                </span>
+                            </Tip>
+                        }
+                        else
+                        {
+                            <span class="abom-status-cell" data-abom-coverage-row-state="@PickKey(context.Item)">
+                                <span class="abom-state-dot mr-1"
+                                      style="--abom-state-color:@CoverageColor(context.Item.State)"></span>@CoverageStateLabel(context.Item.State)
+                            </span>
+                        }
                     </CellTemplate>
                 </PropertyColumn>
                 <PropertyColumn Property="x => x.Tier" Title="Tier">
@@ -961,6 +997,13 @@
                                 Hidden="@(_coverageState is not ("unavailable" or "retrying"))">
                     <HeaderTemplate><HeaderTip Tip="Why this dependency is unavailable or waiting to be retried, when ABOM recorded one.">Reason</HeaderTip></HeaderTemplate>
                     <CellTemplate>
+                        @if (CauseWords.TryGetValue(context.Item.Cause, out var cause))
+                        {
+                            <Tip Text="@cause.Tip" Class="d-block">
+                                <MudText Typo="Typo.caption" Class="abom-strong"
+                                         data-abom-coverage-cause="@PickKey(context.Item)">@cause.Label</MudText>
+                            </Tip>
+                        }
                         @if (context.Item.Reason is { Length: > 0 } reason)
                         {
                             <MudText Typo="Typo.caption" data-abom-coverage-reason>@reason</MudText>
@@ -969,6 +1012,42 @@
                         {
                             <span class="abom-faint">—</span>
                         }
+                    </CellTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.LastAttemptAt" Title="Last attempt"
+                                Hidden="@(_coverageState is not ("unavailable" or "retrying"))">
+                    <HeaderTemplate><HeaderTip Tip="When this dependency last failed, or was found unavailable, where ABOM recorded it.">Last attempt</HeaderTip></HeaderTemplate>
+                    <CellTemplate>
+                        <span data-abom-coverage-last-attempt="@PickKey(context.Item)">
+                            @if (context.Item.LastAttemptAt is { Length: > 0 } at)
+                            {
+                                <MudText Typo="Typo.caption">@TimeText.DayAndTime(at)</MudText>
+                            }
+                            else
+                            {
+                                <span class="abom-faint">—</span>
+                            }
+                        </span>
+                    </CellTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.NextAttemptAt" Title="Next attempt" Sortable="false"
+                                Hidden="@(_coverageState is not ("unavailable" or "retrying"))">
+                    <HeaderTemplate><HeaderTip Tip="When a failed dependency is tried again. An unavailable one is not retried; ABOM probes its reference daily, and as soon as an installation names its owner, and puts it back once it answers.">Next attempt</HeaderTip></HeaderTemplate>
+                    <CellTemplate>
+                        <span data-abom-coverage-next="@PickKey(context.Item)">
+                            @if (context.Item.Status == "pending" && context.Item.NextAttemptAt is { Length: > 0 } next)
+                            {
+                                <MudText Typo="Typo.caption">@(Passed(next) ? "due since " : "")@TimeText.DayAndTime(next)</MudText>
+                            }
+                            else if (context.Item.ProbedAt is { Length: > 0 } probed)
+                            {
+                                <MudText Typo="Typo.caption">last probed @TimeText.DayAndTime(probed)</MudText>
+                            }
+                            else
+                            {
+                                <span class="abom-faint">—</span>
+                            }
+                        </span>
                     </CellTemplate>
                 </PropertyColumn>
                 <PropertyColumn Property="x => x.AnalyzedAt" Title="Last analyzed">
@@ -1016,9 +1095,13 @@
 
 @* Stated rather than implied by a pager: the grid used to hold 500 of 1,585 with nothing saying
    so, and a column sorted inside that page answered about the page rather than about the estate. *@
-@if (_unit == UnitCoverage && _countedUnit == _unit && !_coverageLoading)
+@if (_unit != UnitFindings && (_unit == UnitCoverage ? _coverageLoading : _unitLoading))
 {
-    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-2">
+    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-2" data-abom-unit-count>Loading…</MudText>
+}
+else if (_unit == UnitCoverage && _countedUnit == _unit)
+{
+    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-2" data-abom-unit-count>
         Showing @_shown.ToString("N0")@(_shown >= CoverageCap
             ? $" — the first {CoverageCap:N0} the crawl will analyze, not the whole queue"
             : ", which is all of them"), ordered by what the crawl will analyze next.
@@ -1027,7 +1110,7 @@
 else if (_unit == UnitRelationships && _countedUnit == _unit)
 {
     @* A row is a declaration rather than a line, so the count names both. *@
-    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-2" data-abom-relationship-lines>
+    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-2" data-abom-relationship-lines data-abom-unit-count>
         Showing @_shown.ToString("N0") of @CountText.Of(_total, "declaration", "declarations") on
         @CountText.Of(_lines, "line", "lines"), ordered by
         @(_sort is { Length: > 0 } s ? ColumnLabel(s) : DefaultOrder(_unit)) across everything that
@@ -1045,7 +1128,7 @@ else if (_unit == UnitRelationships && _countedUnit == _unit)
 }
 else if (_unit != UnitFindings && _countedUnit == _unit)
 {
-    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-2">
+    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-2" data-abom-unit-count>
         Showing @_shown.ToString("N0") of @_total.ToString("N0") matching, ordered by
         @(_sort is { Length: > 0 } s ? ColumnLabel(s) : DefaultOrder(_unit)) across everything that
         matched.
@@ -1201,7 +1284,9 @@ else if (_unit != UnitFindings && _countedUnit == _unit)
     private int _total;
     private int _shown;
     // Which unit _total and _shown answer for; until its first answer they count nothing.
+    // Null until a page of the unit has been read: a page that could not be read has no size.
     private string? _countedUnit;
+    private bool _unitLoading;
     private int _unreached;
     private IReadOnlyList<KindCount> _elsewhere = [];
     private int _unsourced;
@@ -1516,6 +1601,8 @@ else if (_unit != UnitFindings && _countedUnit == _unit)
 
     protected override async Task OnInitializedAsync()
     {
+        _mayNotResync = await Roles.RefusalAsync("abom/discovery-control");
+        StateHasChanged();
         // Read here as well as inside the picker: the export's refusal is a claim this page makes
         // about the scope, and it needs the same declaration the picker offers terms from.
         _filterTerms = await Api.GetFilterTermsAsync();
@@ -1610,6 +1697,8 @@ else if (_unit != UnitFindings && _countedUnit == _unit)
     private readonly HashSet<string> _pickedAccounts = new(StringComparer.OrdinalIgnoreCase);
     private bool _resyncing;
     private string? _resyncNote;
+    private string? _mayNotResync;
+    private ApiProblem? _resyncRefused;
 
     private int PickedCount => _picked.Count + _pickedAccounts.Count;
 
@@ -1671,27 +1760,24 @@ else if (_unit != UnitFindings && _countedUnit == _unit)
     {
         _resyncing = true;
         _resyncNote = null;
-        try
+        _resyncRefused = null;
+        var (got, refusal) = await Api.ResyncAsync(_picked.Values.ToList(), _pickedAccounts.ToList());
+        _resyncing = false;
+        _resyncRefused = refusal;
+        if (got is null)
         {
-            var got = await Api.ResyncAsync(_picked.Values.ToList(), _pickedAccounts.ToList());
-            _resyncNote = ResyncWords(got);
-            ClearPicks();
-            await LoadCoverage();
+            return;
         }
-        catch (HttpRequestException e)
-        {
-            _resyncNote = e.Message;
-        }
-        finally
-        {
-            _resyncing = false;
-        }
+        _resyncNote = ResyncWords(got);
+        ClearPicks();
+        await LoadCoverage();
     }
 
     private static string ResyncWords(ResyncResult got)
     {
         var parts = new List<string>();
         if (got.Requeued > 0) parts.Add($"{got.Requeued:N0} put back");
+        if (got.Queued > 0) parts.Add($"{got.Queued:N0} already queued, left in place");
         if (got.Expedited > 0) parts.Add($"{got.Expedited:N0} moved to the front of the queue");
         if (got.Running > 0) parts.Add($"{got.Running:N0} already running, left to finish");
         if (got.Waiting > 0) parts.Add($"{got.Waiting:N0} left waiting for code scanning");
@@ -1704,6 +1790,18 @@ else if (_unit != UnitFindings && _countedUnit == _unit)
             : char.ToUpperInvariant(parts[0][0]) + string.Join("; ", parts)[1..] + ".";
         return got.State.Status.IsRunning ? said : said + " Discovery is not running, so this happens once it starts.";
     }
+
+    // A retry whose time has passed waits only for discovery to run.
+    private static bool Passed(string timestamp) =>
+        DateTime.TryParse(timestamp, null, System.Globalization.DateTimeStyles.AdjustToUniversal, out var at) &&
+        at <= DateTime.UtcNow;
+
+    // Only these two causes are ever named, and only from what Git or a probe said.
+    private static readonly Dictionary<string, (string Label, string Tip)> CauseWords = new()
+    {
+        ["access"] = ("needs access", "GitHub refused to show this repository to ABOM. Installing the GitHub App on its owner, or adding the repository to the installation, heals it; ABOM probes again as soon as an installation names the owner."),
+        ["absent"] = ("reference gone", "The repository answered and holds no such branch or tag. Nothing ABOM does brings it back; ABOM still probes it daily in case it reappears."),
+    };
 
     private static string CoverageStateLabel(string state) => state switch
     {
@@ -2062,6 +2160,8 @@ else if (_unit != UnitFindings && _countedUnit == _unit)
         where TPage : class, IPage<TRow>
     {
         var unit = _unit;
+        _unitLoading = true;
+        StateHasChanged();
         var sort = state.SortDefinitions.FirstOrDefault();
         _sort = sort is not null && sorts is not null && sorts.TryGetValue(sort.SortBy, out var term)
             ? term : null;
@@ -2071,7 +2171,8 @@ else if (_unit != UnitFindings && _countedUnit == _unit)
         _refusal = refusal;
         _total = page?.Total ?? 0;
         _shown = page?.Items.Count ?? 0;
-        _countedUnit = unit;
+        _unitLoading = false;
+        _countedUnit = page is null ? null : unit;
         _elsewhere = [];
         _unsourced = _unprovided = _unlisted = _unreached = _lines = _withoutDeclaration = 0;
         also?.Invoke(page);

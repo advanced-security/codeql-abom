@@ -80,6 +80,7 @@ func TestSubmitRequiresTheControlHeader(t *testing.T) {
 // type did not, so the running server answered 500 and this test still passed.
 func TestSubmitReportsWhyATargetWasRefused(t *testing.T) {
 	s := &Server{
+		Store:              decisionStore(t),
 		AllowRemoteControl: true,
 		SnapshotSubmit: func(repo string) (SnapshotResult, error) {
 			return SnapshotResult{}, &submit.ErrNotApproved{Repository: repo}
@@ -107,6 +108,7 @@ func TestSubmitReportsWhyATargetWasRefused(t *testing.T) {
 // the test above gives.
 func TestSubmitSaysWhichCommitsMustBeAnalyzedAgainBeforeItWillWrite(t *testing.T) {
 	s := &Server{
+		Store:              decisionStore(t),
 		AllowRemoteControl: true,
 		SnapshotSubmit: func(repo string) (SnapshotResult, error) {
 			return SnapshotResult{}, &store.UnobservedClosureError{

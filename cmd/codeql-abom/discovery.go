@@ -311,9 +311,16 @@ func preflight(s store.Backend, codeqlPath, queryPath, workDir string) func() *s
 			}
 		}
 		if !declared {
+			if verdict, err := s.ScopeVerdict(); err == nil && verdict.Undecided() {
+				return &supervisor.Problem{
+					Reason: "the declared scope is not confirmed, so there is nothing in scope to discover: " + verdict.Reason,
+					Remedy: "Confirm the declaration in Settings, " +
+						"or run `codeql-abom own --db <db> --org <name>` again to decide it",
+				}
+			}
 			return &supervisor.Problem{
 				Reason: "no owned account is declared, so there is nothing in scope to discover",
-				Remedy: "declare the accounts you own on the Your Accounts page, " +
+				Remedy: "Declare the accounts you own in Settings, " +
 					"or run `codeql-abom own --db <db> --org <name>`",
 			}
 		}

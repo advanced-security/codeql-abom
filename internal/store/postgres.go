@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"database/sql"
 	"fmt"
 	"net/url"
@@ -30,7 +31,8 @@ func openPostgres(dsn string, opts Options) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("connecting to PostgreSQL: %w", err)
 	}
-	s := &Store{db: &database{DB: db, postgres: true, readOnly: opts.ReadOnly}, bulkMode: opts.BulkLoad, dsn: dsn}
+	s := &Store{db: &database{DB: db, postgres: true, readOnly: opts.ReadOnly}, bulkMode: opts.BulkLoad, dsn: dsn,
+		decisions: &decisionKeys{dir: cmp.Or(opts.AuthzDir, DefaultAuthzDir(dsn))}}
 	if err := s.refuseDemo(opts); err != nil {
 		_ = db.Close()
 		return nil, err

@@ -34,18 +34,15 @@ func runClosure(ctx context.Context, args []string, stdout, stderr io.Writer) er
 	}
 	defer cleanup()
 
-	s, err := store.OpenBackend(cfg.dbPath, store.Options{})
+	s, err := openDecided(ctx, "closure", args, cfg.dbPath, store.Options{})
 	if err != nil {
-		return fmt.Errorf("opening %s: %w", store.DatabaseLabel(cfg.dbPath), err)
+		return err
 	}
 	defer s.Close()
-	if err := s.Migrate(); err != nil {
-		return fmt.Errorf("migrating %s: %w", store.DatabaseLabel(cfg.dbPath), err)
-	}
 
 	roots := []string(cfg.roots)
 	if len(roots) == 0 {
-		if roots, err = s.OwnedRepositories(); err != nil {
+		if roots, err = ownedRepositories(s); err != nil {
 			return fmt.Errorf("closure: %w", err)
 		}
 	}

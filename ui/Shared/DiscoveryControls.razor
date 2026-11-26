@@ -5,6 +5,7 @@
 @implements IDisposable
 @inject AbomApi Api
 @inject FollowService Follow
+@inject RoleService Roles
 
 @* Starting the crawl and deciding what it runs, in one box. Per-dependency progress is read where
    the data is — the Inventory's Coverage unit and the Explorer — so what is here is only what the
@@ -180,14 +181,15 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
 
 <MudPaper Elevation="0" Outlined="true" Class="pa-3 mb-3">
     <div class="d-flex align-center flex-wrap gap-3">
-        <MudButton Size="Size.Small" Variant="Variant.Filled"
-                   Color="@(IsRunning ? Color.Default : Color.Primary)"
-                   StartIcon="@(IsRunning ? Icons.Material.Filled.Pause : Icons.Material.Filled.PlayArrow)"
-                   Disabled="@(_busy || _state.Status.IsPausing)" OnClick="ToggleRunning"
-                   data-abom-run
-                   title="Analysis clones each repository, builds a CodeQL database and runs the bound suites. Enumeration, which only lists what is under a declared account, is a separate act and happens when the declaration is saved.">
-            @(_state.Status.IsPausing ? "Pausing…" : IsRunning ? "Pause analysis" : "Start analysis")
-        </MudButton>
+        <Tip Text="@(_mayNotSteer ?? "Analysis clones each repository, builds a CodeQL database and runs the bound suites. Enumeration, which only lists what is under a declared account, is a separate act and happens when the declaration is saved.")">
+            <MudButton Size="Size.Small" Variant="Variant.Filled"
+                       Color="@(IsRunning ? Color.Default : Color.Primary)"
+                       StartIcon="@(IsRunning ? Icons.Material.Filled.Pause : Icons.Material.Filled.PlayArrow)"
+                       Disabled="@(_busy || _state.Status.IsPausing || _mayNotSteer is not null)" OnClick="ToggleRunning"
+                       data-abom-run>
+                @(_state.Status.IsPausing ? "Pausing…" : IsRunning ? "Pause analysis" : "Start analysis")
+            </MudButton>
+        </Tip>
         <QueueBar State="_state" />
         <MudText Typo="Typo.body2">@StateSentence</MudText>
         <MudSpacer />
@@ -710,8 +712,14 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
     protected override async Task OnInitializedAsync()
     {
         Follow.Changed += OnFollowChanged;
+        // Drawn as soon as it is known, not after every read below: offered in between, the control
+        // would be refused on press.
+        _mayNotSteer = await Roles.RefusalAsync("abom/discovery-control");
+        StateHasChanged();
         await Load();
     }
+
+    private string? _mayNotSteer;
 
     private async Task Load()
     {

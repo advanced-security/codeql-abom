@@ -23,17 +23,6 @@ func post(t *testing.T, srv *Server, path string) *httptest.ResponseRecorder {
 	return rec
 }
 
-func put(t *testing.T, srv *Server, path, body string) *httptest.ResponseRecorder {
-	t.Helper()
-	rec := httptest.NewRecorder()
-	req := localRequest(http.MethodPut, path, strings.NewReader(body))
-	// Changing what discovery will crawl is a control operation, so it carries what one needs.
-	req.Host = "127.0.0.1:8080"
-	req.Header.Set(controlHeader, "1")
-	srv.Handler().ServeHTTP(rec, req)
-	return rec
-}
-
 type identityView struct {
 	Authenticated bool            `json:"authenticated"`
 	Login         string          `json:"login"`
@@ -76,7 +65,7 @@ func TestVerifyingRecordsTheAccountsItEstablished(t *testing.T) {
 		ghauth.Account{Owner: "octo-org", Kind: "organization", Role: "admin"},
 	)
 
-	refreshed := decode[identityView](t, postControl(t, srv, "/api/accounts/refresh"))
+	refreshed := decode[identityView](t, control(t, srv, http.MethodPost, "/api/accounts/refresh", ""))
 	if !refreshed.Authenticated || refreshed.Login != "octocat" {
 		t.Fatalf("refresh reported %+v", refreshed)
 	}
@@ -109,7 +98,7 @@ func TestAccountsCannotBeDeclaredOverHTTP(t *testing.T) {
 		name string
 		rec  *httptest.ResponseRecorder
 	}{
-		{"declaring", put(t, srv, "/api/owned-orgs", `["microsoft"]`)},
+		{"declaring", control(t, srv, http.MethodPut, "/api/owned-orgs", `["microsoft"]`)},
 		{"reading", get(t, srv, "/api/owned-orgs")},
 	} {
 		if tc.rec.Code != http.StatusNotFound {
@@ -127,7 +116,7 @@ func TestAFailedRefreshSaysHowToFixItRatherThanReportingNoAccounts(t *testing.T)
 	srv, s := newServer(t)
 	seedGraph(t, s)
 	srv.Verify = verifies(ghauth.Account{Owner: "octo-org", Kind: "organization", Role: "member"})
-	if rec := postControl(t, srv, "/api/accounts/refresh"); rec.Code != http.StatusOK {
+	if rec := control(t, srv, http.MethodPost, "/api/accounts/refresh", ""); rec.Code != http.StatusOK {
 		t.Fatalf("seeding a verification: status %d", rec.Code)
 	}
 
@@ -136,7 +125,7 @@ func TestAFailedRefreshSaysHowToFixItRatherThanReportingNoAccounts(t *testing.T)
 			Reason: "gh is not authenticated.", Remedy: "Run: gh auth login",
 		}
 	}
-	got := decode[identityView](t, postControl(t, srv, "/api/accounts/refresh"))
+	got := decode[identityView](t, control(t, srv, http.MethodPost, "/api/accounts/refresh", ""))
 
 	if got.Problem == nil {
 		t.Fatal("a failed refresh reported no problem, so nothing tells the operator what to do")
@@ -199,7 +188,7 @@ func TestPinningTotalsCarryBothHalvesOfTheSplit(t *testing.T) {
 	}
 
 	// The split counts what the operator has declared theirs; the halves must still sum to the whole.
-	if rec := put(t, srv, "/api/owned-scope",
+	if rec := control(t, srv, http.MethodPut, "/api/owned-scope",
 		`[{"owner":"octo-org","kind":"organization","enabled":true}]`); rec.Code != http.StatusOK {
 		t.Fatalf("declaring: status %d: %s", rec.Code, rec.Body.String())
 	}
@@ -302,7 +291,7 @@ func TestRefreshingChecksTheRoleBehindEachDeclaration(t *testing.T) {
 	}
 	before, _ := s.OwnedScope()
 
-	if rec := postControl(t, srv, "/api/accounts/refresh"); rec.Code != http.StatusOK {
+	if rec := control(t, srv, http.MethodPost, "/api/accounts/refresh", ""); rec.Code != http.StatusOK {
 		t.Fatalf("refresh: %d %s", rec.Code, rec.Body)
 	}
 	want := []string{"member-org/hidden as octocat", "member-org/maintained as octocat", "member-org/written as octocat"}
@@ -356,12 +345,12 @@ func TestADeclarationIsJudgedOnTheRoleGitHubReportsForWhatItNewlyIncludes(t *tes
 		}
 		return "", errors.New("gh cannot read octocat's role on member-org/" + repo)
 	}
-	if rec := postControl(t, srv, "/api/accounts/refresh"); rec.Code != http.StatusOK {
+	if rec := control(t, srv, http.MethodPost, "/api/accounts/refresh", ""); rec.Code != http.StatusOK {
 		t.Fatalf("refresh: %d %s", rec.Code, rec.Body)
 	}
 	declare := func(body string) *httptest.ResponseRecorder {
 		asked = nil
-		return put(t, srv, "/api/owned-scope", body)
+		return control(t, srv, http.MethodPut, "/api/owned-scope", body)
 	}
 
 	for name, c := range map[string]struct{ body, reason string }{
@@ -372,7 +361,8 @@ func TestADeclarationIsJudgedOnTheRoleGitHubReportsForWhatItNewlyIncludes(t *tes
 		"a repository whose role could not be read": {`[{"owner":"member-org","kind":"organization","enabled":true,` +
 			`"includesOnly":true,"includes":["hidden"]}]`, "could not be read"},
 	} {
-		if rec := declare(c.body); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), c.reason) {
+		if rec := declare(c.body); rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "declaration-refused-by-role") ||
+			!strings.Contains(rec.Body.String(), c.reason) {
 			t.Errorf("%s: %d %s, want it refused naming %q", name, rec.Code, rec.Body, c.reason)
 		}
 	}

@@ -98,7 +98,9 @@ type fakeGitHub struct {
 	calls         map[string]int
 	tokens        map[string]int64
 	// carries is the permissions GitHub gave each token: what was asked for, or everything granted.
-	carries     map[string]map[string]string
+	carries map[string]map[string]string
+	// scopedTo is the repositories each token was asked for; absent is every one the installation covers.
+	scopedTo    map[string][]string
 	minted      int
 	listStatus  int
 	mintStatus  map[int64]int
@@ -106,7 +108,21 @@ type fakeGitHub struct {
 	// echo makes every failure repeat the request's Authorization header, as a careless server might.
 	echo       bool
 	conversion map[string]any
+
+	// Sign-in: codes GitHub handed back for a challenge, the people user tokens belong to, the
+	// tokens revoked, and who belongs to which organization ("org") and team ("org/team"), by role.
+	codes   map[string]string
+	people  map[string]fakePerson
+	revoked []string
+	members map[string]map[string]string
 }
+
+type fakePerson struct {
+	ID          int64
+	Login, Name string
+}
+
+const testClientSecret = "client-secret-value"
 
 const testAppID = 4242
 const testClientID = "Iv23liTESTCLIENT"
@@ -117,7 +133,9 @@ var level = map[string]int{"read": 1, "write": 2, "admin": 3}
 func newFakeGitHub(t *testing.T, key *rsa.PrivateKey, now func() time.Time, inst ...fakeInstallation) *fakeGitHub {
 	f := &fakeGitHub{t: t, key: key, appID: testAppID, now: now, installations: inst,
 		calls: map[string]int{}, tokens: map[string]int64{}, carries: map[string]map[string]string{},
-		mintStatus: map[int64]int{}, reposStatus: map[int64]int{}}
+		scopedTo:   map[string][]string{},
+		mintStatus: map[int64]int{}, reposStatus: map[int64]int{},
+		codes: map[string]string{}, people: map[string]fakePerson{}, members: map[string]map[string]string{}}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
 	return f
@@ -219,8 +237,71 @@ func (f *fakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = json.NewEncoder(w).Encode([]map[string]any{{"repository_full_name": r.PathValue("org") + "/two"}})
 	}))
+	mux.HandleFunc("POST /login/oauth/access_token", f.userToken)
+	mux.HandleFunc("GET /user", func(w http.ResponseWriter, r *http.Request) {
+		bearer, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		p, ok := f.people[bearer]
+		if !ok || slices.Contains(f.revoked, bearer) {
+			f.fail(w, r, http.StatusUnauthorized, "Bad credentials")
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": p.ID, "login": p.Login, "name": p.Name})
+	})
+	mux.HandleFunc("DELETE /applications/{client}/token", func(w http.ResponseWriter, r *http.Request) {
+		id, secret, ok := r.BasicAuth()
+		var body struct {
+			Token string `json:"access_token"`
+		}
+		if !ok || id != testClientID || secret != testClientSecret || r.PathValue("client") != testClientID ||
+			json.NewDecoder(r.Body).Decode(&body) != nil {
+			f.fail(w, r, http.StatusUnauthorized, "Bad credentials")
+			return
+		}
+		f.revoked = append(f.revoked, body.Token)
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("GET /orgs/{org}/memberships/{login}", f.asInstallation(func(w http.ResponseWriter, r *http.Request) {
+		f.membership(w, r, r.PathValue("org"), map[string]string{"admin": "admin", "member": "member"})
+	}))
+	mux.HandleFunc("GET /orgs/{org}/teams/{team}/memberships/{login}", f.asInstallation(func(w http.ResponseWriter, r *http.Request) {
+		f.membership(w, r, r.PathValue("org")+"/"+r.PathValue("team"), map[string]string{"maintainer": "maintainer", "member": "member"})
+	}))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { f.fail(w, r, http.StatusNotFound, "Not Found") })
 	mux.ServeHTTP(w, r)
+}
+
+// userToken answers the App's code exchange only with the App's own secret and the verifier whose
+// challenge the authorization was asked with.
+func (f *fakeGitHub) userToken(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil || r.Header.Get("Accept") != "application/json" ||
+		r.Form.Get("client_id") != testClientID || r.Form.Get("client_secret") != testClientSecret {
+		f.fail(w, r, http.StatusUnauthorized, "incorrect_client_credentials")
+		return
+	}
+	challenge, ok := f.codes[r.Form.Get("code")]
+	sum := sha256.Sum256([]byte(r.Form.Get("code_verifier")))
+	if !ok || base64.RawURLEncoding.EncodeToString(sum[:]) != challenge {
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": "bad_verification_code"})
+		return
+	}
+	delete(f.codes, r.Form.Get("code"))
+	_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "ghu_" + r.Form.Get("code"), "token_type": "bearer"})
+}
+
+// membership answers as GitHub does: the person's role while active, and 404 for anyone else. The
+// token must carry members: read.
+func (f *fakeGitHub) membership(w http.ResponseWriter, r *http.Request, group string, roles map[string]string) {
+	bearer, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if f.carries[bearer]["members"] == "" {
+		f.fail(w, r, http.StatusForbidden, "Resource not accessible by integration")
+		return
+	}
+	role, ok := roles[f.members[group][strings.ToLower(r.PathValue("login"))]]
+	if !ok {
+		f.fail(w, r, http.StatusNotFound, "Not Found")
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"state": "active", "role": role})
 }
 
 func (f *fakeGitHub) asApp(next http.HandlerFunc) http.HandlerFunc {
@@ -296,7 +377,8 @@ func (f *fakeGitHub) mint(w http.ResponseWriter, r *http.Request) {
 	}
 	granted := f.installations[at].granted()
 	var body struct {
-		Permissions map[string]string `json:"permissions"`
+		Permissions  map[string]string `json:"permissions"`
+		Repositories []string          `json:"repositories"`
 	}
 	if r.ContentLength != 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -319,6 +401,9 @@ func (f *fakeGitHub) mint(w http.ResponseWriter, r *http.Request) {
 	token := fmt.Sprintf("ghs_test_%d_%d", id, f.minted)
 	f.tokens[token] = id
 	f.carries[token] = carries
+	if body.Repositories != nil {
+		f.scopedTo[token] = body.Repositories
+	}
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(map[string]any{"token": token,
 		"expires_at": f.now().Add(time.Hour).Format(time.RFC3339)})

@@ -8,7 +8,6 @@ import (
 	"io"
 	"time"
 
-	"github.com/advanced-security/codeql-abom/internal/ghapp"
 	"github.com/advanced-security/codeql-abom/internal/ghauth"
 	"github.com/advanced-security/codeql-abom/internal/serve"
 	"github.com/advanced-security/codeql-abom/internal/store"
@@ -43,6 +42,11 @@ func runAccounts(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		return fmt.Errorf("migrating %s: %w", store.DatabaseLabel(*dbPath), err)
 	}
 
+	if *forget || *refresh {
+		if _, err := decideCommand(ctx, s, "accounts", args); err != nil {
+			return err
+		}
+	}
 	if *forget {
 		if err := s.ForgetAccounts(); err != nil {
 			return fmt.Errorf("accounts: %w", err)
@@ -83,7 +87,7 @@ func runAccounts(ctx context.Context, args []string, stdout, stderr io.Writer) e
 // variable so a test can answer for GitHub.
 var declarer = func(dbPath string) (func(context.Context) (ghauth.Identity, error),
 	func(ctx context.Context, owner, repo, login string) (string, error), error) {
-	app, err := readerApp(ghapp.DefaultDir(dbPath), "", defaultAPIURL())
+	app, err := readerApp(readerAppDir(dbPath), "", defaultAPIURL())
 	if err != nil {
 		return nil, nil, err
 	}

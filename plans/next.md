@@ -37,14 +37,12 @@ The ranking is itself a plan, and is subject to change.
 
 ## Parallel priority
 
-**[Installable releases and distributed Kubernetes execution](tools/deployment.md) starts alongside
-the ranked work, not after it.** Release readiness deserves its own parallel effort because most
-documentation and deployment packaging can be isolated to `docs/`, `plans/` and the new `infra/`
-directory. Keep the README entry point, build integration and release workflows narrowly scoped.
-The [source-install recipe](../docs/deployment/source.md) needs clean-machine qualification;
-portable Linux/macOS amd64/arm64 release bundles are the first new deployment to qualify against
-the plan's archive contract. Multi-stage GHCR images and the private Helm deployment follow
-within the same workstream.
+**[Installable releases](tools/releases.md) starts alongside the ranked work, not after it.**
+Release readiness deserves its own parallel effort because most documentation and packaging can be
+isolated to `docs/`, `plans/` and `infra/`. Keep the README entry point, build integration and
+release workflows narrowly scoped. The [source-install recipe](../docs/deployment/source.md) needs
+clean-machine qualification; portable Linux/macOS amd64/arm64 release bundles are the first new
+deployment to qualify against the plan's archive contract.
 
 **This does not demote or reorder the shared-runtime work below.** Documentation, image builds,
 chart templates and deployment tests can proceed against agreed contracts while other features
@@ -59,6 +57,30 @@ wide the catalog may be before tag chips go in, re-recording the fixture corpus 
 acceptance, the per-event cost of a session's audit capture, and the real-corpus check with
 screenshots. It touches the view language, the catalog, `cmd/abom-corpus` and the authoring harness,
 not the graph.
+
+## Production readiness
+
+A hosted, scaled-out instance is one body of work, developed and verified as a unit and submitted as a
+series of related pull requests. It answers six requirements a customer raised, and where each stands:
+
+| Requirement | Where it stands |
+| --- | --- |
+| Production hosting that runs CodeQL in parallel (3) | A coordinator and pools of Kubernetes Jobs, drilled from zero on kind; [EKS and scale](tools/kubernetes.md) remain |
+| Every component of a query on screen (4) | Built: a file tree and viewer of every component, with the bundle's digest |
+| Exporting a query (5) | Built as a pull request to the one repository a publisher App may write to; an S3 export is not planned until a GitHub-native route is shown to fall short |
+| Authentication and authorization (7) | Built: sign-in through an identity provider or GitHub, roles on every route, every decision signed; [what is open](api/access.md) |
+| The command line bypassing the declaration check (9) | Fixed: every entry point reaches one signed decision, which names who asked |
+| Coverage stuck at *unavailable* after one failure (10) | Fixed: a failure ends coverage only for a reason still true, probes heal it, and alerts and Coverage say why ([how](../docs/architecture.md#the-queue)) |
+
+What follows, in order. The first is ranked above everything below by your decision: without it a
+hosted instance has no query authoring.
+
+1. **[Authoring sessions run as their own worker pool](api/authoring-workers.md)** — the last work
+   still inside the coordinator; in a cluster no session can start until it moves.
+2. **[Who may use a hosted instance](api/access.md)** — how long a role holds after the provider
+   removes it, sessions surviving a restart, and GitHub sign-in and the KMS signer on real accounts.
+3. **[ABOM on Kubernetes, past kind](tools/kubernetes.md)** — EKS end to end, scale on a large
+   machine, worker pods as hardened as the coordinator, recovery and upgrade, published images.
 
 ## Ranked next
 
@@ -282,7 +304,7 @@ refusal.
   **refused rather than deferred**; a configuration file applied through the
   `github-codeql-config-file` property lets the organization add a pack through its own consent, so
   **no alert exists that a person did not choose**. ABOM's own packs currently resolve from a
-  checkout of this repository. [Deployment](tools/deployment.md) owns bundling them for installed
+  checkout of this repository. [Releases](tools/releases.md) owns bundling them for installed
   runtimes; that does not require or resume registry publication.
 
 - **[A client in the workflow, thin enough to trust](api/abom-check.md)** — deferred by decision
@@ -302,14 +324,13 @@ refusal.
   never been timed against it, so adopting the archive now would trade a disk problem for a
   latency problem on an assumption. Its first item needs none of that: two thirds of every
   retained database is build logs nothing reads.
-- **[An address the enterprise can reach, an identity it granted, and readers GitHub
-  authorizes](api/enterprise-server.md)** — ABOM runs as a private GitHub App with installation
-  tokens minted per call and installations as evidence, re-read on installation events; a
-  workstation receives its deliveries through a relay, verified end to end on `has-ghas`. It writes
-  nothing, and measuring its Copilot grant is [production credentials](api/production-credentials.md),
-  not this deferral.
-  Deferred: a production address needs ingress this workstation lacks, and readers signing in
-  through the App and workflow callers wait on it. Installing on a second account waits on a
+- **[An address the enterprise can reach, and an identity it granted](api/enterprise-server.md)** —
+  ABOM runs as a private GitHub App with installation tokens minted per call and installations as
+  evidence, re-read on installation events; a workstation receives its deliveries through a relay,
+  verified end to end on `has-ghas`. It writes nothing, and measuring its Copilot grant is
+  [production credentials](api/production-credentials.md), not this deferral. Deferred: the EKS
+  ingress the [production readiness](#production-readiness) work builds is what this address
+  becomes, and workflow callers wait on it. Installing on a second account waits on a
   decision the plan names: a private App installs only on its owner.
 - **[Findings are a pluggable class](db/finding-providers.md)** — the seam is built and carries real
   data; a second provider is deferred by decision.

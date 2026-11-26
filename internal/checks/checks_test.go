@@ -99,6 +99,10 @@ func fixture(t *testing.T) *store.Store {
 			enqueued_at, resolved_sha) VALUES (?, ?, ?, ?, ?, 'done', '2026-10-01T00:00:00Z', ?)`,
 			q.key, q.ref, owner, repo, q.depth, q.commit)
 	}
+	// A reference that is gone, which a retry would not change.
+	exec(t, s, `INSERT INTO abom_frontier (node_key, ref, owner, repo, depth, status, enqueued_at, reason)
+		VALUES ('gone/act', 'v1', 'gone', 'act', 2, 'unavailable', '2026-10-01T00:00:00Z',
+		'dependency unavailable: cloning https://github.com/gone/act.git at "v1": fatal: Remote branch v1 not found in upstream origin')`)
 	for _, pkg := range []string{"vendor/act", "actions/cache"} {
 		if _, err := s.AddAdvisories([]store.Advisory{{GHSAID: "GHSA-" + pkg, Severity: "high",
 			Summary: pkg, Packages: []store.AdvisoryPackage{
@@ -251,12 +255,18 @@ func TestChecks8And9AreSkippedWhenTheRecomputeTheyReadFailed(t *testing.T) {
 
 // Each invariant is its own comparison, and must catch a violation of exactly what it states.
 func TestCheck9CatchesEachPlantedViolation(t *testing.T) {
-	clean, err := invariants(derivedFixture(t))
+	fixture := derivedFixture(t)
+	// A signed declaration, so 9h has one to compare.
+	if err := fixture.SetOwnedScope([]store.DeclaredAccount{{Owner: "octo", Kind: store.AccountOrganization,
+		Enabled: true}}, store.DeclaredByCLI); err != nil {
+		t.Fatal(err)
+	}
+	clean, err := invariants(fixture)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(clean) != 6 {
-		t.Fatalf("check 9 made %d comparisons, want one per invariant a to f", len(clean))
+	if len(clean) != 8 {
+		t.Fatalf("check 9 made %d comparisons, want one per invariant a to h", len(clean))
 	}
 	for _, p := range clean {
 		if p.Compared == 0 {
@@ -328,6 +338,20 @@ func TestCheck9CatchesEachPlantedViolation(t *testing.T) {
 			// A live line whose target was tombstoned on its own, which a prune never does.
 			exec(t, s, `UPDATE abom_node SET removed_at = '2026-10-02T00:00:00Z'
 				WHERE node_key = 'actions/cache'`)
+		}},
+		{"9g", "octo/lib@v1", func(t *testing.T, s *store.Store) {
+			// Settled unavailable on a resolver outage, which a retry would change.
+			exec(t, s, `INSERT INTO abom_frontier (node_key, ref, owner, repo, depth, status, enqueued_at, reason)
+				VALUES ('octo/lib', 'v1', 'octo', 'lib', 1, 'unavailable', '2026-10-01T00:00:00Z',
+				'dependency unavailable: cloning https://github.com/octo/lib.git at "v1": fatal: unable to access ''https://github.com/octo/lib.git/'': Could not resolve host: github.com')`)
+		}},
+		{"9h", "the declared scope", func(t *testing.T, s *store.Store) {
+			// Widened after it was decided, as a direct database write would.
+			if err := s.SetOwnedScope([]store.DeclaredAccount{{Owner: "octo", Kind: store.AccountOrganization,
+				Enabled: true, IncludesOnly: true, Includes: []string{"app"}}}, store.DeclaredByCLI); err != nil {
+				t.Fatal(err)
+			}
+			exec(t, s, `UPDATE abom_owned_scope SET includes_only = 0`)
 		}},
 	} {
 		t.Run(c.part, func(t *testing.T) {

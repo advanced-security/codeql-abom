@@ -33,6 +33,7 @@
         <MudSpacer />
         @* Crawl state stays visible on every page because it changes without a viewer. *@
         <CrawlStatus />
+        <SignedIn />
         <MudTooltip Text="@ThemeTooltip">
             <MudIconButton Icon="@ThemeIcon" Color="Color.Inherit" OnClick="CycleTheme"
                            aria-label="@ThemeTooltip" data-abom-theme />
@@ -46,7 +47,7 @@
     <MudMainContent>
         <DemoBanner />
         <MudContainer MaxWidth="MaxWidth.False" Class="pa-4">
-            @Body
+            <AccessState>@Body</AccessState>
         </MudContainer>
     </MudMainContent>
 </MudLayout>

@@ -16,7 +16,7 @@ import (
 func TestTheDeclaredScopeCanBeWrittenAndReadBack(t *testing.T) {
 	srv, _ := newServer(t)
 
-	rec := put(t, srv, "/api/owned-scope", `[
+	rec := control(t, srv, http.MethodPut, "/api/owned-scope", `[
 	  {"owner":"acme","kind":"organization","enabled":true},
 	  {"owner":"acme-labs","kind":"organization","enabled":true,
 	   "includesOnly":true,"includes":["tooling"]}
@@ -40,9 +40,9 @@ func TestTheDeclaredScopeCanBeWrittenAndReadBack(t *testing.T) {
 // rather than being mistaken for a malformed request.
 func TestTheDeclaredScopeCanBeEmptied(t *testing.T) {
 	srv, _ := newServer(t)
-	put(t, srv, "/api/owned-scope", `[{"owner":"acme","kind":"organization","enabled":true}]`)
+	control(t, srv, http.MethodPut, "/api/owned-scope", `[{"owner":"acme","kind":"organization","enabled":true}]`)
 
-	if rec := put(t, srv, "/api/owned-scope", `[]`); rec.Code != http.StatusOK {
+	if rec := control(t, srv, http.MethodPut, "/api/owned-scope", `[]`); rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
 	if got := decode[[]store.DeclaredAccount](t, get(t, srv, "/api/owned-scope")); len(got) != 0 {
@@ -55,7 +55,7 @@ func TestTheDeclaredScopeCanBeEmptied(t *testing.T) {
 func TestAnUnknownAccountKindIsRejected(t *testing.T) {
 	srv, _ := newServer(t)
 
-	rec := put(t, srv, "/api/owned-scope", `[{"owner":"acme","kind":"team","enabled":true}]`)
+	rec := control(t, srv, http.MethodPut, "/api/owned-scope", `[{"owner":"acme","kind":"team","enabled":true}]`)
 
 	if rec.Code == http.StatusOK {
 		t.Error("a kind the store refuses must not be answered with success")
@@ -65,7 +65,7 @@ func TestAnUnknownAccountKindIsRejected(t *testing.T) {
 func TestMalformedScopeIsRejected(t *testing.T) {
 	srv, _ := newServer(t)
 
-	if rec := put(t, srv, "/api/owned-scope", `not json`); rec.Code == http.StatusOK {
+	if rec := control(t, srv, http.MethodPut, "/api/owned-scope", `not json`); rec.Code == http.StatusOK {
 		t.Error("a body that is not a declaration must not be answered with success")
 	}
 }
@@ -98,7 +98,7 @@ func TestThePreviewNamesWhatWouldEnterTheClosure(t *testing.T) {
 func TestThePreviewNamesWhatWouldLeaveTheClosure(t *testing.T) {
 	srv, s := newServer(t)
 	seedGraph(t, s)
-	put(t, srv, "/api/owned-scope", `[{"owner":"octo-org","kind":"organization","enabled":true}]`)
+	control(t, srv, http.MethodPut, "/api/owned-scope", `[{"owner":"octo-org","kind":"organization","enabled":true}]`)
 
 	got := preview(t, srv, `[]`)
 
@@ -118,7 +118,7 @@ func TestThePreviewNamesWhatWouldLeaveTheClosure(t *testing.T) {
 func TestThePreviewLeavesTheDeclarationAlone(t *testing.T) {
 	srv, s := newServer(t)
 	seedGraph(t, s)
-	put(t, srv, "/api/owned-scope", `[{"owner":"octo-org","kind":"organization","enabled":true}]`)
+	control(t, srv, http.MethodPut, "/api/owned-scope", `[{"owner":"octo-org","kind":"organization","enabled":true}]`)
 
 	preview(t, srv, `[{"owner":"someone-else","kind":"organization","enabled":true}]`)
 
@@ -151,7 +151,7 @@ func TestAContradictedDeclarationIsDistinguishedFromAnUnverifiedOne(t *testing.T
 	}); err != nil {
 		t.Fatalf("ReplaceAccounts: %v", err)
 	}
-	put(t, srv, "/api/owned-scope", `[
+	control(t, srv, http.MethodPut, "/api/owned-scope", `[
 	  {"owner":"acme","kind":"organization","enabled":true},
 	  {"owner":"facebook","kind":"organization","enabled":true}
 	]`)
@@ -174,7 +174,7 @@ func TestAContradictedDeclarationIsDistinguishedFromAnUnverifiedOne(t *testing.T
 // established either way, and the remedy is a command rather than a correction.
 func TestWithNoVerificationEveryDeclarationIsUnknownRatherThanContradicted(t *testing.T) {
 	srv, _ := newServer(t)
-	put(t, srv, "/api/owned-scope", `[{"owner":"acme","kind":"organization","enabled":true}]`)
+	control(t, srv, http.MethodPut, "/api/owned-scope", `[{"owner":"acme","kind":"organization","enabled":true}]`)
 
 	got := decode[[]declaredAccountView](t, get(t, srv, "/api/owned-scope"))
 
@@ -187,7 +187,7 @@ func TestWithNoVerificationEveryDeclarationIsUnknownRatherThanContradicted(t *te
 // at, and that is worth being able to tell from a row nobody can account for.
 func TestADeclarationWrittenThroughTheApiSaysWhereItCameFrom(t *testing.T) {
 	srv, _ := newServer(t)
-	put(t, srv, "/api/owned-scope", `[{"owner":"acme","kind":"organization","enabled":true}]`)
+	control(t, srv, http.MethodPut, "/api/owned-scope", `[{"owner":"acme","kind":"organization","enabled":true}]`)
 
 	got := decode[[]declaredAccountView](t, get(t, srv, "/api/owned-scope"))
 

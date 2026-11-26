@@ -1,0 +1,438 @@
+@using Abom.WebAssembly.Models
+@using Abom.WebAssembly.Services
+@inject AbomApi Api
+@inject RoleService Roles
+@inject IJSRuntime JS
+
+@* Everything that makes one query run, as the query directory holds it now. A file is listed because
+   it is on disk, and named missing because it is not. The summary and the actions stay in place;
+   only the file tree and the file open beside it scroll, each once. *@
+@if (_shown is null)
+{
+    @if (_failed is not null)
+    {
+        <div data-abom-components-failed>
+            <AbomAlert Problem="@_failed" OnRetry="Load" />
+        </div>
+    }
+    else
+    {
+        <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+    }
+}
+else
+{
+    var shown = _shown;
+    <div class="abom-components" data-abom-components="@shown.Query">
+        <div class="abom-components-facts">
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Icon="@Icons.Material.Outlined.Inventory2">
+                <span class="abom-path">@shown.Pack</span>&nbsp;@shown.PackVersion
+            </MudChip>
+            <Tip Text="@($"The query's version is the SHA-256 of what it compiles from: {shown.Version}.")">
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">version&nbsp;<span class="abom-path">@Short(shown.Version)</span></MudChip>
+            </Tip>
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Icon="@SuiteIcon(shown)" data-abom-component-suite>@SuiteWords(shown)</MudChip>
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Icon="@TestIcon(shown)" Color="@TestColor(shown)"
+                     data-abom-component-test>@TestWords(shown)</MudChip>
+            @if (shown.NewestTest is { Passed: false } && FileOf("expected") is { } expected && FileOf("actual") is { } actual)
+            {
+                <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => Select(expected.Path))"
+                           title="Open what the test expects the query to find.">Expected</MudButton>
+                <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => Select(actual.Path))"
+                           title="Open what the query found when the test last ran.">Last output</MudButton>
+            }
+        </div>
+
+        <MudToolBar Dense="true" Gutters="false" Class="abom-components-actions">
+            <Tip Text="Download every file but the tests' last output, as one .tar.gz.">
+                <MudButton Href="@AbomApi.QueryBundleUrl(shown.Query)" Variant="Variant.Outlined" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Download"
+                           UserAttributes="@(new Dictionary<string, object> { ["download"] = "", ["data-abom-component-bundle"] = "" })">
+                    Download bundle
+                </MudButton>
+            </Tip>
+            <Tip Text="@($"SHA-256 {shown.BundleSha256} of the archive the download compresses: check it with gunzip -c bundle.tar.gz | sha256sum.")">
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Class="abom-path"
+                         OnClick="@(() => Copy(shown.BundleSha256))"
+                         UserAttributes="@(new Dictionary<string, object> { ["data-abom-component-digest"] = shown.BundleSha256 })">
+                    sha256 @Short(shown.BundleSha256)
+                </MudChip>
+            </Tip>
+            <MudSpacer />
+            @if (_exported is { } pr)
+            {
+                <Tip Text="Open the pull request on GitHub, where it is merged or closed.">
+                    <MudButton Href="@pr.Url" Target="_blank" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.OpenInNew"
+                               UserAttributes="@(new Dictionary<string, object> { ["rel"] = "noopener", ["data-abom-component-exported"] = "" })">
+                        Pull request in @pr.Target
+                    </MudButton>
+                </Tip>
+            }
+            else if (ExportRefusal(shown) is { } blocked)
+            {
+                <Tip Text="@blocked">
+                    <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="true" StartIcon="@Icons.Material.Filled.CallSplit"
+                               UserAttributes="@(new Dictionary<string, object> { ["data-abom-component-export-blocked"] = "" })">
+                        Open a pull request
+                    </MudButton>
+                </Tip>
+            }
+            else
+            {
+                <Tip Text="@ExportTip(shown)">
+                    <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="@_exporting" OnClick="Export"
+                               StartIcon="@Icons.Material.Filled.CallSplit"
+                               UserAttributes="@(new Dictionary<string, object> { ["data-abom-component-export"] = "" })">
+                        @(_exporting ? "Opening…" : shown.ExportTarget.Length > 0 ? $"Open a pull request in {shown.ExportTarget}" : "Open a pull request")
+                    </MudButton>
+                </Tip>
+            }
+        </MudToolBar>
+        @if (_exporting)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" Size="Size.Small" />
+        }
+        @if (_exportRefused is not null)
+        {
+            <div data-abom-component-export-refused>
+                <AbomAlert Problem="@_exportRefused" OnRetry="Load" Class="mb-2" />
+            </div>
+        }
+        @if (_exported is { } opened)
+        {
+            <MudAlert Severity="Severity.Success" Dense="true" Class="mb-2" data-abom-component-export-done>
+                @(opened.Reused ? "A pull request for this bundle was already open" : "Pull request opened") in
+                <span class="abom-path">@opened.Target</span>, under decision <span class="abom-path">@Short(opened.Decision)</span>.
+            </MudAlert>
+        }
+
+        <div class="abom-components-panes" data-viewing="@(_selected is null ? null : "")">
+            <MudPaper Outlined="true" Class="abom-components-tree">
+                <MudTreeView T="string" Items="@_tree" SelectionMode="SelectionMode.SingleSelection" Dense="true" Hover="true"
+                             ExpandOnClick="true" SelectedValue="@_selected" SelectedValueChanged="@Select">
+                    <ItemTemplate Context="item">
+                        <MudTreeViewItem T="string" Value="@item.Value" Items="@item.Children" @bind-Expanded="@item.Expanded"
+                                         CanExpand="@item.Expandable" Icon="@item.Icon"
+                                         UserAttributes="@ItemAttributes(item.Value!)">
+                            <BodyContent>
+                                <div class="abom-component-row">
+                                    <span class="abom-path abom-component-name">@item.Text</span>
+                                    @if (_files.TryGetValue(item.Value!, out var file))
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="abom-component-role">@RoleWords(file.Role)</MudChip>
+                                        @if (!file.Bundled)
+                                        {
+                                            <MudText Typo="Typo.caption" Class="mud-text-secondary">not in the bundle</MudText>
+                                        }
+                                    }
+                                    else if (_missing.TryGetValue(item.Value!, out var gap))
+                                    {
+                                        <MudIcon Icon="@Icons.Material.Outlined.WarningAmber" Color="Color.Warning" Size="Size.Small" />
+                                        <MudText Typo="Typo.caption" Color="Color.Warning">missing @RoleWords(gap.Role)</MudText>
+                                    }
+                                </div>
+                            </BodyContent>
+                        </MudTreeViewItem>
+                    </ItemTemplate>
+                </MudTreeView>
+            </MudPaper>
+
+            <MudPaper Outlined="true" Class="abom-components-view">
+                <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ArrowBack"
+                           Class="abom-components-back" OnClick="@(() => Select(null))"
+                           title="Go back to the list of files.">Files</MudButton>
+                @if (_selected is { } path && _missing.TryGetValue(path, out var absent))
+                {
+                    <div class="abom-components-missing" data-abom-component-absent="@absent.Path">
+                        <MudIcon Icon="@Icons.Material.Outlined.WarningAmber" Color="Color.Warning" Size="Size.Medium" />
+                        <div>
+                            <MudText Typo="Typo.subtitle2"><span class="abom-path">@absent.Path</span> is missing</MudText>
+                            <MudText Typo="Typo.body2">@absent.Why.</MudText>
+                        </div>
+                    </div>
+                }
+                else if (_open is { } file && _files.TryGetValue(file.Path, out var meta))
+                {
+                    <div class="abom-components-viewhead">
+                        <Tip Text="@($"The file is {file.Path} in the pack.")" Class="abom-components-viewpath">
+                            <span class="abom-path">@file.Path</span>
+                        </Tip>
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@RoleWords(meta.Role)</MudChip>
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary">@SizeText(meta.Size)</MudText>
+                        <Tip Text="@($"The file's SHA-256 digest is {meta.Sha256}.")">
+                            <MudText Typo="Typo.caption" Class="abom-path mud-text-secondary">sha256 @Short(meta.Sha256)</MudText>
+                        </Tip>
+                        <MudSpacer />
+                        <Tip Text="Copy the file as it is on disk.">
+                            <MudIconButton Icon="@Icons.Material.Outlined.ContentCopy" Size="Size.Small" aria-label="Copy the file"
+                                           OnClick="@(() => Copy(file.Body))" />
+                        </Tip>
+                    </div>
+                    @if (file.Truncated)
+                    {
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">Only the start is shown; the bundle holds the whole file.</MudText>
+                    }
+                    <pre class="abom-code abom-numbered" data-abom-component-view="@file.Path">@foreach (var line in file.Body.Split('\n'))
+{<span class="abom-line">@line
+</span>}</pre>
+                }
+                else if (_openFailed is not null)
+                {
+                    <AbomAlert Problem="@_openFailed" OnRetry="Load" />
+                }
+                else if (_selected is not null)
+                {
+                    <MudProgressLinear Indeterminate="true" Color="Color.Primary" Size="Size.Small" />
+                }
+                else
+                {
+                    <div class="abom-components-empty">
+                        <MudText Typo="Typo.body2" Class="mud-text-secondary">Choose a file to read it as it is on disk.</MudText>
+                    </div>
+                }
+            </MudPaper>
+        </div>
+
+        <details class="abom-components-deps" data-abom-component-deps>
+            <summary>@DependencySummary(shown)</summary>
+            @if (shown.Dependencies.Count > 0)
+            {
+                <MudSimpleTable Dense="true" Elevation="0">
+                    <tbody>
+                        @foreach (var d in shown.Dependencies)
+                        {
+                            <tr><td class="abom-path">@d.Name</td><td class="abom-path">@d.Version</td></tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+            }
+            @if (shown.Outside.Count > 0)
+            {
+                <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">Imports from those: @string.Join(", ", shown.Outside)</MudText>
+            }
+        </details>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public string QueryId { get; set; } = string.Empty;
+
+    private QueryComponentsShown? _shown;
+    private ApiProblem? _failed;
+    private List<TreeItemData<string>> _tree = [];
+    private Dictionary<string, QueryComponent> _files = [];
+    private Dictionary<string, MissingComponent> _missing = [];
+    private string? _selected;
+    private StepFile? _open;
+    private ApiProblem? _openFailed;
+    private QueryExport? _exported;
+    private ApiProblem? _exportRefused;
+    private bool _exporting;
+    private int _reading;
+    private string? _mayNotExport;
+
+    protected override Task OnParametersSetAsync() => Load();
+
+    private async Task Load()
+    {
+        _shown = null;
+        _failed = null;
+        _selected = null;
+        _open = null;
+        _openFailed = null;
+        _exported = null;
+        _exportRefused = null;
+        _mayNotExport = await Roles.RefusalAsync("abom/export-query");
+        var (shown, refusal) = await Api.GetQueryComponentsAsync(QueryId);
+        _failed = refusal;
+        if (shown is null)
+        {
+            return;
+        }
+        _files = shown.Components.ToDictionary(c => c.Path);
+        _missing = shown.Missing.ToDictionary(m => m.Path);
+        _tree = TreeOf(shown);
+        _shown = shown;
+    }
+
+    private async Task Select(string? value)
+    {
+        if (value is not null && value.StartsWith(DirectoryKey, StringComparison.Ordinal))
+        {
+            return;
+        }
+        _selected = value;
+        _open = null;
+        _openFailed = null;
+        if (value is null || !_files.ContainsKey(value))
+        {
+            return;
+        }
+        // Only the newest choice is shown: an earlier read answering late is dropped.
+        var reading = ++_reading;
+        var (file, refusal) = await Api.GetQueryComponentAsync(QueryId, value);
+        if (reading != _reading)
+        {
+            return;
+        }
+        _open = file;
+        _openFailed = refusal;
+    }
+
+    private async Task Export()
+    {
+        _exporting = true;
+        _exported = null;
+        _exportRefused = null;
+        var (export, refusal) = await Api.ExportQueryAsync(QueryId, _shown!.BundleSha256);
+        _exported = export;
+        _exportRefused = refusal;
+        _exporting = false;
+    }
+
+    private async Task Copy(string text) => await JS.InvokeVoidAsync("navigator.clipboard.writeText", text);
+
+    private QueryComponent? FileOf(string role) => _shown?.Components.FirstOrDefault(c => c.Role == role);
+
+    private const string DirectoryKey = "dir:";
+
+    // Directories come from the paths themselves, which is how the bundle and the export branch lay
+    // them out; every file and every missing one appears once, under its own directory.
+    private static List<TreeItemData<string>> TreeOf(QueryComponentsShown shown)
+    {
+        var root = new List<TreeItemData<string>>();
+        var directories = new Dictionary<string, TreeItemData<string>>();
+        var entries = shown.Components.Select(c => (c.Path, Missing: false))
+            .Concat(shown.Missing.Select(m => (m.Path, Missing: true)))
+            .OrderBy(e => e.Path, StringComparer.Ordinal);
+        foreach (var (path, missing) in entries)
+        {
+            var parts = path.Split('/');
+            var level = root;
+            var prefix = string.Empty;
+            foreach (var part in parts[..^1])
+            {
+                prefix = prefix.Length == 0 ? part : prefix + "/" + part;
+                if (!directories.TryGetValue(prefix, out var directory))
+                {
+                    directory = new TreeItemData<string>
+                    {
+                        Value = DirectoryKey + prefix, Text = part, Expanded = true, Expandable = true,
+                        Icon = Icons.Material.Outlined.Folder, Children = [],
+                    };
+                    directories[prefix] = directory;
+                    level.Add(directory);
+                }
+                level = directory.Children!;
+            }
+            level.Add(new TreeItemData<string>
+            {
+                Value = path, Text = parts[^1], Expandable = false,
+                Icon = missing ? Icons.Material.Outlined.InsertDriveFile : Icons.Material.Outlined.Description,
+            });
+        }
+        Order(root);
+        return root;
+    }
+
+    // Each directory lists its files, then its directories, each by name, as a file browser does.
+    private static void Order(List<TreeItemData<string>> level)
+    {
+        level.Sort((a, b) => (a.Expandable, b.Expandable) switch
+        {
+            (false, true) => -1,
+            (true, false) => 1,
+            _ => string.CompareOrdinal(a.Text, b.Text),
+        });
+        foreach (var directory in level.Where(i => i.Children is not null))
+        {
+            Order(directory.Children!);
+        }
+    }
+
+    private Dictionary<string, object> ItemAttributes(string value) =>
+        value.StartsWith(DirectoryKey, StringComparison.Ordinal)
+            ? new() { ["data-abom-component-directory"] = value[DirectoryKey.Length..] }
+            : _missing.TryGetValue(value, out var gap)
+                ? new() { ["data-abom-component-missing"] = value, ["data-abom-component-role"] = gap.Role }
+                : new() { ["data-abom-component"] = value, ["data-abom-component-role"] = _files[value].Role };
+
+    private string? ExportRefusal(QueryComponentsShown shown) =>
+        _mayNotExport is { } role ? role
+        : !shown.Exportable ? "No publisher App is configured; create one with codeql-abom app create --publisher."
+        : shown.ExportBlocked.Length > 0 ? shown.ExportBlocked
+        : null;
+
+    private static string ExportTip(QueryComponentsShown shown) =>
+        $"Open a pull request of these files{(shown.ExportTarget.Length > 0 ? $" in {shown.ExportTarget}" : "")}; its own workflow tests and publishes once it is merged there.";
+
+    private static string Short(string digest) => digest.Length > 12 ? digest[..12] : digest;
+
+    private static string SizeText(long bytes) => bytes < 1024 ? $"{bytes:N0} B" : $"{bytes / 1024.0:0.#} KB";
+
+    private static string RoleWords(string role) => role switch
+    {
+        "manifest" => "pack manifest",
+        "lock" => "lock",
+        "suite" => "suite",
+        "query" => "query",
+        "library" => "library",
+        "help" => "help",
+        "extension" => "data extension",
+        "test-manifest" => "test pack manifest",
+        "test-lock" => "test lock",
+        "postprocess" => "postprocess",
+        "qlref" => "test",
+        "fixture" => "fixture",
+        "expected" => "expected results",
+        "actual" => "last output",
+        _ => role,
+    };
+
+    private static string SuiteWords(QueryComponentsShown m) => (m.Development, m.Deployed) switch
+    {
+        (_, true) => "Deployed suite",
+        (true, false) => "Development suite only",
+        _ => "In no suite",
+    };
+
+    private static string SuiteIcon(QueryComponentsShown m) =>
+        m.Deployed ? Icons.Material.Outlined.RocketLaunch : Icons.Material.Outlined.Science;
+
+    private static string TestWords(QueryComponentsShown m)
+    {
+        if (m.NewestTest is not { } run)
+        {
+            return "Tests: never run";
+        }
+        var outcome = run.Passed ? $"{run.Total:N0} of {run.Total:N0} passed" : $"{run.Failed:N0} of {run.Total:N0} failed";
+        var which = run.QueryVersion == m.Version ? "this version" : "an earlier version";
+        return $"Tests: {outcome} · CodeQL {run.CliVersion} · {TimeText.DayAndTime(run.RanAt)} · {which}";
+    }
+
+    private static string TestIcon(QueryComponentsShown m) => m.NewestTest switch
+    {
+        null => Icons.Material.Outlined.HelpOutline,
+        { Passed: true } => Icons.Material.Outlined.CheckCircle,
+        _ => Icons.Material.Outlined.Cancel,
+    };
+
+    private static Color TestColor(QueryComponentsShown m) => m.NewestTest switch
+    {
+        null => Color.Default,
+        { Passed: true } when m.NewestTest.QueryVersion == m.Version => Color.Success,
+        { Passed: false } => Color.Error,
+        _ => Color.Default,
+    };
+
+    private static string DependencySummary(QueryComponentsShown m)
+    {
+        if (m.Dependencies.Count == 0)
+        {
+            return "No lock pins what it compiles against";
+        }
+        var lockPath = m.Components.FirstOrDefault(c => c.Role == "lock")?.Path ?? "its lock";
+        return $"Compiles against {m.Dependencies.Count:N0} pack{(m.Dependencies.Count == 1 ? "" : "s")}, pinned by {lockPath}";
+    }
+}

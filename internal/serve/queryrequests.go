@@ -27,17 +27,17 @@ type requestRow struct {
 func (s *Server) queryRequests(w http.ResponseWriter, r *http.Request) {
 	requests, err := s.Store.QueryRequests()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return
 	}
 	byID, err := s.stepsByQuery()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return
 	}
 	running, err := s.Store.RunningAuthoringSessions()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return
 	}
 	rows := make([]requestRow, 0, len(requests))
@@ -108,7 +108,7 @@ func (s *Server) deleteQueryRequest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	case err != nil:
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return
 	}
 	s.queryRequests(w, r)
@@ -121,7 +121,7 @@ func (s *Server) keepQueryRequest(w http.ResponseWriter, r *http.Request, body s
 	if body.QueryID != "" {
 		decision, refusal, err := s.targetDecision(body.QueryID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeJSON(w, nil, err)
 			return
 		}
 		if refusal != "" {
@@ -137,12 +137,12 @@ func (s *Server) keepQueryRequest(w http.ResponseWriter, r *http.Request, body s
 	if body.Status == store.RequestDone || body.Status == store.RequestDeclined {
 		byID, err := s.stepsByQuery()
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeJSON(w, nil, err)
 			return
 		}
 		closed, err := json.Marshal(requestSteps(body, byID))
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeJSON(w, nil, err)
 			return
 		}
 		body.ClosedSteps = string(closed)

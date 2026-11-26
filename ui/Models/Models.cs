@@ -287,6 +287,18 @@ public sealed record FrontierItem
     /// <summary>How many repositories' locks select this commit in total.</summary>
     public int LockedByCount { get; init; }
 
+    /// <summary>When a retry last failed or an unavailable row was settled; empty when not recorded.</summary>
+    public string LastAttemptAt { get; init; } = string.Empty;
+
+    /// <summary>When an unavailable row's reference was last probed; empty when it never was.</summary>
+    public string ProbedAt { get; init; } = string.Empty;
+
+    /// <summary>Failed at least as often as the server's attempt ceiling: still retried, no longer holding its depth open.</summary>
+    public bool Stuck { get; init; }
+
+    /// <summary>"access" or "absent" when Git or a probe said why an unavailable row could not be read; empty otherwise.</summary>
+    public string Cause { get; init; } = string.Empty;
+
     /// <summary>UI state that distinguishes fresh queued work from retries.</summary>
     public string State => Status switch
     {
@@ -695,10 +707,33 @@ public sealed record RepositoriesPage : IPage<RepositorySummary>
     public int Total { get; init; }
 }
 
-/// <summary>A refusal the server states deliberately, carried back by name.</summary>
-public sealed record ApiError
+/// <summary>
+/// A refusal, as RFC 9457 problem details: <see cref="Code"/> says which kind, for the interface to
+/// act on, and <see cref="Detail"/> says why in a sentence. <see cref="Upstream"/> is GitHub's or the
+/// provider's own words where they refused, and <see cref="Login"/> where to sign in.
+/// </summary>
+public sealed record ApiProblem
 {
-    public string Error { get; init; } = string.Empty;
+    public string Type { get; init; } = string.Empty;
+    public string Title { get; init; } = string.Empty;
+    public int Status { get; init; }
+    public string Detail { get; init; } = string.Empty;
+    public string Code { get; init; } = string.Empty;
+    public string? Upstream { get; init; }
+    public string? Login { get; init; }
+
+    /// <summary>The server could not be asked at all, which no code the server sends describes.</summary>
+    public const string UnreachableCode = "unreachable";
+
+    public static ApiProblem Unreachable(string why) =>
+        new() { Code = UnreachableCode, Title = "ABOM could not be reached", Detail = why };
+}
+
+/// <summary>A refusal thrown where a page catches transport failures, still carrying its problem.</summary>
+public sealed class ApiRefusal(ApiProblem problem)
+    : HttpRequestException(problem.Detail, null, problem.Status > 0 ? (System.Net.HttpStatusCode)problem.Status : null)
+{
+    public ApiProblem Problem { get; } = problem;
 }
 
 public sealed record ActionSummary
@@ -1160,6 +1195,46 @@ public sealed record NodeVersionsPage
 }
 
 /// <summary>
+/// Who is asking: <c>local</c>, the operator at the machine ABOM runs on, or <c>signed-in</c>, a
+/// person the identity provider vouched for, with the ABOM role their app roles grant.
+/// </summary>
+public sealed record Me
+{
+    public string Mode { get; init; } = string.Empty;
+    public SignedInUser? User { get; init; }
+    public IReadOnlyList<string> May { get; init; } = [];
+
+    /// <summary>The role each operation needs, so a control can say which one it is waiting for.</summary>
+    public IReadOnlyDictionary<string, string> Needs { get; init; } = new Dictionary<string, string>();
+}
+
+public sealed record SignedInUser
+{
+    /// <summary>The provider's issuer and its subject for the person: what decisions name them by.</summary>
+    public string Id { get; init; } = string.Empty;
+    public string Name { get; init; } = string.Empty;
+    /// <summary>What the provider calls them: a user principal name, an email address or a GitHub login.</summary>
+    public string Username { get; init; } = string.Empty;
+    public string Role { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// Whether the declaration on record is one a signed decision allowed, as it now reads. Only a
+/// <c>signed</c> one drives discovery; <c>unsigned</c> names no decision, and <c>unverified</c>
+/// names one that does not hold, the reason saying which.
+/// </summary>
+public sealed record ScopeDecision
+{
+    public string State { get; init; } = string.Empty;
+    public string Reason { get; init; } = string.Empty;
+    public string Digest { get; init; } = string.Empty;
+    public string DecidedAt { get; init; } = string.Empty;
+    public string DecidedBy { get; init; } = string.Empty;
+    /// <summary>The GitHub login whose roles the declaration was judged against.</summary>
+    public string JudgedAs { get; init; } = string.Empty;
+}
+
+/// <summary>
 /// One account the operator has stated is theirs — the fourth ownership notion, and the only one
 /// that means responsibility.
 ///
@@ -1558,7 +1633,8 @@ public sealed record LiveSize
 /// it now stands to review in its place.</summary>
 public sealed record PruneConflict
 {
-    public string Error { get; init; } = string.Empty;
+    public string Detail { get; init; } = string.Empty;
+    public string Code { get; init; } = string.Empty;
     public PruneView View { get; init; } = new();
 }
 
@@ -2812,6 +2888,83 @@ public sealed record StepFile
     public string Path { get; init; } = string.Empty;
     public string Body { get; init; } = string.Empty;
     public bool Truncated { get; init; }
+}
+
+/// <summary>Everything that makes one of the operator's queries run, with its newest test run.</summary>
+public sealed record QueryComponentsShown
+{
+    public string Query { get; init; } = string.Empty;
+    public string Version { get; init; } = string.Empty;
+    public string Pack { get; init; } = string.Empty;
+    public string PackVersion { get; init; } = string.Empty;
+
+    /// <summary>What the lock resolved; empty when there is no lock to say.</summary>
+    public IReadOnlyList<PackDependency> Dependencies { get; init; } = [];
+
+    /// <summary>Modules the query imports that its pack does not hold, which a dependency supplies.</summary>
+    public IReadOnlyList<string> Outside { get; init; } = [];
+    public bool Development { get; init; }
+    public bool Deployed { get; init; }
+    public IReadOnlyList<QueryComponent> Components { get; init; } = [];
+    public IReadOnlyList<MissingComponent> Missing { get; init; } = [];
+    public string BundleSha256 { get; init; } = string.Empty;
+
+    /// <summary>The newest test run of any version, under any CodeQL; null when nothing has tested it.</summary>
+    public ComponentTestRun? NewestTest { get; init; }
+
+    /// <summary>Whether a publisher App is configured; whether GitHub agrees is asked on export.</summary>
+    public bool Exportable { get; init; }
+
+    /// <summary>The one repository an export would open its pull request in; empty when not known.</summary>
+    public string ExportTarget { get; init; } = string.Empty;
+
+    /// <summary>Why an export cannot be opened now, as the publisher's installation says; empty when it can.</summary>
+    public string ExportBlocked { get; init; } = string.Empty;
+}
+
+/// <summary>The pull request an export opened, where, and the decision that sent it.</summary>
+public sealed record QueryExport
+{
+    public string Url { get; init; } = string.Empty;
+    public string Target { get; init; } = string.Empty;
+    public string Decision { get; init; } = string.Empty;
+    public string Bundle { get; init; } = string.Empty;
+    /// <summary>True when the pull request was already open for this bundle, and nothing new was opened.</summary>
+    public bool Reused { get; init; }
+}
+
+public sealed record QueryComponent
+{
+    public string Role { get; init; } = string.Empty;
+    public string Path { get; init; } = string.Empty;
+    public string Sha256 { get; init; } = string.Empty;
+    public long Size { get; init; }
+
+    /// <summary>False only for a test run's output, which describes a run rather than the query.</summary>
+    public bool Bundled { get; init; }
+}
+
+public sealed record MissingComponent
+{
+    public string Role { get; init; } = string.Empty;
+    public string Path { get; init; } = string.Empty;
+    public string Why { get; init; } = string.Empty;
+}
+
+public sealed record PackDependency
+{
+    public string Name { get; init; } = string.Empty;
+    public string Version { get; init; } = string.Empty;
+}
+
+public sealed record ComponentTestRun
+{
+    public string QueryVersion { get; init; } = string.Empty;
+    public string CliVersion { get; init; } = string.Empty;
+    public bool Passed { get; init; }
+    public int Total { get; init; }
+    public int Failed { get; init; }
+    public string RanAt { get; init; } = string.Empty;
 }
 
 /// <summary>A request an agent drafted from a run's picked results, which nobody has filed.</summary>

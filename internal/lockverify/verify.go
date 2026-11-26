@@ -49,7 +49,8 @@ const (
 	OutcomeError = "error"
 )
 
-// knownCategories are the categories the pinned CLI (v0.5.1) reports. One outside this set is
+// knownCategories are the categories the CLI reports at the commit the workflows pin as
+// ACTIONS_LOCK_COMMIT. One outside this set is
 // kept verbatim and makes the outcome inconclusive, because nobody here knows what it claims.
 var knownCategories = map[string]bool{
 	"not-pinned": true, "ref-missing": true, "invalid-workflow": true, "sha-as-ref": true,

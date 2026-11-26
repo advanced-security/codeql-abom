@@ -1,0 +1,72 @@
+@using Abom.WebAssembly.Models
+@using Abom.WebAssembly.Services
+@inject AbomApi Api
+@inject RoleService Roles
+@inject NavigationManager Navigation
+
+@* Shown only when people sign in; at this machine without sign-in there is nobody to be. The menu
+   says who you are, what your role lets you do, and signs you out, saying so if it could not. *@
+@if (_me is { Mode: "signed-in", User: { } user })
+{
+    <MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" data-abom-signed-in
+             AriaLabel="@($"Your account: {Display(user)}")">
+        <ActivatorContent>
+            <MudAvatar Size="Size.Small" Color="Color.Secondary" data-abom-account-avatar>@Initials(user)</MudAvatar>
+        </ActivatorContent>
+        <ChildContent>
+            <div class="abom-account" data-abom-account>
+                <MudText Typo="Typo.subtitle2">@Display(user)</MudText>
+                @if (!string.IsNullOrEmpty(user.Username) && user.Username != user.Name)
+                {
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">@user.Username</MudText>
+                }
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="mt-1"
+                         Color="@(string.IsNullOrEmpty(user.Role) ? Color.Warning : Color.Default)" data-abom-account-role>
+                    @(string.IsNullOrEmpty(user.Role) ? "No ABOM role" : $"Role: {user.Role}")
+                </MudChip>
+                @if (_me.May.Count > 0)
+                {
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-2">What your role lets you do</MudText>
+                    <ul class="abom-account-may" data-abom-account-may>
+                        @foreach (var op in _me.May)
+                        {
+                            <li>@RoleService.Words(op)</li>
+                        }
+                    </ul>
+                }
+                @if (_signOutFailed)
+                {
+                    <MudAlert Severity="Severity.Error" Dense="true" Class="mt-2" data-abom-sign-out-failed>
+                        You are still signed in: ABOM could not end the session. Try again.
+                    </MudAlert>
+                }
+            </div>
+            <MudDivider />
+            <MudMenuItem Icon="@Icons.Material.Outlined.Logout" OnClick="SignOut" title="End this session with ABOM." data-abom-sign-out>Sign out</MudMenuItem>
+        </ChildContent>
+    </MudMenu>
+}
+
+@code {
+    private Me? _me;
+    private bool _signOutFailed;
+
+    protected override async Task OnInitializedAsync() => _me = await Roles.MeAsync();
+
+    private async Task SignOut()
+    {
+        _signOutFailed = !await Api.SignOutAsync();
+        if (!_signOutFailed)
+        {
+            Navigation.NavigateTo("/", forceLoad: true);
+        }
+    }
+
+    private static string Display(SignedInUser u) => string.IsNullOrEmpty(u.Name) ? u.Username : u.Name;
+
+    private static string Initials(SignedInUser u)
+    {
+        var words = Display(u).Split([' ', '.', '@'], StringSplitOptions.RemoveEmptyEntries);
+        return string.Concat(words.Take(2).Select(w => char.ToUpperInvariant(w[0])));
+    }
+}

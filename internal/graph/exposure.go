@@ -4,17 +4,6 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
-// Exposure is one repository's shortest path to an advisory-affected action.
-type Exposure struct {
-	RepositoryID int64
-	NodeID       int64
-	GHSAID       string
-	// Hops of 1 means the repository's own workflow uses the affected action.
-	Hops int
-	// Path runs from the repository's own workflow to the affected action.
-	Path []string
-}
-
 // affected is one action an advisory covers.
 type affected struct {
 	ghsaID string

@@ -1,0 +1,50 @@
+# On a published release, tests the tagged tree again with read access alone, then compiles the pack
+# and attaches it to the release. Copy to .github/workflows/ beside test.yml and lock both with
+# `gh actions-lock`.
+name: Publish queries
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
+  # Runs nothing the tests ran: the write is for attaching the compiled pack, and nothing else.
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install CodeQL
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_CODEQL_COMMIT: a6311fd2f257d5c8bf11b1d4a8702492f7c9f556
+        run: |
+          gh extension install github/gh-codeql --pin "$GH_CODEQL_COMMIT"
+          gh codeql set-version "$(cat .codeql-version)"
+          mkdir -p "$HOME/.local/bin"
+          gh codeql install-stub "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Compile the pack
+        run: |
+          codeql pack install .
+          codeql pack create --output="$RUNNER_TEMP/pack" .
+          tar -C "$RUNNER_TEMP/pack" -czf "$RUNNER_TEMP/queries.tgz" .
+          sha256sum "$RUNNER_TEMP/queries.tgz"
+
+      - name: Attach it to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG" "$RUNNER_TEMP/queries.tgz" --repo "$GITHUB_REPOSITORY"

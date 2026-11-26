@@ -93,7 +93,7 @@ func (s *Server) comparisons(w http.ResponseWriter, r *http.Request) {
 	}
 	list, err := s.Store.ComparisonsOf(runID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return
 	}
 	writeJSON(w, map[string]any{"comparisons": list}, nil)
@@ -117,7 +117,7 @@ func (s *Server) writeComparison(w http.ResponseWriter, id int64) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	case err != nil:
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return
 	}
 	writeJSON(w, c, nil)
@@ -141,7 +141,7 @@ func (s *Server) comparisonResults(w http.ResponseWriter, r *http.Request) {
 	}
 	results, err := s.Store.ComparisonResults(id, repository)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeJSON(w, nil, err)
 		return
 	}
 	writeJSON(w, map[string]any{"repository": repository, "results": results}, nil)

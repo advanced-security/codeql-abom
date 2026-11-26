@@ -6,7 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/advanced-security/codeql-abom/internal/failure"
 	"github.com/advanced-security/codeql-abom/internal/frontier"
+	"github.com/advanced-security/codeql-abom/internal/store"
 	"github.com/advanced-security/codeql-abom/internal/work"
 )
 
@@ -39,7 +41,7 @@ func (c *Checkout) Resolve(ctx context.Context, owner, repo, ref string) (string
 	names := exactRefs(ref)
 	out, err := c.run(ctx, "", append([]string{"ls-remote", c.cloneURL(owner, repo)}, names...)...)
 	if err != nil {
-		return "", unavailable(ctx, "resolving %s/%s@%s: %s", owner, repo, ref, out)
+		return "", unavailable(ctx, out, opResolve+" %s/%s@%s: %s", owner, repo, ref, out)
 	}
 	sha, ok := named(out, names)
 	if !ok {
@@ -87,6 +89,8 @@ type RecheckStats struct {
 	// Failed counts probes that could not be answered; the stored analysis stays valid.
 	Failed      int
 	Unavailable int
+	// Back counts unavailable references that answered again and were put back.
+	Back int
 }
 
 // Rechecker finds analyzes whose ref has moved and returns them to the queue.
@@ -149,4 +153,80 @@ func (r *Rechecker) emit(nodeKey, outcome string) {
 	if r.OnEvent != nil {
 		r.OnEvent(nodeKey, outcome)
 	}
+}
+
+// probeable reports whether an unavailable row's reason is one a probe of its reference could
+// change: a clone, a probe, or a probe that found no such reference. Anything else is an answer
+// about what a commit holds, which only reading it again can.
+func probeable(reason string) bool {
+	switch reasonOp(reason) {
+	case opClone, opResolve, opMissing:
+		return true
+	}
+	return false
+}
+
+// Reprobe probes unavailable references, those not probed for every and every one owners hold, so
+// one that answers again goes back as a resync would. No event names a dependency, so without this
+// nothing would ever look at one again. Still refused, it keeps the reason its read recorded and is
+// probed again after every; unanswered, it stays as it was and is probed again next pass.
+func (r *Rechecker) Reprobe(ctx context.Context, every time.Duration, owners []string, limit int) (RecheckStats, error) {
+	due, err := r.Queue.DueForReprobe(every, owners, limit, probeable)
+	if err != nil {
+		return RecheckStats{}, err
+	}
+	var stats RecheckStats
+	for _, item := range due {
+		if err := ctx.Err(); err != nil {
+			return stats, err
+		}
+		if err := r.Pace.Take(ctx); err != nil {
+			return stats, err
+		}
+		stats.Checked++
+		_, err := r.Probe.Resolve(ctx, item.Owner, item.Repo, item.Requested)
+		switch {
+		case IsUnavailable(err):
+			stats.Unavailable++
+			r.emit(item.NodeKey, "unavailable")
+			if err := r.Queue.Touch(item.Key()); err != nil {
+				return stats, err
+			}
+		case err != nil:
+			stats.Failed++
+			r.emit(item.NodeKey, "failed")
+		default:
+			stats.Back++
+			r.emit(item.NodeKey, "back")
+			if _, err := r.Queue.Store.ResyncRows([]store.NodeRef{{NodeKey: item.NodeKey, Ref: item.Requested}}); err != nil {
+				return stats, err
+			}
+		}
+	}
+	return stats, nil
+}
+
+// The causes an unavailable row can be named with: only a change of access heals the first, and
+// nothing ABOM or you do heals the second.
+const (
+	CauseAccess = "access"
+	CauseAbsent = "absent"
+)
+
+// Cause names why an unavailable row's reference could not be read, from what Git or a probe said,
+// and is empty for any other reason: those were not worded by Git, and their own text says what
+// they are.
+func Cause(reason string) string {
+	switch reasonOp(reason) {
+	case opMissing:
+		return CauseAbsent
+	case opClone, opFetch, opResolve:
+		switch failure.Classify(reason) {
+		case failure.Access:
+			return CauseAccess
+		case failure.Absent:
+			return CauseAbsent
+		}
+	}
+	return ""
 }

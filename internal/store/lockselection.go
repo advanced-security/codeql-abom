@@ -76,14 +76,14 @@ func (s *Store) LockSelectedDependencies(repository, analyzed string) ([]LockSel
 	}
 	// Asked first, by key, because almost nothing is locked: without it every settle would pay
 	// for the frontier walk below on behalf of a lock that does not exist.
-	var governed int
+	var governed bool
 	if err := s.db.QueryRow(`
 		SELECT EXISTS(SELECT 1 FROM abom_lock_workflow_pin WHERE repository = ?1)
 		    OR EXISTS(SELECT 1 FROM abom_lock_dependency WHERE owner = LOWER(?2) AND repo = LOWER(?3))`,
 		repository, owner, repo).Scan(&governed); err != nil {
 		return nil, fmt.Errorf("asking whether a lock governs %s: %w", repository, err)
 	}
-	if governed == 0 {
+	if !governed {
 		return []LockSelection{}, nil
 	}
 	rows, err := s.db.Query(`

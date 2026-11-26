@@ -650,6 +650,30 @@ func TestInstallationEventsReReadTheInstallationsAndListOnlyDeclaredAccounts(t *
 	}
 }
 
+// An installation is when the App's access arrives, and a dependency settled unavailable because
+// the App could not read it is named by no other event. So an installation that can grant access
+// has its account's references probed again, declared or not; one that only takes access away
+// cannot bring a reference back, and asks nothing.
+func TestAnInstallationThatCanGrantAccessHasItsAccountProbedAgain(t *testing.T) {
+	f := newFixture(t)
+	var reprobed []string
+	p := f.processor()
+	p.Reprobe = func(owner string) { reprobed = append(reprobed, owner) }
+	f.deliver("i-1", "installation", installationPayload("created", "vendor"))
+	f.deliver("i-2", "installation_repositories", installationPayload("added", "acme"))
+	f.deliver("i-3", "installation", installationPayload("unsuspend", "tools"))
+	f.deliver("i-4", "installation", installationPayload("new_permissions_accepted", "kit"))
+	f.deliver("i-5", "installation", installationPayload("deleted", "gone"))
+	f.deliver("i-6", "installation_repositories", installationPayload("removed", "acme"))
+	f.deliver("i-7", "installation", installationPayload("suspend", "tools"))
+	if _, err := p.Drain(context.Background()); err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if want := []string{"vendor", "acme", "tools", "kit"}; !slices.Equal(reprobed, want) {
+		t.Errorf("probed again %v, want %v", reprobed, want)
+	}
+}
+
 // A push moves every reference to its branch. A workflow elsewhere using this repository's action at
 // that branch reads it through a row of its own, and the poller leaves owned repositories to events:
 // test-repo-2 kept reading a composite action that a push to test-repo-1's main had replaced.

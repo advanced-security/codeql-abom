@@ -1,14 +1,18 @@
 package store
 
 import (
+	"context"
 	"io"
 	"time"
 
+	"github.com/advanced-security/codeql-abom/internal/authz"
 	viewspec "github.com/advanced-security/codeql-abom/internal/view"
 )
 
 // Backend is the complete persistence boundary; capabilities share one serialized writer.
 type Backend interface {
+	// authz.Ledger is the authorization log: append, read and the head.
+	authz.Ledger
 	LifecycleStore
 	GraphStore
 	EvidenceStore
@@ -264,12 +268,20 @@ type OwnershipStore interface {
 	RecordEnumerationFailure(subject, reason string, at time.Time) error
 	ClearEnumerationFailure(subject string) error
 	ResyncRows(refs []NodeRef) (Resync, error)
+	UnavailableRows() ([]UnavailableRow, error)
+	FrontierTallies(stuckAfter int) ([]FrontierTally, error)
+	ReconsiderUnavailable(back func(UnavailableRow) bool) (int, error)
 	RecordFullListing(owner, route string, pages int, highCreated, highPushed time.Time) error
 	RecordSweep(owner, route string, highCreated, highPushed time.Time) error
 	MissingRepositories() (map[string]bool, error)
 	SetOwnedScope(accounts []DeclaredAccount, by string) error
+	DeclareOwnedScope(ctx context.Context, accounts []DeclaredAccount, by string) error
 	PropertyScopeMatches(owner string, terms []PropertyTerm) (int, error)
 	OwnedScope() ([]DeclaredAccount, error)
+	ScopeVerdict() (ScopeVerdict, error)
+	Decide(ctx context.Context, r authz.Request) (authz.Decision, error)
+	DecisionPoint(ctx context.Context) (*authz.Point, error)
+	VerifiedScope() ([]DeclaredAccount, ScopeVerdict, error)
 	JudgePropertyScopes(accounts []DeclaredAccount) error
 	OwnedScopeDeclared() (bool, error)
 	AllRepositories() ([]string, error)

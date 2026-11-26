@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
+	"flag"
 	"io"
 	"os"
 	"path/filepath"
@@ -270,12 +272,15 @@ func TestALocalDeclarationTheRoleCannotSupportIsSkippedAndServingGoesOn(t *testi
 		t.Fatal(err)
 	}
 	var stderr bytes.Buffer
-	served, err := openServeStore(serveConfig{dbPath: db, declareFile: file}, io.Discard, &stderr)
+	served, err := openServeStore(serveConfig{dbPath: db}, io.Discard, io.Discard)
 	if err != nil {
+		t.Fatal(err)
+	}
+	defer served.Close()
+	if err := seedDeclaration(served, file, &stderr); err != nil {
 		t.Fatalf("a declaration the role cannot support stopped the server: %v", err)
 	}
 	declared, err := served.OwnedScope()
-	served.Close()
 	if err != nil || len(declared) != 0 {
 		t.Errorf("the refused declaration was written anyway: %+v, %v", declared, err)
 	}
@@ -286,8 +291,26 @@ func TestALocalDeclarationTheRoleCannotSupportIsSkippedAndServingGoesOn(t *testi
 	if err := os.WriteFile(file, []byte(`{"own": {"users": ["acme"], "properties": [{"org": "acme", "match": [{"name": "team", "value": "x"}]}]}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if served, err := openServeStore(serveConfig{dbPath: db, declareFile: file}, io.Discard, io.Discard); err == nil {
-		served.Close()
+	if err := seedDeclaration(served, file, io.Discard); err == nil {
 		t.Error("a file that cannot be a declaration at all no longer stops the server")
+	}
+}
+
+// serve's flags are the CLI a deployment is written against, so a rename, a dropped flag or a new
+// default shows here and is changed on purpose. testdata/serve-help.txt is that surface.
+func TestServesFlagsAndTheirHelpChangeOnlyOnPurpose(t *testing.T) {
+	for _, name := range []string{"ABOM_DB", "ABOM_READ_REPLICA", "ABOM_WORKER_IMAGE", "COPILOT_CLI_PATH", "GITHUB_API_URL"} {
+		t.Setenv(name, "")
+	}
+	want, err := os.ReadFile(filepath.Join("testdata", "serve-help.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got bytes.Buffer
+	if _, err := parseServeArgs([]string{"-help"}, &got); !errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("serve -help: %v", err)
+	}
+	if got.String() != string(want) {
+		t.Errorf("serve -help differs from testdata/serve-help.txt:\n%s", got.String())
 	}
 }

@@ -52,13 +52,13 @@ func runCheck(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 
 	var github checks.GitHub
 	if *external {
-		app, err := readerApp(cmp.Or(*appDir, ghapp.DefaultDir(*dbPath)), "", *apiURL)
+		app, err := readerApp(cmp.Or(*appDir, readerAppDir(*dbPath)), "", *apiURL)
 		if err != nil {
 			return fmt.Errorf("check: %w", err)
 		}
 		github = &lazyGitHub{build: func() *catalog.Client {
 			c := checkReader(ctx, *apiURL, readerTokens(app), processPools)
-			protectSources(s, c, stderr)
+			protectSources(s, c)
 			return c
 		}}
 	}

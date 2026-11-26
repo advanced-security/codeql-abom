@@ -109,16 +109,13 @@ func TestAModelListThatCannotBeReadRefusesTheSession(t *testing.T) {
 	}
 }
 
-// Without an App, the local and development path keeps the operator's own token as before.
-func TestWithoutAnAppASessionKeepsTheOperatorsToken(t *testing.T) {
+// Without an App, a local session signs in with your own token; what else its environment keeps is
+// TestASessionNeverInheritsTheServersSecrets.
+func TestWithoutAnAppASessionKeepsYourToken(t *testing.T) {
 	c := aCopilot()
-	opts := c.clientOptions(aSetup(t), "gho_operator")
-	if opts.GitHubToken != "gho_operator" || opts.UseLoggedInUser != nil {
-		t.Errorf("client token %q, logged-in user %v; want the operator's token as before",
-			opts.GitHubToken, opts.UseLoggedInUser)
-	}
-	if conn, ok := opts.Connection.(copilot.StdioConnection); !ok || conn.Env != nil {
-		t.Errorf("connection %#v: want the inherited environment, unchanged", opts.Connection)
+	opts := c.clientOptions(aSetup(t), "gho_yours")
+	if opts.GitHubToken != "gho_yours" || opts.UseLoggedInUser != nil {
+		t.Errorf("client token %q, logged-in user %v; want your token", opts.GitHubToken, opts.UseLoggedInUser)
 	}
 }
 
@@ -150,5 +147,43 @@ func TestAnAppSessionStartsOnAFreshlyMintedToken(t *testing.T) {
 	}
 	if DefaultLimit >= time.Hour-5*time.Minute {
 		t.Errorf("the default limit %s outlasts a fresh installation token's hour less its margin", DefaultLimit)
+	}
+}
+
+// The agent reads what a repository and a prompt put in front of it, so its environment holds none
+// of the server's own secrets: the database's address and password, the identity provider's client
+// secret, the cloud credentials that read the object store or sign decisions, or the webhook secret.
+func TestASessionNeverInheritsTheServersSecrets(t *testing.T) {
+	secrets := map[string]string{
+		"DATABASE_URL": "postgres://abom:pw@db/abom", "ABOM_DB": "postgres://abom:pw@db/abom",
+		"ABOM_READ_REPLICA": "postgres://r:pw@replica/abom", "ABOM_OIDC_CLIENT_SECRET": "oidc-secret",
+		"ABOM_WEBHOOK_SECRET": "hook-secret", "ABOM_AUTHZ_KMS_KEY": "arn:aws:kms:k",
+		"AWS_SECRET_ACCESS_KEY": "aws-secret", "AWS_CONTAINER_AUTHORIZATION_TOKEN": "pod-identity",
+	}
+	for name, value := range secrets {
+		t.Setenv(name, value)
+	}
+	t.Setenv("GH_TOKEN", "ghp_yours")
+	for _, app := range []bool{true, false} {
+		c := aCopilot()
+		if app {
+			c.Mint = (&mintRecorder{}).mint
+		}
+		conn, ok := c.clientOptions(aSetup(t), "ghs_minted").Connection.(copilot.StdioConnection)
+		if !ok || conn.Env == nil {
+			t.Fatalf("with an App %v the CLI inherits the whole environment", app)
+		}
+		env := strings.Join(conn.Env, "\n")
+		for name := range secrets {
+			if strings.Contains(env, name+"=") {
+				t.Errorf("with an App %v the Copilot child inherits %s", app, name)
+			}
+		}
+		if !strings.Contains(env, "PATH=") {
+			t.Error("the Copilot child lost PATH along with the secrets")
+		}
+		if kept := strings.Contains(env, "GH_TOKEN=ghp_yours"); kept == app {
+			t.Errorf("with an App %v the child keeps your token: %v", app, kept)
+		}
 	}
 }

@@ -13,7 +13,7 @@ import (
 // Discovery crawls whatever it is pointed at, so pointing it at nothing in particular is how a
 // corpus of 204 repositories nobody owns gets built. The scope has to be stated first.
 func TestDiscoveryWillNotStartWithNothingDeclared(t *testing.T) {
-	s := gateStore(t)
+	s := openStore(t)
 
 	problem := preflight(s, "", "", t.TempDir())()
 
@@ -31,7 +31,7 @@ func TestDiscoveryWillNotStartWithNothingDeclared(t *testing.T) {
 // Declared-but-disabled is the same answer to the only question the gate asks. The operator's own
 // account starts this way, so this is the state a first run is actually in.
 func TestDiscoveryWillNotStartWhenEveryDeclarationIsDisabled(t *testing.T) {
-	s := gateStore(t)
+	s := openStore(t)
 	if err := s.SetOwnedScope([]store.DeclaredAccount{
 		{Owner: "data-douser", Kind: store.AccountUser, Enabled: false},
 	}, store.DeclaredByCLI); err != nil {
@@ -43,8 +43,35 @@ func TestDiscoveryWillNotStartWhenEveryDeclarationIsDisabled(t *testing.T) {
 	}
 }
 
+// A declaration saved before declarations were signed is still there after an upgrade, and the gate
+// must say so: "nothing is declared" would send you to declare from scratch what one
+// confirmation decides.
+func TestDiscoveryNamesADeclarationThatIsNotConfirmed(t *testing.T) {
+	s := openStore(t)
+	if err := s.SetOwnedScope([]store.DeclaredAccount{
+		{Owner: "acme", Kind: store.AccountOrganization, Enabled: true},
+	}, store.DeclaredByCLI); err != nil {
+		t.Fatalf("SetOwnedScope: %v", err)
+	}
+	if _, err := s.DB().Exec(`UPDATE abom_owned_scope SET decision_digest = NULL`); err != nil {
+		t.Fatal(err)
+	}
+
+	problem := preflight(s, "", "", t.TempDir())()
+	if problem == nil {
+		t.Fatal("an unconfirmed declaration drives nothing, so discovery cannot start")
+	}
+	if !strings.Contains(problem.Reason, "not confirmed") || strings.Contains(problem.Reason, "no owned account") {
+		t.Errorf("Reason = %q, want the declaration named as unconfirmed rather than absent", problem.Reason)
+	}
+	if !strings.Contains(problem.Remedy, "Confirm") || !strings.Contains(problem.Remedy, "Settings") ||
+		!strings.Contains(problem.Remedy, "codeql-abom own") {
+		t.Errorf("Remedy = %q, want both ways to confirm it, naming the page that does", problem.Remedy)
+	}
+}
+
 func TestDiscoveryStartsOnceSomethingIsDeclared(t *testing.T) {
-	s := gateStore(t)
+	s := openStore(t)
 	if err := s.SetOwnedScope([]store.DeclaredAccount{
 		{Owner: "acme", Kind: store.AccountOrganization, Enabled: true},
 	}, store.DeclaredByCLI); err != nil {
@@ -82,7 +109,7 @@ func stubToolchain(t *testing.T) {
 // can act on immediately and a missing CodeQL CLI on a machine that has one is a confusing answer
 // to a question about configuration.
 func TestTheScopeIsRefusedBeforeTheToolchain(t *testing.T) {
-	s := gateStore(t)
+	s := openStore(t)
 
 	problem := preflight(s, "/nonexistent/codeql", "", t.TempDir())()
 
@@ -92,17 +119,4 @@ func TestTheScopeIsRefusedBeforeTheToolchain(t *testing.T) {
 	if strings.Contains(problem.Reason, "CodeQL") {
 		t.Errorf("Reason = %q, want the scope reported first", problem.Reason)
 	}
-}
-
-func gateStore(t *testing.T) *store.Store {
-	t.Helper()
-	s, err := store.Open(filepath.Join(t.TempDir(), "abom.db"), store.Options{})
-	if err != nil {
-		t.Fatalf("store.Open: %v", err)
-	}
-	t.Cleanup(func() { s.Close() })
-	if err := s.Migrate(); err != nil {
-		t.Fatalf("Migrate: %v", err)
-	}
-	return s
 }

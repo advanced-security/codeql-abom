@@ -1,0 +1,18 @@
+# The CA csi-driver-spiffe issues workload identities from, and the bundle trust-manager copies
+# into every namespace that asks for it, which is what the coordinator verifies a worker against.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata: {name: csi-driver-spiffe-ca}
+spec:
+  ca: {secretName: csi-driver-spiffe-ca}
+---
+apiVersion: trust.cert-manager.io/v1alpha1
+kind: Bundle
+metadata: {name: abom-spiffe-roots}
+spec:
+  sources:
+    - secret: {name: csi-driver-spiffe-ca, key: tls.crt}
+  target:
+    configMap: {key: ca.crt}
+    namespaceSelector:
+      matchLabels: {abom.github.com/spiffe-roots: "true"}

@@ -18,8 +18,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/advanced-security/codeql-abom/internal/failure"
 	"github.com/advanced-security/codeql-abom/internal/ghapp"
 	"github.com/advanced-security/codeql-abom/internal/sourcepolicy"
+	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
 // ErrUnavailable reports a permanent answer for a dependency: the repository cannot be read, or
@@ -112,13 +114,55 @@ func (c *Checkout) host() string {
 	return strings.TrimSuffix(base, "/")
 }
 
-// unavailable is ErrUnavailable, and ErrNotInstalled where a lent token was refused: a private repository needs the App.
-func unavailable(ctx context.Context, format string, args ...any) error {
+// unavailable classes what git said: an answer a later read would repeat is ErrUnavailable, and
+// ErrNotInstalled where a lent token was refused, since a private repository needs the App; anything
+// else is retried, because one outage must not end coverage.
+func unavailable(ctx context.Context, said, format string, args ...any) error {
+	if !failure.Classify(said).Terminal() {
+		return fmt.Errorf(format, args...)
+	}
 	err := fmt.Errorf("%w: "+format, append([]any{ErrUnavailable}, args...)...)
 	if id, _ := ctx.Value(gitIdentityKey{}).(gitIdentity); id.lent != "" {
-		return fmt.Errorf("%w; %w: %s, so a private repository there cannot be read", err, ghapp.ErrNotInstalled, id.lent)
+		return Uninstalled(err, id.lent)
 	}
 	return err
+}
+
+// Uninstalled is err from a read of owner the App has no installation on: a refusal git gave says
+// that a private repository there cannot be read, and anything else is as it was.
+func Uninstalled(err error, owner string) error {
+	switch reasonOp(err.Error()) {
+	case opClone, opFetch, opResolve:
+		return fmt.Errorf("%w; %w: %s, so a private repository there cannot be read", err, ghapp.ErrNotInstalled, owner)
+	}
+	return err
+}
+
+// The operations a git failure's stored reason names after ErrUnavailable's text. The reason is all a
+// row keeps of the failure, so these words are what Reconsidered, probeable and Cause read it back by.
+const (
+	opClone   = "cloning"
+	opFetch   = "fetching"
+	opResolve = "resolving"
+	opMissing = "missing"
+)
+
+// reasonOp names the operation a stored reason records git failing at, or opMissing for a probe that
+// listed no such reference, and is empty for any reason git did not word.
+func reasonOp(reason string) string {
+	rest, ok := strings.CutPrefix(reason, ErrUnavailable.Error()+": ")
+	if !ok {
+		return ""
+	}
+	if strings.HasPrefix(rest, ErrReferenceMissing.Error()+": ") {
+		return opMissing
+	}
+	for _, op := range []string{opClone, opFetch, opResolve} {
+		if strings.HasPrefix(rest, op+" ") {
+			return op
+		}
+	}
+	return ""
 }
 
 func (c *Checkout) git() string {
@@ -171,7 +215,7 @@ func (c *Checkout) Fetch(ctx context.Context, dest, owner, repo, ref string) (Tr
 
 	url := c.cloneURL(owner, repo)
 	if out, err := c.clone(ctx, dest, url, ref); err != nil {
-		return Tree{}, unavailable(ctx, "cloning %s at %q: %s", url, ref, out)
+		return Tree{}, unavailable(ctx, out, opClone+" %s at %q: %s", url, ref, out)
 	}
 	if out, err := c.sparseCheckout(ctx, dest); err != nil {
 		return Tree{}, fmt.Errorf("selecting actions content in %s: %s", repo, out)
@@ -230,7 +274,7 @@ func (c *Checkout) sparseCheckout(ctx context.Context, dest string) (string, err
 func (c *Checkout) checkout(ctx context.Context, dest, repo, ref string) error {
 	if ref != "" && isCommit(ref) {
 		if out, err := c.run(ctx, dest, "fetch", "--depth=1", "origin", ref); err != nil {
-			return unavailable(ctx, "fetching %s of %s: %s", ref, repo, out)
+			return unavailable(ctx, out, opFetch+" %s of %s: %s", ref, repo, out)
 		}
 		if out, err := c.run(ctx, dest, "checkout", ref); err != nil {
 			return fmt.Errorf("%w: checking out %s of %s: %s",
@@ -271,4 +315,14 @@ func (c *Checkout) run(ctx context.Context, dir string, args ...string) (string,
 		return strings.TrimSpace(stderr.String()), err
 	}
 	return stdout.String(), nil
+}
+
+// Reconsidered reports whether an unavailable row's answer no longer holds: a git failure that was
+// only for now, as the classification reads it today.
+func Reconsidered(r store.UnavailableRow) bool {
+	switch reasonOp(r.Reason) {
+	case opClone, opFetch, opResolve:
+		return !failure.Classify(r.Reason).Terminal()
+	}
+	return false
 }

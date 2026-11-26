@@ -1,0 +1,368 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$defs": {
+    "named": {
+      "type": "string",
+      "pattern": "^[^<>]*$",
+      "description": "A value written out in full: a <...> placeholder left in is refused."
+    },
+    "required": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^<>]*$"
+    },
+    "duration": {
+      "type": "string",
+      "pattern": "^[0-9]+(s|m|h)$"
+    },
+    "secret": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "secretName": {
+          "$ref": "#/$defs/named"
+        }
+      }
+    },
+    "account": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/named"
+          }
+        }
+      }
+    },
+    "pool": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cpu": {
+          "type": [
+            "string",
+            "number"
+          ]
+        },
+        "memory": {
+          "type": "string"
+        },
+        "timeout": {
+          "$ref": "#/$defs/duration"
+        }
+      }
+    },
+    "peers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "ipBlock": {
+            "type": "object",
+            "properties": {
+              "cidr": {
+                "$ref": "#/$defs/named"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "tag"
+      ],
+      "properties": {
+        "repository": {
+          "$ref": "#/$defs/required"
+        },
+        "tag": {
+          "$ref": "#/$defs/required"
+        },
+        "pullPolicy": {
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
+        }
+      }
+    },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "secretName"
+      ],
+      "properties": {
+        "secretName": {
+          "$ref": "#/$defs/required"
+        }
+      }
+    },
+    "objectStore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bucket"
+      ],
+      "properties": {
+        "endpoint": {
+          "$ref": "#/$defs/named"
+        },
+        "region": {
+          "$ref": "#/$defs/required"
+        },
+        "bucket": {
+          "$ref": "#/$defs/required"
+        },
+        "prefix": {
+          "$ref": "#/$defs/named"
+        },
+        "pathStyle": {
+          "type": "boolean"
+        },
+        "secretName": {
+          "$ref": "#/$defs/named"
+        }
+      }
+    },
+    "decisions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kmsKey": {
+          "type": "string",
+          "pattern": "^$|^(arn:aws[a-z-]*:kms:[a-z0-9-]+:[0-9]+:key/[^<>]+|alias/[^<>]+)$"
+        }
+      }
+    },
+    "serviceAccounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "coordinator": {
+          "$ref": "#/$defs/account"
+        },
+        "discovery": {
+          "$ref": "#/$defs/account"
+        },
+        "qlaasTest": {
+          "$ref": "#/$defs/account"
+        },
+        "qlaasRun": {
+          "$ref": "#/$defs/account"
+        }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "className": {
+          "type": "string"
+        },
+        "host": {
+          "$ref": "#/$defs/named"
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/named"
+          }
+        }
+      }
+    },
+    "githubApp": {
+      "$ref": "#/$defs/secret"
+    },
+    "publisherApp": {
+      "$ref": "#/$defs/secret"
+    },
+    "customQueries": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dir": {
+          "type": "string"
+        }
+      }
+    },
+    "signIn": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": [
+            "none",
+            "oidc",
+            "github"
+          ]
+        },
+        "issuer": {
+          "$ref": "#/$defs/named"
+        },
+        "clientId": {
+          "$ref": "#/$defs/named"
+        },
+        "redirectUrl": {
+          "$ref": "#/$defs/named"
+        },
+        "rolesClaim": {
+          "type": "string"
+        },
+        "roleMap": {
+          "type": "string",
+          "pattern": "^$|^[^=,]+=(viewer|analyst|operator|admin)(,\\s*[^=,]+=(viewer|analyst|operator|admin))*$"
+        },
+        "roleRefresh": {
+          "type": "string",
+          "pattern": "^$|^[0-9]+(s|m|h)$"
+        },
+        "clientSecretName": {
+          "$ref": "#/$defs/named"
+        }
+      }
+    },
+    "spiffe": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "trustDomain": {
+          "$ref": "#/$defs/required"
+        },
+        "rootsConfigMap": {
+          "$ref": "#/$defs/required"
+        }
+      }
+    },
+    "priority": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": {
+          "type": "boolean"
+        },
+        "control": {
+          "type": "integer"
+        },
+        "worker": {
+          "type": "integer"
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "interval": {
+          "$ref": "#/$defs/duration"
+        }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "webFrom": {
+          "$ref": "#/$defs/peers"
+        },
+        "scrapeFrom": {
+          "$ref": "#/$defs/peers"
+        },
+        "workerEgressExcept": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "workerEgress": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "coordinator": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "concurrency": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxDepth": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "storage": {
+          "type": "string"
+        },
+        "resources": {
+          "type": "object"
+        },
+        "extraArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "workers": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "discovery": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cpu": {
+              "type": [
+                "string",
+                "number"
+              ]
+            },
+            "cpuLimit": {
+              "type": [
+                "string",
+                "number"
+              ]
+            },
+            "memory": {
+              "type": "string"
+            },
+            "timeout": {
+              "$ref": "#/$defs/duration"
+            }
+          }
+        },
+        "qlaasTest": {
+          "$ref": "#/$defs/pool"
+        },
+        "qlaasRun": {
+          "$ref": "#/$defs/pool"
+        }
+      }
+    }
+  }
+}

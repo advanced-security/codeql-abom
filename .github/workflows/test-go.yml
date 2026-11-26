@@ -60,6 +60,11 @@ jobs:
       - name: Test - Setup Graphviz
         run: scripts/setup-graphviz.sh
 
+      # The pinned Helm, for `make chart`, rather than whatever the runner image ships.
+      - name: Test - Setup Helm
+        if: contains(format(' {0} ', inputs.targets), ' chart ')
+        run: scripts/setup-helm.sh "$RUNNER_TEMP/helm"
+
       # Target names only: an option or a variable assignment would change what make runs.
       - name: Test - Run make
         env:

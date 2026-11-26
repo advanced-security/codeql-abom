@@ -647,9 +647,8 @@ answers `defaultBranchRef: null`.
   clients.
 
 **A read that fails is kept beside what it failed to read.** `abom_enumeration_failure` holds the
-last failure for an account, or for one repository in it, until a read of the same subject answers.
-The cycle reports only its first failure as its last error, so without the record a declared
-organization the App was never installed on read as one holding nothing. Coverage lists every
+last failure for an account, or for one repository in it, until a read of the same subject answers,
+so an account that could not be listed never reads as one holding nothing. Coverage lists every
 enabled declaration discovery has not listed, or that a complete membership list leaves out and so
 roots nothing, with why, and lists one again when chosen.
 
@@ -709,6 +708,49 @@ from its own crawl, not an import of a SQLite database.
 | `abom_repository_role` | The verified login's role on each repository a member declared, or why it could not be read |
 | `abom_app_installation`, `abom_app_installer` | The App's installations as last read, and who created each, from its delivery |
 | `repository` | Every repository seen, with `origin` recording how it entered |
+| `abom_authz_log` | Every signed authorization assertion in the order it was made, each chained to the one before; triggers refuse an update or a delete |
+
+**A decision is signed and logged.** The decision point signs each verdict, a refusal as much as a
+grant, as a DSSE envelope holding an in-toto Statement, with an ECDSA P-256 key kept in `authz/`
+beside the database (or named with `--authz-dir`) and trusted through the bundle there; a rotation
+keeps the old key trusted for a window. Every assertion is appended to `abom_authz_log`, with a
+signed checkpoint over the head every hundred entries and when the server stops, and `codeql-abom
+audit verify` re-checks every signature and the chain offline, stopping at the first entry that
+fails and trusting nothing after it.
+
+**A declaration drives work only under its signed decision.** Writing a declaration is the decision:
+the store judges it by the rule Settings offers, signs the verdict with the judgments as evidence,
+and writes the rows carrying the decision's digest. Every ownership read requires a logged decision,
+and the reads that drive work — enumeration, the event processor, each discovery round — also verify
+its signature and that it still matches the rows. A declaration that names none, or one changed
+since it was decided, is shown at the head of Settings to be confirmed, and drives nothing until it
+is. The decision names who asked and cites the route or command decision that admitted them, and
+its evidence names the GitHub login the claims were judged against; SQL honors a declaration only
+under an allow of `abom/declare-scope`.
+
+**Every change is a signed decision, and nothing new can skip it.** Each API mutation is decided
+as a registered operation before its handler runs, the decision binding the route, the principal and
+the digest of the request body; a control whose decision cannot be logged is not acted on. Each
+command that writes is decided the same way before it acts, and every command names its operation
+or why it needs none. Tests fail a route or command added without one, a second writer of the
+declaration or the log, and any entry point reaching a different decision about the same
+declaration. Requests the boundary refuses are not logged, so no web page can grow the log.
+
+**Analysis is admitted before it is granted.** The source policy decides whether a repository may
+be read: public, or declared owned with evidence that code scanning is licensed there; eligibility
+GitHub cannot confirm is refused, and a read that failed transiently is asked again. A remote task
+carries why it was admitted inside its signed grant, and a worker refuses one that names no
+admission. Each result is answered by a signed receipt, accepted or refused.
+
+**A query's tests and requested runs have pools of their own.** With `--executor=kubernetes`,
+pressing Test grants a Job in the `qlaas-test` pool, and each repository a run holds no database
+for is admitted and granted to a Job in the `qlaas-run` pool, each pool under an identity apart from
+discovery's. A query from your pack travels as its pack, a `.tar.gz` bound by digest and without a
+previous run's `.actual` or database, and a worker refuses a pack that is not the one granted. What
+a test returns lands only as what a run of the granted tests writes, each `.actual` and the
+directory's database, beside those tests. What a run member returns is ingested or held exactly as
+a member analyzed here. The coordinator still installs the pack's dependencies and reads what a
+query declares, and analyzes a member whose database it already holds.
 
 ### The queue
 
@@ -719,11 +761,21 @@ from its own crawl, not an import of a SQLite database.
 | `abom_tier_suite`, `abom_tier_configured`, `abom_suite_query` | Which queries run against which tier |
 | `abom_cycle_spend` | What each crawl cycle cost, the databases it built, and what code scanning supplied and refused |
 
-A dependency Git could not fetch is `unavailable` and stays so: Git reports a missing credential
-and a missing repository alike, so nothing retries it on its own. An operator's retry, for all of
-them, for one named repository, or for the rows chosen in Coverage, puts it back with a fresh
-attempt budget. A reference that names no repository, such as one built from an expression, is
-never put back.
+**A dependency is `unavailable` only for a reason a retry would not change.** What Git said
+decides it, never its exit status: access refused — a 401, 403 or 404, an App not installed, a
+repository the credential cannot see — or a reference the remote answered without listing. Anything
+else, a resolver, connection or TLS failure, a timeout, a 429 or 5xx, or words nothing recognizes,
+is retried on the queue's backoff, doubling up to a day; at eight attempts a row is *stuck*,
+still retried and no longer holding its depth open. A probe of an analyzed reference follows the
+same rule, so a failed probe leaves the analysis `done`. An unavailable reference is probed again
+with `git ls-remote` once a day, and at once when an installation that can grant access names its
+owner, and goes back as a resync would when it answers; a server start puts back whatever is
+unavailable for a reason no longer terminal. Coverage names the cause, *needs access*
+or *reference gone*, only where Git or a probe worded it, and dates each failure and the next
+attempt or last probe; `/metrics` exports the same counts by tier and cause, with each declared
+account's last read. Your retry, for all of them, for one named repository, or for the
+rows chosen in Coverage, puts a row back with a fresh attempt budget. A reference that names no
+repository, such as one built from an expression, is never put back.
 
 **Coverage resyncs exactly what a reader chooses.** Each chosen row — one dependency at one
 reference — goes back as its state allows: analyzed, nothing to analyze, unavailable or retrying
@@ -1134,6 +1186,26 @@ flowchart LR
 | `abom_comparison_result`, `abom_comparison_alerts` | Each result compared with the alert that stands for it, and how many alerts GitHub held per rule and state, kept whole rather than pointing at the run's rows |
 | `abom_local_database` | A retained CodeQL database, keyed the way a run is: repository, commit, source filter and mode |
 
+**A custom query's components are read from the query directory, never from a stage.** They are the
+pack's manifest, lock and development suite, the query, every library of its own pack it imports
+however far away, its help, the pack's data extensions, and its tests with the test pack, the
+postprocess each names, their fixtures, `.expected` and last `.actual`, each with its SHA-256; what
+should exist and does not is named. A component is a regular file inside the directory, and a link
+is refused rather than followed, because an authoring session writes there and a reader downloads
+the bundle. The bundle is a `.tar.gz` of every component but the `.actual`, in path order with fixed
+ownership and time, so its digest stands for the files. It is source: `codeql pack create` compiles
+a plan whose bytes differ on every run, and builds your query directory only without its nested
+test pack, so CodeQL checks the bundle rather than producing it.
+
+**An export is a pull request you merge, opened by a second App that writes nowhere else.**
+The publisher App holds contents and pull requests write and metadata read, and must be installed
+on exactly one repository. One installed more broadly, or holding anything else, stops serve rather
+than leave ABOM holding a write it must not; an installation that cannot be read is asked again at
+each export. An export re-reads every component, refuses one whose digest changed since it was
+listed, signs the decision to send it, and commits the components with a record of that decision
+to a branch of their own. That repository's workflows test and publish; ABOM merges, tags and
+publishes nothing. `infra/qlaas-repo-template/` is a starting point for it.
+
 ### Derived and external
 
 | Table | |
@@ -1195,7 +1267,7 @@ assert an order between jobs that actually run in parallel.
 
 | Surface | |
 | --- | --- |
-| HTTP API | The whole capability set. Reads are open; anything that writes is guarded at the endpoint |
+| HTTP API | The whole capability set. Without sign-in, reads answer loopback and anything that writes is guarded at the endpoint; with it, every request needs a session and a role |
 | Dashboard | Where to start: each entry opens the Inventory already narrowed to it |
 | CodeQL | The queries findings come from: requests, the catalog of versions and stages, runs and their results per repository and query, what those results would add to the alerts developers already see, and which suites each tier runs |
 | Inventory | Which things match, in tabs that are named views, reprojected by a unit switch. An action's row opens in place onto its versions. Repositories chosen here are what a run is asked over; the queue rows and declared accounts chosen in Coverage are what a resync puts back |
@@ -1596,8 +1668,9 @@ than pretending their generic models cover these application contracts.
 reading of the same thing, and files every disagreement as a question with its reproduction, never
 as a correction. The checks that spend nothing run exhaustively: the incremental derivation against
 a wholesale rebuild, reach, exposure and the submission closure against each other on every owned
-repository, and graph-wide invariants such as each reach rollup equalling its breakdown and reach
-naming only starting points. Both recomputes run on `VACUUM INTO` snapshots, so the checker writes
+repository, and graph-wide invariants such as each reach rollup equalling its breakdown, reach
+naming only starting points, no row unavailable for a reason a retry could change, and the declared
+scope being the one its signed decision allowed. Both recomputes run on `VACUUM INTO` snapshots, so the checker writes
 nothing but its own `abom_check_*` tables and its own pools' meter. The checks that read GitHub are
 sampled and spend only the checker's pools: what each commit the queue stands at declared, as the
 graph reads it, against that commit's own indexed files read with a YAML walk of the checker's own

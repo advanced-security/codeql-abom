@@ -1,0 +1,58 @@
+{{- if and .Values.metrics.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "abom.name" . }}
+  labels: {{- include "abom.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels: {app.kubernetes.io/instance: {{ .Release.Name }}}
+  endpoints:
+    - {port: probes, path: /metrics, interval: {{ .Values.metrics.interval }}}
+---
+# Coverage health: what ABOM cannot read, and what it has stopped trying, said before anyone asks.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "abom.name" . }}-coverage
+  labels: {{- include "abom.labels" . | nindent 4 }}
+spec:
+  groups:
+    - name: abom-coverage
+      rules:
+        - alert: ABOMCoverageNeedsAccess
+          expr: sum(abom_frontier_unavailable_rows{cause="access"}) > 0
+          for: 1h
+          labels: {severity: warning}
+          annotations:
+            summary: "{{`{{ $value }}`}} references are unavailable because the App cannot read them."
+            description: "Grant the App access to those repositories, then resync them from Inventory > Coverage."
+        - alert: ABOMCoverageStuck
+          expr: sum(abom_frontier_rows{state="stuck"}) > 0
+          for: 30m
+          labels: {severity: warning}
+          annotations:
+            summary: "{{`{{ $value }}`}} queue rows have failed past the attempt ceiling."
+            description: "Inventory > Coverage shows each one's cause and lets you resync it."
+        - alert: ABOMDeclaredAccountUnread
+          expr: max by (account) (abom_account_unread) == 1
+          for: 2h
+          labels: {severity: warning}
+          annotations:
+            summary: "Declared account {{`{{ $labels.account }}`}} was not read, or its last read failed."
+            description: "Inventory, under Coverage, shows why and resyncs it; discovery adds nothing from an account it cannot list."
+        - alert: ABOMUnavailableForAnUnclassifiedCause
+          expr: time() - min(abom_frontier_unavailable_oldest_timestamp_seconds{cause="other"}) > 86400
+          labels: {severity: info}
+          annotations:
+            summary: "A reference has been unavailable for a day for a cause ABOM does not classify."
+            description: "Its reason is in Inventory > Coverage; a cause a retry could change is a defect to report."
+        # Every rule above reads nothing while the scrape fails, which would look like good health.
+        - alert: ABOMMetricsAbsent
+          expr: absent(abom_frontier_rows)
+          for: 15m
+          labels: {severity: warning}
+          annotations:
+            summary: "Prometheus reads no ABOM metrics, so no coverage alert can fire."
+            description: "Admit the scraper to the coordinator's probe port with networkPolicy.scrapeFrom, and check the ServiceMonitor is selected."
+{{- end }}

@@ -1,0 +1,51 @@
+# Values for running ABOM on Amazon EKS, layered over the chart's own: only what differs from them.
+#   helm upgrade --install abom infra/k8s/helm/codeql-abom -n abom -f infra/k8s/eks/values.yaml
+# Replace every <...>; the chart refuses to render one left in. docs/deployment/kubernetes.md says
+# what each needs on the AWS side.
+
+# The image built from infra/docker/Dockerfile and pushed to ECR; none is published.
+image:
+  repository: <account>.dkr.ecr.<region>.amazonaws.com/codeql-abom
+  tag: <version>
+
+# S3 through each ServiceAccount's identity: no access keys. The Secret database.secretName names
+# holds DATABASE_URL for RDS PostgreSQL, with sslmode=verify-full.
+objectStore:
+  region: <region>
+  bucket: <bucket>
+  prefix: abom/
+
+# Decisions signed in KMS: an ECC_NIST_P256 key for SIGN_VERIFY. EKS Pod Identity associations name
+# the ServiceAccounts; for IAM roles for service accounts instead, annotate each under serviceAccounts.
+decisions:
+  kmsKey: arn:aws:kms:<region>:<account>:key/<key-id>
+
+# You sign in with Entra ID; the redirect is this host's /auth/callback.
+signIn:
+  mode: oidc
+  issuer: https://login.microsoftonline.com/<tenant-id>/v2.0
+  clientId: <application-id>
+  clientSecretName: abom-oidc
+  redirectUrl: https://<host>/auth/callback
+
+# In ip target mode the ALB reaches the pod from its subnets; name them, and Prometheus's namespace
+# if one scrapes the probe port.
+networkPolicy:
+  webFrom:
+    - ipBlock: {cidr: <alb-subnets-cidr>}
+
+# An internal Application Load Balancer, terminating TLS with an ACM certificate.
+ingress:
+  enabled: true
+  className: alb
+  host: <host>
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internal
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:<region>:<account>:certificate/<certificate-id>
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+
+githubApp:
+  secretName: abom-github-app

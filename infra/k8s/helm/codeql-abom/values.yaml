@@ -1,0 +1,144 @@
+image:
+  repository: codeql-abom
+  tag: dev
+  pullPolicy: IfNotPresent
+
+# A Secret holding DATABASE_URL, the PostgreSQL URL only the coordinator holds. No worker opens it.
+database:
+  secretName: abom-database
+
+# Where each analysis attempt's outputs go: S3 on EKS, an S3-compatible store beside kind.
+objectStore:
+  endpoint: ""
+  region: us-east-1
+  bucket: abom
+  prefix: ""
+  pathStyle: false
+  # A Secret holding AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY; empty uses the SDK's own chain.
+  secretName: ""
+
+# An AWS KMS key decisions are signed with, ECC_NIST_P256 for SIGN_VERIFY, instead of a key on the
+# coordinator's volume, called in the region its ARN names. The coordinator's identity needs
+# kms:Sign and kms:GetPublicKey on it, and naming a key retires every other key still deciding.
+# Empty signs with the key beside the database.
+decisions:
+  kmsKey: ""
+
+# Annotations on each ServiceAccount, such as eks.amazonaws.com/role-arn for IAM roles for service
+# accounts, one per worker pool so each holds only its own role. EKS Pod Identity needs none: its
+# associations name the accounts.
+serviceAccounts:
+  coordinator: {annotations: {}}
+  discovery: {annotations: {}}
+  qlaasTest: {annotations: {}}
+  qlaasRun: {annotations: {}}
+
+# Reach the interface through an Ingress, such as an AWS Application Load Balancer. Refused unless
+# people sign in, and the host must be the sign-in redirect's: nothing else is admitted.
+ingress:
+  enabled: false
+  className: ""
+  host: ""
+  annotations: {}
+
+# A Secret holding the GitHub App directory ABOM reads as; empty reads public repositories only.
+githubApp:
+  secretName: ""
+
+# Your own query pack, authored state kept on the coordinator's volume; its components
+# are what the interface shows and an export sends. Empty offers no custom queries.
+customQueries:
+  dir: /var/lib/abom/custom-queries
+
+# A Secret holding the publisher App's directory, the second App that opens pull requests of query
+# exports in the one repository it is installed on; empty offers no export.
+publisherApp:
+  secretName: ""
+
+# Who may use ABOM. none: the interface listens on loopback, so only a port-forward reaches it and
+# nobody signs in. oidc: you sign in through an identity provider such as Entra ID, and your role is
+# read from your app roles or groups. github: you sign in with GitHub through the reading App
+# (githubApp), and your role is read from your organization and team memberships.
+signIn:
+  mode: none
+  # oidc only: the provider and this deployment's client with it.
+  issuer: ""
+  clientId: ""
+  rolesClaim: ""
+  # This deployment's /auth/callback as registered with the provider, or as a callback URL of the
+  # reading App for github.
+  redirectUrl: ""
+  # oidc: claim values as ABOM roles, such as Readers=viewer,Ops=operator; empty reads ABOM.Viewer
+  # and the like. github: memberships as ABOM roles, org/team, org or org:owners, such as
+  # acme/abom-operators=operator,acme=viewer; required.
+  roleMap: ""
+  # github only: how old a role may be before a change reads it again, such as 5m.
+  roleRefresh: ""
+  # A Secret holding the client secret under the key client-secret: the provider's for oidc, the
+  # reading App's, generated in its settings on GitHub, for github.
+  clientSecretName: ""
+
+spiffe:
+  trustDomain: cluster.local
+  # The ConfigMap trust-manager writes the workload CA into, which worker results must chain to.
+  rootsConfigMap: abom-spiffe-roots
+
+# The coordinator outranks analysis Jobs for scheduling and eviction. Turn off only where the
+# cluster's administrators assign PriorityClasses themselves.
+priority:
+  create: true
+  control: 100000
+  worker: 1000
+
+# Prometheus scraping of the probe port, and the coverage alerts, created only where the Prometheus
+# Operator's CRDs exist.
+metrics:
+  enabled: true
+  interval: 60s
+
+# Workers accept no connections at all; the coordinator accepts them only from the peers named here.
+# Enforced only where the CNI enforces NetworkPolicy.
+networkPolicy:
+  enabled: true
+  # NetworkPolicy peers that may reach the interface with sign-in on: the ingress controller's
+  # namespace, or the load balancer's subnets as an ipBlock. Required with an ingress.
+  webFrom: []
+  # NetworkPolicy peers that may read the probe port's metrics, such as Prometheus's namespace.
+  # Empty leaves the scrape refused, which the ABOMMetricsAbsent alert reports.
+  scrapeFrom: []
+  # A worker reaches DNS, and HTTPS anywhere outside these ranges: the cluster, its database and
+  # the instance metadata service sit inside them.
+  workerEgressExcept: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16]
+  # NetworkPolicy egress rules added for workers, such as an object store inside the cluster or
+  # reached at private addresses.
+  workerEgress: []
+
+coordinator:
+  concurrency: 6
+  maxDepth: 2
+  storage: 5Gi
+  # Memory is requested at its limit, so under pressure the kubelet evicts analysis first. CPU is
+  # not capped: workers are, so they cannot take the coordinator's share, and a cap would only
+  # slow the control plane.
+  resources:
+    requests: {cpu: "1", memory: 2Gi}
+    limits: {memory: 2Gi}
+  extraArgs: []
+
+workers:
+  discovery:
+    cpu: "2"
+    # What a Job may use; empty is the request, "0" is uncapped. CodeQL is told the same.
+    cpuLimit: ""
+    memory: 4Gi
+    timeout: 1h
+  # A query's own tests, one Job per Test you press; the CPU is a request and a limit.
+  qlaasTest:
+    cpu: "1"
+    memory: 2Gi
+    timeout: 30m
+  # A requested run, one Job per repository it holds no database for; the CPU is a request and a limit.
+  qlaasRun:
+    cpu: "2"
+    memory: 4Gi
+    timeout: 1h

@@ -23,15 +23,17 @@ func TestTheEventProcessorAsksOnlyWhatTheLoopCanDo(t *testing.T) {
 	s := openStore(t)
 	idle := &supervisor.Supervisor{Store: s, Queue: &frontier.Queue{Store: s}}
 	p := newProcessor(s, idle, nil, nil, 0, io.Discard)
-	if p.List != nil || p.ListFully != nil || p.Read != nil || p.Advisories != nil {
-		t.Error("a loop that cannot enumerate or refresh advisories was handed asks it will never answer")
+	if p.List != nil || p.ListFully != nil || p.Read != nil || p.Advisories != nil || p.Reprobe != nil {
+		t.Error("a loop that cannot enumerate, refresh advisories or probe was handed asks it will never answer")
 	}
 
 	busy := &supervisor.Supervisor{Store: s, Queue: &frontier.Queue{Store: s},
 		Enumerate: func(context.Context, supervisor.Ask) (int, error) { return 0, nil },
-		Advisor:   func(context.Context) (int, error) { return 0, nil }}
+		Advisor:   func(context.Context) (int, error) { return 0, nil },
+		Rechecker: &expand.Rechecker{}}
 	p = newProcessor(s, busy, nil, nil, 0, io.Discard)
-	if p.List == nil || p.ListFully == nil || p.Read == nil || p.Advisories == nil || p.Wake == nil {
+	if p.List == nil || p.ListFully == nil || p.Read == nil || p.Advisories == nil || p.Wake == nil ||
+		p.Reprobe == nil {
 		t.Errorf("a loop that can do all of it was handed only some: %+v", p)
 	}
 }

@@ -12,6 +12,7 @@ import (
 // a read answers.
 func TestAReadThatFailedIsKeptBesideTheAccountUntilOneAnswers(t *testing.T) {
 	s := newTestStore(t)
+	declare(t, s, DeclaredAccount{Owner: "advanced-security", Kind: AccountOrganization, Enabled: true})
 	at := time.Date(2026, 11, 24, 10, 0, 0, 0, time.UTC)
 	for subject, reason := range map[string]string{
 		"advanced-security":                   "the GitHub App is not installed on this account",
@@ -50,6 +51,31 @@ func TestAReadThatFailedIsKeptBesideTheAccountUntilOneAnswers(t *testing.T) {
 	}
 	if marks, _, _ := s.EnumerationState("octo"); marks.Failures == nil || len(marks.Failures) != 0 {
 		t.Errorf("an account with no failure reads %#v, want an empty list rather than null", marks.Failures)
+	}
+}
+
+// A repository's failure is kept only while the declaration covers it: one dropped from the
+// declaration is not something its account failed to read, as an absence it no longer covers is not.
+func TestAFailureTheDeclarationNoLongerCoversIsNotKept(t *testing.T) {
+	s := newTestStore(t)
+	declare(t, s, DeclaredAccount{Owner: "acme", Kind: AccountOrganization, Enabled: true,
+		IncludesOnly: true, Includes: []string{"kept"}})
+	at := time.Date(2026, 11, 24, 10, 0, 0, 0, time.UTC)
+	for _, subject := range []string{"acme", "acme/kept", "acme/dropped"} {
+		if err := s.RecordEnumerationFailure(subject, "Not Found", at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	marks, _, err := s.EnumerationState("acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var subjects []string
+	for _, f := range marks.Failures {
+		subjects = append(subjects, f.Subject)
+	}
+	if !slices.Equal(subjects, []string{"acme", "acme/kept"}) {
+		t.Errorf("failures kept for %v; want the account's own and the repository it still declares", subjects)
 	}
 }
 
@@ -177,5 +203,206 @@ func TestResyncingPutsBackOnlyTheChosenRowsAsTheirStateAllows(t *testing.T) {
 		if after[k].Reason != "" || after[k].Completed != "" {
 			t.Errorf("%s still describes a failure it is being given another chance at: %+v", k.NodeKey, after[k])
 		}
+	}
+}
+
+// Settled before the classification existed, a row can be unavailable for a reason no longer
+// terminal. Each is reconsidered with what the store knows of it, and only those the decision names
+// go back, with a fresh budget and no reason left describing a failure that is no longer current.
+func TestUnavailableRowsAreReconsideredOneByOne(t *testing.T) {
+	s := newTestStore(t)
+	for _, r := range []resyncRow{
+		{key: "octo/empty", owner: "octo", repo: "empty", status: "unavailable", attempts: 2, reason: "retry me"},
+		{key: "other/lib", owner: "other", repo: "lib", status: "unavailable", depth: 1, reason: "retry me"},
+		{key: "other/gone", owner: "other", repo: "gone", status: "unavailable", depth: 1, reason: "keep me"},
+		{key: "other/done", owner: "other", repo: "done", status: "done", depth: 1, reason: "retry me"},
+	} {
+		insertResyncRow(t, s, r)
+	}
+	var seen []UnavailableRow
+	n, err := s.ReconsiderUnavailable(func(r UnavailableRow) bool {
+		seen = append(seen, r)
+		return r.Reason == "retry me"
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 || len(seen) != 3 {
+		t.Errorf("put back %d of %d seen, want 2 of the 3 unavailable rows", n, len(seen))
+	}
+	for _, r := range seen {
+		if want := map[string]int{"octo/empty": 0, "other/lib": 1, "other/gone": 1}[r.NodeKey]; r.Depth != want {
+			t.Errorf("%s was handed at depth %d, want %d", r.NodeKey, r.Depth, want)
+		}
+	}
+	after := rowStates(t, s)
+	for key, want := range map[string]string{"octo/empty": "pending", "other/lib": "pending", "other/gone": "unavailable", "other/done": "done"} {
+		got := after[NodeRef{NodeKey: key}]
+		if got.Status != want {
+			t.Errorf("%s = %q, want %q", key, got.Status, want)
+		}
+		if want == "pending" && (got.Attempts != 0 || got.Reason != "" || got.Completed != "") {
+			t.Errorf("%s went back carrying its old failure: %+v", key, got)
+		}
+	}
+}
+
+// An unavailable row is a reason that must still be true, and nothing else looks at one again: a
+// dependency is named by no event. A probe can change only an answer about reaching a reference, so
+// only those are due — once a day after the row was settled or last probed, or at once when an
+// installation names the owner — and never a commit, which no ref listing names.
+func TestAnUnavailableRowIsDueForAProbeDailyOrWhenItsOwnerGainsAccess(t *testing.T) {
+	s := newTestStore(t)
+	settled := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	q := s.Frontier(FrontierOptions{Now: func() time.Time { return settled.Add(25 * time.Hour) }})
+	commit := "0123456789abcdef0123456789abcdef01234567"
+	for _, r := range []resyncRow{
+		{key: "octo/lib", ref: "v1", owner: "octo", repo: "lib", status: "unavailable", reason: "reach"},
+		{key: "octo/recent", ref: "v1", owner: "octo", repo: "recent", status: "unavailable", reason: "reach"},
+		{key: "Vendor/tool", ref: "v2", owner: "Vendor", repo: "tool", status: "unavailable", reason: "reach"},
+		{key: "octo/probed", ref: "v1", owner: "octo", repo: "probed", status: "unavailable", reason: "reach"},
+		{key: "octo/pinned", ref: commit, owner: "octo", repo: "pinned", status: "unavailable", reason: "reach"},
+		{key: "octo/empty", ref: "v1", owner: "octo", repo: "empty", status: "unavailable", reason: "content"},
+		{key: "octo/done", ref: "v1", owner: "octo", repo: "done", status: "done", reason: "reach"},
+		{key: "docker://alpine", ref: "3", status: "unavailable", reason: "reach"},
+	} {
+		insertResyncRow(t, s, r)
+	}
+	for key, column := range map[string]string{"octo/recent": "completed_at", "Vendor/tool": "completed_at", "octo/probed": "checked_at"} {
+		if _, err := s.DB().Exec(`UPDATE abom_frontier SET `+column+` = ? WHERE node_key = ?`,
+			settled.Add(24*time.Hour).Format(time.RFC3339Nano), key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reach := func(reason string) bool { return reason == "reach" }
+
+	due := func(owners []string, limit int) []string {
+		t.Helper()
+		got, err := q.DueForReprobe(24*time.Hour, owners, limit, reach)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var keys []string
+		for _, r := range got {
+			if r.Owner == "" || r.Repo == "" || r.Requested == "" || r.Reason != "reach" {
+				t.Errorf("%s was handed without what a probe needs: %+v", r.NodeKey, r)
+			}
+			keys = append(keys, r.NodeKey+"@"+r.Requested)
+		}
+		slices.Sort(keys)
+		return keys
+	}
+	if got, want := due(nil, 10), []string{"octo/lib@v1"}; !slices.Equal(got, want) {
+		t.Errorf("due on the daily clock = %v, want %v", got, want)
+	}
+	if got, want := due([]string{"vendor"}, 10), []string{"Vendor/tool@v2", "octo/lib@v1"}; !slices.Equal(got, want) {
+		t.Errorf("due once vendor gained access = %v, want %v", got, want)
+	}
+	if got := due([]string{"vendor"}, 1); len(got) != 1 {
+		t.Errorf("a limit of 1 handed %v", got)
+	}
+}
+
+// A failure is two dates to a reader: when it last happened and when it is tried again. A retry's
+// failure is recorded when it happens, not worked back from its next attempt, so a row put back
+// unclaimed still says when it failed; an unavailable row was settled when it failed, and the probe
+// that looks again since dates its last look. A row nothing has failed has no last attempt to show.
+func TestTheCoverageGridDatesEachRowsLastAttemptAndProbe(t *testing.T) {
+	s := newTestStore(t)
+	failed := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+	q := s.Frontier(FrontierOptions{Now: func() time.Time { return failed }})
+	for _, r := range []resyncRow{
+		{key: "octo/retry", ref: "v1", owner: "octo", repo: "retry", status: "pending"},
+		{key: "octo/fresh", ref: "v1", owner: "octo", repo: "fresh", status: "pending"},
+		{key: "octo/released", ref: "v1", owner: "octo", repo: "released", status: "pending"},
+		{key: "octo/held", ref: "v1", owner: "octo", repo: "held", status: "pending", attempts: 2,
+			next: "2026-03-04T06:00:00Z", awaiting: "abc"},
+		{key: "octo/gone", ref: "v1", owner: "octo", repo: "gone", status: "unavailable", reason: "refused"},
+	} {
+		insertResyncRow(t, s, r)
+	}
+	for range 3 {
+		if err := q.Fail(Key{NodeKey: "octo/retry", Ref: "v1"}, "exit status 128"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	released := Key{NodeKey: "octo/released", Ref: "v1"}
+	if err := q.Fail(released, "exit status 128"); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Release(released); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().Exec(`UPDATE abom_frontier SET checked_at = '2026-03-05T00:00:00Z' WHERE node_key = 'octo/gone'`); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := s.FrontierSnapshot("", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string][2]string{}
+	for _, it := range items {
+		got[it.NodeKey] = [2]string{it.LastAttemptAt, it.ProbedAt}
+	}
+	for key, want := range map[string][2]string{
+		"octo/retry":    {failed.Format(time.RFC3339Nano), ""},
+		"octo/fresh":    {"", ""},
+		"octo/released": {failed.Format(time.RFC3339Nano), ""},
+		"octo/held":     {"", ""},
+		"octo/gone":     {"2026-01-02T00:00:00Z", "2026-03-05T00:00:00Z"},
+	} {
+		if got[key] != want {
+			t.Errorf("%s last attempt and probe = %q, want %q", key, got[key], want)
+		}
+	}
+}
+
+// An alert reads one series per tier and state, so each is present when nothing is in it, and a row
+// past the ceiling is counted apart from one still retrying. An unavailable row carries its tier and
+// when it was settled, which is what an alert on its age reads.
+func TestTheQueueIsTalliedByTierAndStateWithStuckApart(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.SetOwnedScope([]DeclaredAccount{{Owner: "octo", Kind: AccountOrganization, Enabled: true}},
+		DeclaredByInterface); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range []resyncRow{
+		{key: "octo/app", owner: "octo", repo: "app", status: "done"},
+		{key: "a/stuck", ref: "v1", owner: "a", repo: "stuck", status: "pending", depth: 1, attempts: 8},
+		{key: "a/trying", ref: "v1", owner: "a", repo: "trying", status: "pending", depth: 1, attempts: 7},
+		{key: "b/held", ref: "v1", owner: "b", repo: "held", status: "pending", depth: 2, attempts: 9, awaiting: "abc"},
+		{key: "b/gone", ref: "v1", owner: "b", repo: "gone", status: "unavailable", depth: 2, reason: "gone"},
+	} {
+		insertResyncRow(t, s, r)
+	}
+
+	tallies, err := s.FrontierTallies(8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[[2]string]int{}
+	for _, tally := range tallies {
+		got[[2]string{tally.Tier, tally.State}] = tally.Rows
+	}
+	if len(tallies) != 24 {
+		t.Errorf("%d tallies, want every one of 3 tiers by 8 states", len(tallies))
+	}
+	for k, want := range map[[2]string]int{
+		{TierOwned, StatusDone}: 1, {TierOwned, FrontierQueued}: 0,
+		{TierDirect, FrontierStuck}: 1, {TierDirect, FrontierRetrying}: 1,
+		{TierTransitive, FrontierWaiting}: 1, {TierTransitive, StatusUnavailable}: 1,
+	} {
+		if n, ok := got[k]; !ok || n != want {
+			t.Errorf("%v = %d (present %v), want %d", k, n, ok, want)
+		}
+	}
+
+	rows, err := s.UnavailableRows()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Tier != TierTransitive || rows[0].SettledAt != "2026-01-02T00:00:00Z" {
+		t.Errorf("unavailable rows = %+v, want b/gone, transitive, settled 2026-01-02", rows)
 	}
 }

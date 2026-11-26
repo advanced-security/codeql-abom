@@ -329,7 +329,7 @@ direct/transitive and owned/upstream distinctions stay unchanged.
 
 ## Coordination
 
-[Deployment](deployment.md) owns portable assets/locations. Integrate the demo bundle without
+[Releases](releases.md) owns portable assets/locations. Integrate the demo bundle without
 requiring images/Helm or reopening deferred pack publication.
 It also owns shared toolchain/image packaging consumed by the Codespaces stage; this plan owns
 the demo-only lifecycle, simulated data boundary and Codespaces qualification.
@@ -413,7 +413,7 @@ and region. A checked-in dev container alone does not enable them. The repositor
 must enable Actions, configure the approved branch/profile and selected regions, choose update
 and retained-version policies, and qualify the actual "Prebuild ready" creation path.
 Use only trusted baseline commits for that configuration, not users' exercise branches or workspaces.
-Coordinate licensing and redistribution with [deployment](deployment.md)'s pre-release policy;
+Coordinate licensing and redistribution with [releases](releases.md)' pre-release policy;
 do not silently change the repository license.
 
 ### How a Codespace runs the container

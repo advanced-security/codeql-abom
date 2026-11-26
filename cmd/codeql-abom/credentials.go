@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"strings"
 	"time"
 
@@ -96,9 +97,19 @@ func syncInstallations(
 	}
 }
 
-// dbReaderTokens is the token source for a command naming a database: the App beside it, or nil for the operator's token.
+// appDirEnv names the reading App's directory to every command, as ABOM_DB names the database: in
+// a pod, a command run beside the server reads as the same App.
+const appDirEnv = "ABOM_APP_DIR"
+
+// readerAppDir is where a command naming dbPath finds the reading App: the directory the
+// environment names, else the one beside a SQLite database. A PostgreSQL one has nothing beside it.
+func readerAppDir(dbPath string) string {
+	return cmp.Or(os.Getenv(appDirEnv), ghapp.DefaultDir(dbPath))
+}
+
+// dbReaderTokens is the token source for a command naming a database: its reading App, or nil for your own token.
 func dbReaderTokens(dbPath string) (ghapp.TokenSource, error) {
-	app, err := readerApp(ghapp.DefaultDir(dbPath), "", defaultAPIURL())
+	app, err := readerApp(readerAppDir(dbPath), "", defaultAPIURL())
 	return readerTokens(app), err
 }
 

@@ -104,7 +104,7 @@ public class PruneReviewTests : AbomTestContext
     public void AScopeThatChangedIsShownAndNothingIsClaimedRemoved()
     {
         RespondWrite("api/prune/apply", HttpStatusCode.Conflict, """
-            {"error":"Nothing was removed: since it was reviewed, what you own changed or could not be confirmed, and 1 repository it kept would go: stranger/thing.",
+            {"type":"urn:abom:problem:review-stale","title":"What you reviewed no longer holds","status":409,"code":"review-stale","detail":"Nothing was removed: since it was reviewed, what you own changed or could not be confirmed, and 1 repository it kept would go: stranger/thing.",
              "view":{"declared":1,"reachable":2,"removed":{"repositories":180,"nodes":380,"edges":290,"queued":0},
                      "tombstoned":0,"applied":false,"unavailable":"","live":{"nodes":400,"edges":300},
                      "majority":true,"proof":"P2","checkouts":[]}}

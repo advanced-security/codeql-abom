@@ -333,3 +333,20 @@ func TestWithoutAnAppEveryCallKeepsTheOperatorsToken(t *testing.T) {
 		t.Error("the operator's token was never read on the path that uses it")
 	}
 }
+
+// A command run in the coordinator's pod names a PostgreSQL database, which has nothing beside it,
+// so it reads as the App the pod's environment names, as serve does; never as a gh nobody installed.
+func TestACommandInAPodReadsAsTheAppItsEnvironmentNames(t *testing.T) {
+	const postgres = "postgres://abom@db.abom:5432/abom?sslmode=verify-full"
+	t.Setenv(appDirEnv, "")
+	if got := readerAppDir(postgres); got != "" {
+		t.Errorf("with no App named, a PostgreSQL database reads as %q; want none", got)
+	}
+	t.Setenv(appDirEnv, "/run/abom/github-app")
+	if got := readerAppDir(postgres); got != "/run/abom/github-app" {
+		t.Errorf("readerAppDir = %q; want the directory the environment names", got)
+	}
+	if got := readerAppDir("/data/abom.db"); got != "/run/abom/github-app" {
+		t.Errorf("readerAppDir = %q; the environment names the App over the one beside a database", got)
+	}
+}

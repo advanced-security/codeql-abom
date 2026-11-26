@@ -1,0 +1,54 @@
+{{- if .Values.networkPolicy.enabled }}
+# Nothing connects to a worker: it fetches, analyzes and uploads, and the coordinator learns the
+# outcome from the object store and the Job's status. A worker reaches only DNS and HTTPS outside
+# the ranges that hold the cluster, its database and the instance metadata service, because what
+# it analyzes was written elsewhere.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "abom.name" . }}-workers
+  labels: {{- include "abom.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: codeql-abom, app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: worker}
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to: [{namespaceSelector: {}, podSelector: {matchLabels: {k8s-app: kube-dns}}}]
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+    - to: [{ipBlock: {cidr: 0.0.0.0/0, except: {{ toJson .Values.networkPolicy.workerEgressExcept }}}}]
+      ports: [{port: 443, protocol: TCP}]
+    {{- with .Values.networkPolicy.workerEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+---
+# The coordinator's interface is reached only from where sign-in guards it, and its probe port only
+# from what scrapes it. A port-forward and the kubelet's probes arrive from the node, which this does
+# not govern.
+{{- $web := and (include "abom.signedIn" .) .Values.networkPolicy.webFrom }}
+{{- if and .Values.ingress.enabled (not .Values.networkPolicy.webFrom) }}
+{{- fail "ingress.enabled with networkPolicy.enabled needs networkPolicy.webFrom, naming where the ingress controller's or load balancer's traffic comes from" }}
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "abom.name" . }}-coordinator
+  labels: {{- include "abom.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{ include "abom.coordinatorSelector" . }}
+  policyTypes: [Ingress]
+  {{- if or $web .Values.networkPolicy.scrapeFrom }}
+  ingress:
+    {{- if $web }}
+    - from: {{- toYaml .Values.networkPolicy.webFrom | nindent 8 }}
+      ports: [{port: http}]
+    {{- end }}
+    {{- with .Values.networkPolicy.scrapeFrom }}
+    - from: {{- toYaml . | nindent 8 }}
+      ports: [{port: probes}]
+    {{- end }}
+  {{- else }}
+  ingress: []
+  {{- end }}
+{{- end }}

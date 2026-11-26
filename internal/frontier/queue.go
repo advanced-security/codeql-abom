@@ -17,22 +17,15 @@ type DepthProgress = store.DepthProgress
 type Stages = store.QueueStages
 
 const (
-	StatusPending          = store.StatusPending
-	StatusRunning          = store.StatusRunning
-	StatusDone             = store.StatusDone
-	StatusUnavailable      = store.StatusUnavailable
-	StatusNothing          = store.StatusNothing
-	DefaultMaxDepth        = store.DefaultMaxDepth
-	DefaultContainerWeight = store.DefaultContainerWeight
-	DefaultStuckAfter      = store.DefaultStuckAfter
-	SupplyChainRuntime     = store.SupplyChainRuntime
-	SupplyChainBuild       = store.SupplyChainBuild
-	HeadRef                = store.HeadRef
-	StageExpedited         = store.StageExpedited
-	StageCurrent           = store.StageCurrent
-	StageExplore           = store.StageExplore
-	StageRefresh           = store.StageRefresh
-	StageWaiting           = store.StageWaiting
+	StatusPending      = store.StatusPending
+	StatusRunning      = store.StatusRunning
+	StatusDone         = store.StatusDone
+	StatusUnavailable  = store.StatusUnavailable
+	StatusNothing      = store.StatusNothing
+	DefaultMaxDepth    = store.DefaultMaxDepth
+	SupplyChainRuntime = store.SupplyChainRuntime
+	SupplyChainBuild   = store.SupplyChainBuild
+	HeadRef            = store.HeadRef
 )
 
 // Queue retains mutable scheduling options, not a database handle.
@@ -63,6 +56,9 @@ func (q *Queue) NextAttemptAt() (time.Time, bool, error) { return q.storage().Ne
 func (q *Queue) Complete(k Key, r Resolution) error      { return q.storage().Complete(k, r) }
 func (q *Queue) DueForRecheck(ttl time.Duration, limit int) ([]Recheck, error) {
 	return q.storage().DueForRecheck(ttl, limit)
+}
+func (q *Queue) DueForReprobe(every time.Duration, owners []string, limit int, probeable func(string) bool) ([]Recheck, error) {
+	return q.storage().DueForReprobe(every, owners, limit, probeable)
 }
 func (q *Queue) Touch(k Key) error                 { return q.storage().Touch(k) }
 func (q *Queue) MarkStale(k Key, sha string) error { return q.storage().MarkStale(k, sha) }

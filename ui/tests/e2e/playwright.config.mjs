@@ -72,7 +72,9 @@ export default defineConfig({
     ],
 
     webServer: {
-        command: `${bin} serve --addr 127.0.0.1:${port} --ui-dir ${ui}` +
+        // The previous run's server is stopped without releasing its lease, which then lapses on
+        // its own; a run straight after it waits that out rather than being refused.
+        command: `${bin} serve --addr 127.0.0.1:${port} --ui-dir ${ui} --wait-for-coordinator 35s` +
             (ql ? ` --custom-ql-dir ${ql}` : ''),
         // The stub gh answers as an unauthenticated one on every machine, so a page that asks gh
         // on its own can never write the person running the suite into the store under test.
@@ -81,7 +83,7 @@ export default defineConfig({
         // Never reuse: a server already on this port is somebody else's, pointed at a database
         // this suite did not prepare, and its answers would be reported as ours.
         reuseExistingServer: false,
-        timeout: 30_000,
+        timeout: 75_000,
         stdout: 'pipe',
         stderr: 'pipe',
     },

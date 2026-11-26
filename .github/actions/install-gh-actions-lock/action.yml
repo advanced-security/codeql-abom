@@ -1,0 +1,31 @@
+name: 'Install gh actions-lock'
+description: 'Build gh-actions-lock at its audited commit and install it as a gh extension.'
+
+# One commit for every reader of the lockfile: the self audit, the agent's setup and the CodeQL
+# upgrade read it with the same tool.
+runs:
+  using: 'composite'
+  steps:
+    # A commit and not a tag: `gh extension install --pin` takes only a tag for a binary extension,
+    # and the publisher can move a tag under a step that holds a token. Building from a detached
+    # checkout of the audited commit is what makes the code that runs immutable. `gh` itself is
+    # preinstalled on the runner image, which the lockfile does not and cannot cover.
+    - name: Install gh actions-lock - Build the audited commit
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        # v0.5.1
+        ACTIONS_LOCK_COMMIT: d68b1a345a0aa02cf870cd0e0d78418d492d280d
+        # The toolchain gh-actions-lock's go.mod requires. setup-go pins GOTOOLCHAIN=local to this
+        # repository's older one, which refuses to build it, so this step names its own.
+        GOTOOLCHAIN: go1.26.7
+      # `gh extension install` takes only `OWNER/REPO` or `.`, and names the extension for the
+      # directory it is run in, so the checkout is named for the extension and entered.
+      run: |
+        mkdir -p "$RUNNER_TEMP/gh-actions-lock"
+        git -C "$RUNNER_TEMP/gh-actions-lock" init --quiet
+        git -C "$RUNNER_TEMP/gh-actions-lock" remote add origin https://github.com/github/gh-actions-lock
+        git -C "$RUNNER_TEMP/gh-actions-lock" fetch --depth 1 origin "$ACTIONS_LOCK_COMMIT"
+        git -C "$RUNNER_TEMP/gh-actions-lock" checkout --detach FETCH_HEAD
+        go build -C "$RUNNER_TEMP/gh-actions-lock" -o gh-actions-lock ./cmd/gh-actions-lock
+        cd "$RUNNER_TEMP/gh-actions-lock" && gh extension install .

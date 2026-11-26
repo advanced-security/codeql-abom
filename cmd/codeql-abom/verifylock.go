@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"time"
 
 	"github.com/advanced-security/codeql-abom/internal/expand"
@@ -26,7 +25,7 @@ func lockVerifierWithPolicy(s store.Backend, tokens ghapp.TokenSource,
 ) *lockverify.Service {
 	if policy == nil {
 		reader := newReader(context.Background(), apiURL, tokens)
-		policy = protectSources(s, reader, os.Stderr).Check
+		policy = protectSources(s, reader).Check
 	}
 	checkout := &expand.Checkout{Timeout: 5 * time.Minute, Tokens: tokens}
 	bindSourcePolicy(checkout, apiURL, policy)
@@ -61,14 +60,11 @@ func runVerifyLock(ctx context.Context, args []string, stdout, stderr io.Writer)
 		fs.Usage()
 		return errors.New("verify-lock: --db and --repository are required")
 	}
-	s, err := store.OpenBackend(*dbPath, store.Options{})
+	s, err := openDecided(ctx, "verify-lock", args, *dbPath, store.Options{})
 	if err != nil {
-		return fmt.Errorf("opening %s: %w", store.DatabaseLabel(*dbPath), err)
+		return err
 	}
 	defer s.Close()
-	if err := s.Migrate(); err != nil {
-		return fmt.Errorf("migrating %s: %w", store.DatabaseLabel(*dbPath), err)
-	}
 
 	mode := lockverify.ModeLocal
 	if *network {

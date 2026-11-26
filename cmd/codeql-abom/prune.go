@@ -41,6 +41,11 @@ func runPrune(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		return fmt.Errorf("migrating %s: %w", store.DatabaseLabel(*dbPath), err)
 	}
 
+	if *compact || *apply {
+		if _, err := decideCommand(ctx, s, "prune", args); err != nil {
+			return err
+		}
+	}
 	if *compact {
 		report, err := s.Compact()
 		if err != nil {

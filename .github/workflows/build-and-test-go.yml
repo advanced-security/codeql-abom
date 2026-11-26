@@ -20,6 +20,7 @@ on:
       - 'go.mod'
       - 'go.sum'
       - 'Makefile'
+      - 'infra/k8s/**'
   push:
     branches: ['main']
     paths:
@@ -31,6 +32,7 @@ on:
       - 'go.mod'
       - 'go.sum'
       - 'Makefile'
+      - 'infra/k8s/**'
 
 permissions:
   contents: read
@@ -46,7 +48,7 @@ jobs:
     with:
       # check-corrupt first, because a duplicated package clause reads as a syntax error
       # everywhere else and sends the reader looking in the wrong place.
-      targets: check-corrupt fmt vet script-test build
+      targets: check-corrupt fmt vet script-test build chart
       cache: true
 
   sqlite:

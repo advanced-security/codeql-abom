@@ -7,6 +7,7 @@
 package store
 
 import (
+	"cmp"
 	"database/sql"
 	"fmt"
 	"net/url"
@@ -20,7 +21,10 @@ type Store struct {
 	db       *database
 	bulkMode bool
 	dsn      string
-	borrowed bool
+	// decisions signs and verifies what this database decides; shared by its leased and
+	// snapshot views.
+	decisions *decisionKeys
+	borrowed  bool
 }
 
 // Options tunes how the database is opened.
@@ -36,6 +40,10 @@ type Options struct {
 
 	// Demo admits a database marked as Demo practice data, which every other open refuses.
 	Demo bool
+
+	// AuthzDir holds the key decisions are signed with and the bundle that verifies them. Empty is
+	// DefaultAuthzDir: beside a SQLite file, and none for PostgreSQL, which then declares nothing.
+	AuthzDir string
 }
 
 // DefaultCacheSizeKB gives SQLite a 256 MiB page cache, which keeps the b-tree interior pages
@@ -44,6 +52,7 @@ const DefaultCacheSizeKB = 256 * 1024
 
 // Open opens SQLite directly for backend-specific tests; production uses OpenBackend.
 func Open(path string, opts Options) (*Store, error) {
+	keys := &decisionKeys{dir: cmp.Or(opts.AuthzDir, DefaultAuthzDir(path))}
 	dsn := path + "?_busy_timeout=30000&_foreign_keys=on&_txlock=immediate"
 	if opts.ReadOnly {
 		if !strings.HasPrefix(path, "file:") {
@@ -64,7 +73,7 @@ func Open(path string, opts Options) (*Store, error) {
 	// feeding this store, not in competing writers.
 	db.SetMaxOpenConns(1)
 
-	s := &Store{db: &database{DB: db, readOnly: opts.ReadOnly}, bulkMode: opts.BulkLoad, dsn: path}
+	s := &Store{db: &database{DB: db, readOnly: opts.ReadOnly}, bulkMode: opts.BulkLoad, dsn: path, decisions: keys}
 	if opts.ReadOnly {
 		if err := db.Ping(); err != nil {
 			_ = db.Close()
@@ -119,6 +128,8 @@ var createTables = []struct {
 	ddl  string
 }{
 	{"the commit content table", commitContentDDL},
+	{"the authorization log", authzLogDDL},
+	{"the authorization decision index", authzDecisionDDL},
 	{"the lock coverage table", lockCoverageDDL},
 	{"the lock verification table", lockVerificationDDL},
 	{"the declared scope tables", ownedScopeDDL},
@@ -178,6 +189,9 @@ func (s *Store) Migrate() error {
 			return fmt.Errorf("creating %s: %w", t.what, err)
 		}
 	}
+	if _, err := s.db.Exec(authzLogTriggersSQLite); err != nil {
+		return fmt.Errorf("making the authorization log append-only: %w", err)
+	}
 	if err := s.addColumns(func(string) bool { return true }); err != nil {
 		return err
 	}
@@ -236,6 +250,10 @@ func (s *Store) finishMigration() error {
 	if err := s.upgradeSavedViews(); err != nil {
 		return err
 	}
+	// Every ownership read asks the log for a declaration's decision by digest.
+	if _, err := s.db.Exec(authzLogIndexDDL); err != nil {
+		return fmt.Errorf("indexing the authorization log: %w", err)
+	}
 	// The one index a read-only server cannot wait for CreateIndexes to build.
 	if _, err := s.db.Exec(queryRunIndexDDL); err != nil {
 		return fmt.Errorf("indexing run identity: %w", err)
@@ -264,6 +282,10 @@ func (s *Store) finishMigration() error {
 		}
 	}
 	// After the columns, which the views select on.
+	// Before the views: the honored scope reads it.
+	if err := s.indexLoggedDecisions(); err != nil {
+		return err
+	}
 	if err := s.createViews(); err != nil {
 		return err
 	}

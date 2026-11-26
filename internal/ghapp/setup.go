@@ -31,6 +31,8 @@ type Setup struct {
 	Now         func() time.Time
 	// Created receives the saved credentials once GitHub's code has been exchanged.
 	Created chan Credentials
+	// Publisher creates the publisher App rather than the reader.
+	Publisher bool
 
 	mu     sync.Mutex
 	states map[string]time.Time
@@ -86,20 +88,24 @@ func (s *Setup) manifest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "drawing a state: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	manifest, err := json.Marshal(NewManifest(s.Name, s.Homepage, s.WebhookURL, s.RedirectURL))
+	manifest, err := json.Marshal(s.wanted())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	var events []string
-	for _, e := range Events {
-		events = append(events, e.Event)
+	events, permissions := []string{}, requestedFrom(Permissions, Events)
+	if s.Publisher {
+		permissions = requestedFrom(PublisherGrants, nil)
+	} else {
+		for _, e := range Events {
+			events = append(events, e.Event)
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"action": NewAppURL(s.WebURL, s.Owner, s.OwnerKind, state), "manifest": string(manifest),
 		"owner": s.Owner, "webhookUrl": s.WebhookURL,
-		"permissions": requested(), "events": events,
+		"permissions": permissions, "events": events,
 	})
 }
 
@@ -155,7 +161,7 @@ func (s *Setup) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = createdPage.Execute(w, map[string]any{
-		"Slug": creds.Slug, "AppID": creds.AppID, "Dir": s.Dir, "Mismatch": granted(conversion),
+		"Slug": creds.Slug, "AppID": creds.AppID, "Dir": s.Dir, "Mismatch": granted(conversion, s.wanted()),
 		"Install": strings.TrimSuffix(creds.HTMLURL, "/") + "/installations/new",
 	})
 	select {
@@ -164,9 +170,16 @@ func (s *Setup) callback(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// granted names any difference between what GitHub created and what the table requested.
-func granted(c Conversion) string {
-	want := NewManifest("", "", "", "")
+// wanted is the manifest this setup asks GitHub for.
+func (s *Setup) wanted() Manifest {
+	if s.Publisher {
+		return NewPublisherManifest(s.Name, s.Homepage, s.RedirectURL)
+	}
+	return NewManifest(s.Name, s.Homepage, s.WebhookURL, s.RedirectURL)
+}
+
+// granted names any difference between what GitHub created and what was requested.
+func granted(c Conversion, want Manifest) string {
 	var diff []string
 	for _, p := range slices.Sorted(maps.Keys(want.DefaultPermissions)) {
 		if c.Permissions[p] != want.DefaultPermissions[p] {

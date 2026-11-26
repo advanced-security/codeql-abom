@@ -183,23 +183,8 @@ jobs:
       - name: Upgrade - Install golangci-lint
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4
 
-      # Same commit as self-audit.yml, which says why it is a commit and not a tag.
       - name: Upgrade - Install gh actions-lock
-        env:
-          GH_TOKEN: ${{ github.token }}
-          # v0.5.1
-          ACTIONS_LOCK_COMMIT: d68b1a345a0aa02cf870cd0e0d78418d492d280d
-          # The toolchain gh-actions-lock's go.mod requires. setup-go pins GOTOOLCHAIN=local to this
-          # repository's older one, which refuses to build it, so this step names its own.
-          GOTOOLCHAIN: go1.26.7
-        run: |
-          mkdir -p "$RUNNER_TEMP/gh-actions-lock"
-          git -C "$RUNNER_TEMP/gh-actions-lock" init
-          git -C "$RUNNER_TEMP/gh-actions-lock" remote add origin https://github.com/github/gh-actions-lock
-          git -C "$RUNNER_TEMP/gh-actions-lock" fetch --depth 1 origin "$ACTIONS_LOCK_COMMIT"
-          git -C "$RUNNER_TEMP/gh-actions-lock" checkout --detach FETCH_HEAD
-          go build -C "$RUNNER_TEMP/gh-actions-lock" -o gh-actions-lock ./cmd/gh-actions-lock
-          cd "$RUNNER_TEMP/gh-actions-lock" && gh extension install .
+        uses: $/.github/actions/install-gh-actions-lock
 
       # `make e2e` installs the harness itself, but never the pinned browser or its libraries.
       - name: Upgrade - Install the end-to-end harness and its browser

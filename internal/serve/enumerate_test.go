@@ -29,7 +29,7 @@ func TestEnumeratingADeclaredAccountBringsItsRepositoriesIn(t *testing.T) {
 		"advanced-security": {"advanced-security/one", "advanced-security/two"},
 	})
 
-	var report EnumerationReport
+	var report enumerate.Report
 	postJSON(t, srv, "/api/owned-scope/enumerate", &report)
 
 	if report.Added != 2 {
@@ -53,7 +53,7 @@ func TestEnumerationPromotesARepositoryThatArrivedAsADependency(t *testing.T) {
 		"advanced-security": {"advanced-security/dismiss-alerts"},
 	})
 
-	var report EnumerationReport
+	var report enumerate.Report
 	postJSON(t, srv, "/api/owned-scope/enumerate", &report)
 
 	if report.Promoted != 1 {
@@ -77,7 +77,7 @@ func TestADisabledDeclarationIsNotEnumerated(t *testing.T) {
 		"advanced-security": {"advanced-security/one"},
 	})
 
-	var report EnumerationReport
+	var report enumerate.Report
 	postJSON(t, srv, "/api/owned-scope/enumerate", &report)
 
 	if len(repositories(t, st)) != 0 {
@@ -103,7 +103,7 @@ func TestOneFailingAccountDoesNotDiscardTheOthers(t *testing.T) {
 		}, nil
 	}
 
-	var report EnumerationReport
+	var report enumerate.Report
 	postJSON(t, srv, "/api/owned-scope/enumerate", &report)
 
 	if report.Added != 1 {
@@ -121,7 +121,7 @@ func TestAnAccountThatHoldsNothingIsReported(t *testing.T) {
 	declare(t, st, "advanced-security")
 	srv.Enumerate = fakeEnumerator(map[string][]string{"advanced-security": {}})
 
-	var report EnumerationReport
+	var report enumerate.Report
 	postJSON(t, srv, "/api/owned-scope/enumerate", &report)
 
 	if len(report.Accounts) != 1 || report.Accounts[0].Found != 0 {
@@ -170,7 +170,7 @@ func TestEnumerationQueuesWhatItFound(t *testing.T) {
 	queued := 0
 	srv.QueueOwned = func() (int, error) { queued = 2; return 2, nil }
 
-	var report EnumerationReport
+	var report enumerate.Report
 	postJSON(t, srv, "/api/owned-scope/enumerate", &report)
 
 	if queued != 2 || report.Queued != 2 {
@@ -192,7 +192,7 @@ func TestQueueingFollowsRecording(t *testing.T) {
 		return len(sawWhenQueued), nil
 	}
 
-	var report EnumerationReport
+	var report enumerate.Report
 	postJSON(t, srv, "/api/owned-scope/enumerate", &report)
 
 	if len(sawWhenQueued) != 1 {
@@ -210,7 +210,7 @@ func TestAFailedQueueIsReportedWithoutLosingTheEnumeration(t *testing.T) {
 	})
 	srv.QueueOwned = func() (int, error) { return 0, errors.New("queue is locked") }
 
-	var report EnumerationReport
+	var report enumerate.Report
 	postJSON(t, srv, "/api/owned-scope/enumerate", &report)
 
 	if report.Added != 1 {
@@ -235,7 +235,7 @@ func TestEnumeratingFromTheInterfaceAsksWhatEachRepositoryProtects(t *testing.T)
 		return []string{"main"}, nil
 	}
 
-	var report EnumerationReport
+	var report enumerate.Report
 	postJSON(t, srv, "/api/owned-scope/enumerate", &report)
 
 	if !slices.Equal(asked, []string{"advanced-security/one"}) {

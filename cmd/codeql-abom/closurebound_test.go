@@ -63,7 +63,7 @@ func TestTheServerMeasuresInsideTheClosureTheCrawlClaimsIn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newSupervisor: %v", err)
 	}
-	srv, err := newConfiguredServer(context.Background(), serveConfig{}, s, loop, nil, io.Discard)
+	srv, err := newConfiguredServer(context.Background(), serveConfig{}, s, loop, pools{}, nil, io.Discard)
 	if err != nil {
 		t.Fatalf("newConfiguredServer: %v", err)
 	}

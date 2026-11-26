@@ -151,3 +151,20 @@ func TestTheWriteCommandsReadWhatTheServerSends(t *testing.T) {
 		t.Errorf("ledger says:\n%s", ledger)
 	}
 }
+
+// A refusal reaches whoever ran the command in the server's own words, not as a bare status.
+func TestACommandSaysWhyTheServerRefusedIt(t *testing.T) {
+	db := codeScanningDB(t)
+	s, err := store.Open(db, store.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	srv := httptest.NewServer((&serve.Server{Store: s}).Handler())
+	defer srv.Close()
+
+	_, err = callServer(context.Background(), "GET", srv.URL+"/api/code-scanning/ledger?nonsense=1", nil)
+	if err == nil || !strings.Contains(err.Error(), "nonsense") {
+		t.Errorf("callServer = %v; want the server's reason, naming the parameter it refused", err)
+	}
+}

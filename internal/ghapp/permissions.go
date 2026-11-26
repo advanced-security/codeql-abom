@@ -68,6 +68,11 @@ func (p PermissionSet) missingFrom(granted map[string]string) []string {
 	return missing
 }
 
+// Unapproved is what the App asks for and an installation has not granted, as "name: access", sorted.
+func Unapproved(granted map[string]string) []string {
+	return permissionSetOf(Permissions).missingFrom(granted)
+}
+
 // within is the part of p that granted covers, at p's access.
 func (p PermissionSet) within(granted map[string]string) PermissionSet {
 	out := PermissionSet{}
@@ -83,6 +88,17 @@ func (p PermissionSet) within(granted map[string]string) PermissionSet {
 // installation, as a Copilot session's is; fresh mints a new one even where one is cached. A permission the installation has
 // not approved refuses the call before GitHub is asked.
 func (a *App) TokenWith(ctx context.Context, owner string, perms PermissionSet, fresh bool) (string, time.Time, error) {
+	return a.tokenWith(ctx, owner, "", perms, fresh)
+}
+
+// RepositoryTokenWith is TokenWith reaching only repo of owner's installation, as the publisher's
+// write to its one repository is.
+func (a *App) RepositoryTokenWith(ctx context.Context, owner, repo string, perms PermissionSet) (string, error) {
+	token, _, err := a.tokenWith(ctx, owner, repo, perms, false)
+	return token, err
+}
+
+func (a *App) tokenWith(ctx context.Context, owner, repo string, perms PermissionSet, fresh bool) (string, time.Time, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	id, err := a.installationFor(ctx, owner)
@@ -106,7 +122,7 @@ func (a *App) TokenWith(ctx context.Context, owner string, perms PermissionSet, 
 			return "", time.Time{}, &NotGrantedError{Owner: owner, Missing: missing}
 		}
 	}
-	t, err := a.mint(ctx, id, owner, perms, fresh)
+	t, err := a.mint(ctx, id, owner, perms, repo, fresh)
 	return t.token, t.expires, err
 }
 
@@ -127,4 +143,28 @@ func (a *App) granted(id int64) map[string]string {
 		}
 	}
 	return nil
+}
+
+// workerPermissions is what a worker analyzing one repository reads: its contents, and the metadata
+// every token carries.
+var workerPermissions = PermissionSet{"contents": "read", "metadata": "read"}
+
+// RepositoryToken lends a worker a read of one repository, and nothing else. An owner the App is not
+// installed on lends nothing: a public repository needs no token, and the installation that reads
+// public repositories would also read every private one it covers.
+func (a *App) RepositoryToken(ctx context.Context, owner, repo string) (string, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	id, err := a.installationFor(ctx, owner)
+	if errors.Is(err, ErrNotInstalled) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	t, err := a.mint(ctx, id, owner, workerPermissions, repo, false)
+	if errors.Is(err, ErrNotInstalled) {
+		return "", nil
+	}
+	return t.token, err
 }

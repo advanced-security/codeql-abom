@@ -56,6 +56,25 @@ func TestAnEndpointRefusesAParameterItDoesNotApply(t *testing.T) {
 	}
 }
 
+// The routes this branch added refuse a parameter they do not apply as their siblings do, before
+// anything is written.
+func TestTheSigningAndExportRoutesRefuseAParameterTheyDoNotApply(t *testing.T) {
+	srv, _ := unitServer(t)
+	srv.Publisher = &pullRequests{}
+	for _, r := range []*http.Request{
+		localRequest(http.MethodGet, "/api/owned-scope/decision?scope=owned", nil),
+		localRequest(http.MethodGet, "/api/me?as=admin", nil),
+		exportRequest("acme/a&branch=main", "sha"),
+	} {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, r)
+		if rec.Code != http.StatusBadRequest || !contains(rec.Body.String(), "scope") && !contains(rec.Body.String(), "as") &&
+			!contains(rec.Body.String(), "branch") {
+			t.Errorf("%s %s answered %d: %s; want the parameter refused by name", r.Method, r.URL, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 // Every endpoint that can be bounded to a repository grouping accepts the term rather than refusing
 // it, which is the whole point of it reading it. Both directions of the filter, since an exclusion
 // that is refused leaves the term half-enforced.

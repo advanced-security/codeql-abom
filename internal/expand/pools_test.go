@@ -63,3 +63,22 @@ func TestAnExpansionSpendsFromTheFetchingAndAnalysisPools(t *testing.T) {
 		t.Errorf("each repository prepared is one draw on analysis capacity; got %+v", got)
 	}
 }
+
+// A repository handed to a worker is a clone paid for at the same rate as one made here, and a round
+// says how many it handed out rather than reporting no fetch and no build for work that was done.
+func TestARoundPacesAndCountsWhatItHandsToWorkers(t *testing.T) {
+	h, tasks := remoteHarness(t)
+	h.enqueue(item("a", "one", "", 1), item("b", "two", "", 1))
+	pools := work.NewTokenPools()
+	h.expander.Pace = pools.Pool(work.PoolFetching, work.UnitGit)
+
+	stats := h.run(10)
+
+	if got := spentIn(pools)[work.PoolFetching+"/"+work.UnitGit]; got.Requests != len(*tasks) || len(*tasks) != 2 {
+		t.Errorf("each of the %d repositories handed out is a git request the fetching pool paid for; got %+v",
+			len(*tasks), got)
+	}
+	if stats.Remote != 2 || stats.Fetched != 0 || stats.Built != 0 {
+		t.Errorf("stats %+v; want 2 handed to workers and none fetched or built here", stats)
+	}
+}

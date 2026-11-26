@@ -5,6 +5,7 @@
 @inject AbomApi Api
 @inject AccountService Accounts
 @inject TutorialService Tutorial
+@inject RoleService Roles
 @implements IDisposable
 
 <PageTitle>Settings — ABOM</PageTitle>
@@ -33,6 +34,38 @@
 else
 {
     <MudText Typo="Typo.subtitle2" Class="mb-1">Accounts you own</MudText>
+    @* Said first: until it is confirmed, discovery does not act on anything below. *@
+    @if (_decision is { State: "unsigned" or "unverified" } decision && !Dirty)
+    {
+        var unsigned = decision.State == "unsigned";
+        <MudAlert Dense="true" Severity="@(unsigned ? Severity.Warning : Severity.Error)" Class="mb-2">
+            <div class="abom-alert" data-abom-scope-decision="@decision.State">
+                <MudText Typo="Typo.subtitle2">
+                    @(unsigned ? "Confirm your declaration" : "Your declaration is not the one that was decided")
+                </MudText>
+                <MudText Typo="Typo.body2" data-abom-scope-decision-reason>@Sentence(decision.Reason)</MudText>
+                <MudText Typo="Typo.body2">Discovery does not act on it until it is confirmed.</MudText>
+                <div class="d-flex gap-2 mt-1">
+                    <Tip Text="Read the declaration below before confirming it.">
+                        <MudButton Size="Size.Small" Variant="Variant.Text" Href="#declared-accounts">Review</MudButton>
+                    </Tip>
+                    <Tip Text="@(_mayNotDeclare ?? "Decide the declaration as it stands, under the same rules as saving it, and sign that decision.")">
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="@(_saving || _mayNotDeclare is not null)"
+                                   OnClick="Save" data-abom-confirm-scope>
+                            Confirm
+                        </MudButton>
+                    </Tip>
+                </div>
+            </div>
+        </MudAlert>
+    }
+    else if (_decision is { State: "signed", DecidedBy.Length: > 0 } signed)
+    {
+        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mb-2" data-abom-scope-decided>
+            Decided by @signed.DecidedBy, @TimeText.DayAndTime(signed.DecidedAt)@(signed.JudgedAs.Length > 0
+                ? $", against the roles GitHub reports for {signed.JudgedAs}" : "").
+        </MudText>
+    }
     @* gh is asked before the reader is: the first screen lists what could be declared rather than
        asking for a name the page could have looked up. *@
     <div class="d-flex flex-wrap align-center gap-3 mb-3" data-abom-identity>
@@ -108,7 +141,7 @@ else
                 </MudText>
             </MudAlert>
         }
-        <MudSimpleTable Dense="true" Hover="true" Striped="false" FixedHeader="true"
+        <MudSimpleTable Dense="true" Hover="true" Striped="false" FixedHeader="true" id="declared-accounts"
                         Class="abom-grid abom-table abom-grid-windowed abom-declared-grid mb-2">
             <thead>
                 <tr>
@@ -902,12 +935,12 @@ else
     }
 
     <div class="d-flex flex-wrap align-center gap-3 mb-6">
-        <MudTooltip Text="Write this declaration. It replaces what is stored, and bounds everything discovery does next.">
+        <Tip Text="@(_mayNotDeclare ?? "Write this declaration. It replaces what is stored, and bounds everything discovery does next.")">
             <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
-                       Disabled="@(!Dirty || _saving)" OnClick="Save" data-abom-save>
+                       Disabled="@(!Dirty || _saving || _mayNotDeclare is not null)" OnClick="Save" data-abom-save>
                 @(_saving ? "Saving…" : "Save")
             </MudButton>
-        </MudTooltip>
+        </Tip>
         <MudTooltip Text="Throw away these edits and go back to what is stored.">
             <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="@(!Dirty || _saving)"
                        OnClick="Discard" data-abom-discard>
@@ -1100,6 +1133,11 @@ else
     private bool _saving;
     private bool _saved;
     private string? _saveError;
+    private ScopeDecision? _decision;
+
+    // A reason the server wrote mid-sentence, said as its own sentence.
+    private static string Sentence(string reason) =>
+        reason.Length == 0 ? reason : char.ToUpperInvariant(reason[0]) + reason[1..] + (reason.EndsWith('.') ? "" : ".");
     private bool _enumerating;
     private EnumerationReport? _enumeration;
     private string? _enumerateError;
@@ -1250,6 +1288,8 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        _mayNotDeclare = await Roles.RefusalAsync("abom/declare-scope");
+        StateHasChanged();
         await Accounts.EnsureLoadedAsync();
         _problem = Accounts.Identity.Problem;
         SeedDraft();
@@ -1260,7 +1300,10 @@ else
             _ = CheckOnArrival();
         }
         _candidates = await Api.GetOwnerCandidatesAsync();
+        _decision = await Api.ReadScopeDecisionAsync();
     }
+
+    private string? _mayNotDeclare;
 
     private void SeedDraft()
     {
@@ -1599,6 +1642,7 @@ else
             await Accounts.ReloadScopeAsync();
             SeedDraft();
             _saved = true;
+            _decision = await Api.ReadScopeDecisionAsync();
         }
         catch (HttpRequestException e)
         {

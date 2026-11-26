@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"maps"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -195,5 +196,44 @@ func TestACopilotTokenIsNeverLentFromAnotherInstallation(t *testing.T) {
 	}
 	if n := gh.count("POST /app/installations/11/access_tokens"); n != 0 {
 		t.Errorf("%d tokens were minted on has-ghas for another account's session", n)
+	}
+}
+
+// A worker analyzing one repository is lent a read of that repository's contents and nothing else:
+// not the installation's other repositories, and none of the crawl's other reads. An owner the App is
+// not installed on lends nothing: a public repository needs no token, and the token of the
+// installation that reads public repositories would also read every private one it covers.
+func TestAWorkerIsLentAReadOfItsOneRepositoryAndNothingElse(t *testing.T) {
+	key, _ := testKeys(t)
+	c := newClock()
+	gh := newFakeGitHub(t, key, c.Now,
+		fakeInstallation{ID: 11, Login: "has-ghas", Type: "Organization", Selection: "all", Granted: approvedEverything})
+	app := gh.app(c.Now)
+	ctx := context.Background()
+
+	token, err := app.RepositoryToken(ctx, "has-ghas", "dubbo")
+	if err != nil || token == "" {
+		t.Fatalf("RepositoryToken = %q, %v", token, err)
+	}
+	if got := gh.scopedTo[token]; !slices.Equal(got, []string{"dubbo"}) {
+		t.Errorf("the worker's token reads %v; want the one repository it analyzes", got)
+	}
+	if got, want := gh.carries[token], map[string]string{"contents": "read", "metadata": "read"}; !maps.Equal(got, want) {
+		t.Errorf("the worker's token carries %v; want %v", got, want)
+	}
+	mints := func() int { return gh.count("POST /app/installations/11/access_tokens") }
+	if again, _ := app.RepositoryToken(ctx, "has-ghas", "dubbo"); again != token || mints() != 1 {
+		t.Errorf("a second lend for the same repository minted again (%d mints)", mints())
+	}
+	if other, _ := app.RepositoryToken(ctx, "has-ghas", "other"); other == token {
+		t.Error("two repositories were lent one token")
+	}
+
+	before := mints()
+	if none, err := app.RepositoryToken(ctx, "actions", "checkout"); none != "" || err != nil {
+		t.Errorf("an owner without an installation was lent %q, %v; want nothing", none, err)
+	}
+	if mints() != before {
+		t.Error("lending for an owner without an installation minted another installation's token")
 	}
 }

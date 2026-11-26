@@ -70,7 +70,7 @@ func TestCompactingIsASeparateCallFromMarking(t *testing.T) {
 		t.Fatal("nothing was marked, so compaction has nothing to prove")
 	}
 
-	if rec := postControl(t, srv, "/api/prune/compact"); rec.Code != http.StatusOK {
+	if rec := control(t, srv, http.MethodPost, "/api/prune/compact", ""); rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
 
@@ -103,7 +103,7 @@ func TestPruningRefusesWhenNothingIsDeclared(t *testing.T) {
 	srv, s := newServer(t)
 	seedGraph(t, s)
 
-	rec := postControl(t, srv, "/api/prune/apply")
+	rec := control(t, srv, http.MethodPost, "/api/prune/apply", "")
 
 	if rec.Code == http.StatusOK {
 		t.Error("pruning an undeclared corpus must not succeed; it would remove everything")
@@ -208,7 +208,7 @@ func TestPruningRefusesAgainstAnEmptyClosure(t *testing.T) {
 	srv, s := newServer(t)
 	declareOcto(t, s)
 
-	if rec := postControl(t, srv, "/api/prune/apply"); rec.Code == http.StatusOK {
+	if rec := control(t, srv, http.MethodPost, "/api/prune/apply", ""); rec.Code == http.StatusOK {
 		t.Fatalf("applying a prune against an empty closure was allowed: %s", rec.Body.String())
 	}
 }
@@ -232,13 +232,6 @@ func queuedFor(t *testing.T, s *store.Store, owner, repo string) int {
 		t.Fatalf("counting queue rows: %v", err)
 	}
 	return n
-}
-
-func postControl(t *testing.T, srv *Server, path string) *httptest.ResponseRecorder {
-	t.Helper()
-	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, controlRequest(path))
-	return rec
 }
 
 func declareOcto(t *testing.T, s *store.Store) {

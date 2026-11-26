@@ -93,6 +93,22 @@ func TestPollingNeverAsksAboutACommitPin(t *testing.T) {
 	}
 }
 
+// The poller asks for every due reference; a negative limit means no limit on both backends.
+func TestPollDueWithoutALimitListsEveryDueReference(t *testing.T) {
+	s := pollFixture(t,
+		pollRow{key: "acme/one", ref: "v1", status: "done", resolved: pollSHA, analyzed: "v1"},
+		pollRow{key: "acme/two", ref: "v1", status: "done", resolved: pollSHA, analyzed: "v1"},
+	)
+
+	due, err := s.PollDue(pollSince, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 2 {
+		t.Errorf("both due references are listed; got %v", pollKeys(due))
+	}
+}
+
 // A repository the operator owns is read on its own events, with the sweep behind them, so the
 // polling budget is spent only on what can tell ABOM nothing.
 func TestPollingAsksOnlyAboutExternalRepositories(t *testing.T) {

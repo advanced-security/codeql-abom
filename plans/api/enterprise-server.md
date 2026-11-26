@@ -1,10 +1,10 @@
-# An address the enterprise can reach, an identity it granted, and readers GitHub authorizes
+# An address the enterprise can reach, and an identity it granted
 
 **Status:** ABOM runs as a GitHub App it creates through the manifest flow — private, so
 installable only on the account that owns it — minting each call a token carrying only that call's
 permissions, and recording installations as evidence beside the declaration, re-read whenever an
-installation event arrives; deliveries reach a workstation through a relay, and a production address, readers signing
-in through the App, and workflow callers are not built. What the events the address receives do is
+installation event arrives; deliveries reach a workstation through a relay, and a production address
+and workflow callers are not built. Sign-in and roles are [access.md](access.md)'s. What the events the address receives do is
 in [`docs/architecture.md`](../../docs/architecture.md#the-pipeline).
 
 ## Why this exists
@@ -23,9 +23,10 @@ and naming by its installations exactly which organizations ABOM may read. Insta
 still per organization, so the instance holds one per installation; the installation list is the
 enterprise as ABOM sees it.
 
-Readers stop being local here, and the reason the old boundary excluded enterprises — a tool spanning
-organizations inherits no permission model — is answered by inheriting GitHub's: **a reader sees
-what GitHub says they can read, and nothing ABOM shows them is derived from what they cannot.**
+Readers stop being local here. **They sign in, through the organization's identity provider or
+through GitHub, and a role decides what they may change; what they may read is not filtered per
+reader by GitHub.** The teams that read ABOM — AppSec, Cyber, Risk, Audit — are granted it as a
+body, and [access.md](access.md) owns sign-in and roles.
 
 A workflow client also needs its own authenticated path to the server: `abom-check` cannot borrow a
 maintainer's session or receive the server's GitHub write credential just to request one authorized
@@ -37,19 +38,16 @@ operation.
    interface and for the App's webhook deliveries. **The fork is how deliveries arrive:** an
    endpoint GitHub can reach, verifying every signature before parsing; or a relay the instance
    pulls from, which keeps the instance unreachable and adds a component that can lose events.
-   Decide with [`../tools/deployment.md`](../tools/deployment.md). The workstation path is a relay:
+   Decide with [`../tools/kubernetes.md`](../tools/kubernetes.md). The workstation path is a relay:
    `ABOM_EVENTS_RELAY` reads a smee.io channel and hands each delivery, headers and body as
    received, to the same receiver. It loses whatever arrives while ABOM is down, and smee re-encodes
    JSON — a body with `\u` escapes, `\/` or extra whitespace no longer matches its signature and is
    refused — so it is for testing, with the sweep behind it.
-2. **Readers authorized by GitHub.** Readers sign in through the App. Every read is filtered to the
-   organizations and repositories GitHub says that reader can read, with the visibility held for a
-   bounded time and read again, never assumed from the last answer forever. Until a reader signs
-   in, an App-only server knows nobody at the page, so what the page does — a request, a session, a
-   run — is recorded as `interface`, never as the App's bot. A signed-in reader replaces that in one
-   place, `AccountIdentity.Actor`. A reader's user token is also the credential the Copilot CLI's token
-   provider was built for: it names an account and lasts hours, where an installation token names
-   none. Depends on 1.
+2. **Who acts is the signed-in person.** Without sign-in, an App-only server knows nobody at the
+   page, so what the page does — a request, a session, a run — is recorded as `interface`, never as
+   the App's bot. With sign-in, every decision names the person by the identifier their provider
+   keeps; `AccountIdentity.Actor` takes the same, so requests, sessions and runs name them too. Copilot authoring keeps running on the App's
+   installation token; a reader's GitHub user token is not part of sign-in. Depends on 1.
 3. **Authenticate workflow callers and authorize individual operations.** Define short-lived,
    repository-scoped verdict-read grants for [abom-check.md](abom-check.md). Verify repository,
    workflow/event, base/head commits and expiry, and return evidence for those exact lock contexts.
@@ -82,7 +80,7 @@ workflow action receives no App private key or GitHub contents-write credential.
 `X-Abom-Control` currently guards cross-site requests and local control; it is not an authenticated
 caller identity. Enabling remote control alone cannot authorize a workflow client.
 [github-hosts.md](github-hosts.md) owns destination/credential routing and its host support matrix;
-this plan owns service identity, reader authorization, caller grants and deployment.
+this plan owns service identity, caller grants and the address; access.md owns sign-in.
 
 ## The constraints that must not be broken
 
@@ -106,11 +104,6 @@ supply chain anyone's remediation work, for exactly the reason membership does n
 [`../db/owned-scope.md`](../db/owned-scope.md). Ownership stays declared, organization by
 organization. An installation can contradict a declaration, and can support one, and can do neither.
 
-**A reader sees what GitHub lets them read, and an aggregate never names what they cannot.** A count
-spanning organizations discloses that something exists: how many repositories reach an action, how
-many findings a rule has. It is computed over what the reader can see, or reported as that plus an
-unnamed remainder — never with the remainder's names, paths or findings.
-
 **A credential that reads is not the credential that writes.** ABOM submits dependency snapshots and
 would create check runs, which are irreversible against a live repository. A server reading as the
 App performs neither, and refuses to start when given a target for one. Client permission to request a submission is narrower than
@@ -131,8 +124,6 @@ for `gh`, and it is drawn here for the same reason.
   them breaks a named thing.
 - A revoked installation puts that organization's declared accounts into *unknown* and roots
   nothing, rather than silently reporting an organization as empty.
-- A reader without access to an organization sees none of its repositories, findings or edges, and
-  every aggregate they see either excludes it or reports it only as an unnamed remainder.
 - Caller-contract tests reject wrong issuer/audience, repository, workflow/event, commit/ref and
   expired or revoked grants. Valid verdict reads cannot submit, control discovery, renew other
   repositories or change ownership; returned lock contexts match the requested commits.

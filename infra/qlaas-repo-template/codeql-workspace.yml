@@ -1,0 +1,4 @@
+# The query pack and its tests, resolved from this repository rather than the registry.
+provide:
+  - "qlpack.yml"
+  - "test/qlpack.yml"

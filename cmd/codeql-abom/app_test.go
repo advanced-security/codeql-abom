@@ -9,6 +9,7 @@ import (
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -78,5 +79,24 @@ func TestAppStatusNamesTheKeyByFingerprintAndPrintsNoSecret(t *testing.T) {
 	}
 	if strings.Contains(out, secret) {
 		t.Errorf("status prints the webhook secret:\n%s", out)
+	}
+}
+
+// The publisher is told nothing, so it needs no delivery address, and it lives beside the
+// reader rather than in its place.
+func TestAppCreatePublisherNeedsNoDeliveryAddressAndSitsBesideTheReader(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "abom.db")
+	publisherDir := filepath.Join(filepath.Dir(db), "github-app-publisher")
+	if err := os.MkdirAll(publisherDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(publisherDir, "app.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr strings.Builder
+	err := run(context.Background(), []string{"app", "create", "--publisher", "--owner", "acme", "--db", db},
+		&stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "already configured in "+publisherDir) {
+		t.Errorf("create --publisher = %v; want it to reach the publisher's own directory without a delivery address", err)
 	}
 }

@@ -23,8 +23,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/advanced-security/codeql-abom/internal/authz"
 	"github.com/advanced-security/codeql-abom/internal/catalog"
 	"github.com/advanced-security/codeql-abom/internal/enumerate"
+	"github.com/advanced-security/codeql-abom/internal/expand"
 	"github.com/advanced-security/codeql-abom/internal/ghauth"
 	"github.com/advanced-security/codeql-abom/internal/graph"
 	"github.com/advanced-security/codeql-abom/internal/setup"
@@ -118,6 +120,11 @@ type Server struct {
 	// AllowedHosts are names admitted beside loopback, exactly as listed, such as the one a
 	// Codespace forwards the interface under.
 	AllowedHosts []string
+	// Publisher opens export pull requests; nil when no publisher App is configured.
+	Publisher Publisher
+	// Access signs people in; nil is the single-user default, where whoever is at this machine
+	// is the only principal and the loopback boundary is what keeps everyone else out.
+	Access Access
 	// Instance is what this server is, fixed at startup; the zero value is an ordinary instance.
 	Instance Instance
 	// Served reports whether a run can fetch a repository. Nil fetches any; a Demo's names only
@@ -216,7 +223,7 @@ func (s *Server) Handler() http.Handler {
 		read := handler
 		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodGet && r.Method != http.MethodHead {
-				writeError(w, http.StatusForbidden, "This instance only serves reads; send controls to the coordinator.")
+				writeProblem(w, problemReadOnlyInstance, "This instance only serves reads; send controls to the coordinator.")
 				return
 			}
 			read.ServeHTTP(w, r)
@@ -233,17 +240,63 @@ func (s *Server) guardRequests(routes *http.ServeMux, next http.Handler) http.Ha
 			next.ServeHTTP(w, r)
 			return
 		}
+		// A probe addresses the pod, so no host check could admit it; it reads nothing.
+		if pattern == "GET /healthz" {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if !s.allowHost(w, r) {
 			return
 		}
-		read := r.Method == http.MethodGet || r.Method == http.MethodHead ||
-			pattern == "POST /api/owned-scope/preview" ||
-			pattern == "POST /api/repositories/{owner}/{name}/snapshot/preview"
-		if !read && strings.HasPrefix(pattern, r.Method+" /api/") && !s.allowControl(w, r) {
-			return
+		if s.Access != nil && !public(pattern) {
+			u, ok := s.Access.User(r)
+			if !ok {
+				writeProblem(w, problemSignInRequired, "sign in to use ABOM", withLogin("/auth/login"))
+				return
+			}
+			// Who you are is answered without a role, so the interface can say why nothing else is.
+			if u.Role == "" && pattern != "GET /api/me" {
+				writeProblem(w, problemNoRole, u.Called()+" holds no ABOM app role; ask an administrator to assign one")
+				return
+			}
+			r = r.WithContext(withUser(r.Context(), u))
+		}
+		if controlled(pattern) {
+			if !s.allowControl(w, r) {
+				return
+			}
+			route, ok := s.recordControl(w, r, pattern)
+			if !ok {
+				return
+			}
+			r = r.WithContext(authz.WithRequester(r.Context(), authz.Requester{Principal: route.Principal(), Route: route.Digest()}))
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func healthy(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = io.WriteString(w, "ok\n")
+}
+
+// ProbeHandler serves health and metrics alone, for a port only the cluster reaches: its kubelet and
+// scraper address the pod, so no host list can name them and neither can sign in.
+func (s *Server) ProbeHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", healthy)
+	mux.HandleFunc("GET /metrics", reading(s.coverageMetrics))
+	return mux
+}
+
+// public reports whether a route serves nothing ABOM holds: the interface's own files, and the
+// sign-in exchange that no session can exist before. Everything else needs one when sign-in is on.
+func public(pattern string) bool {
+	switch pattern {
+	case "/", "GET /auth/login", "GET /auth/callback", "POST /auth/logout":
+		return true
+	}
+	return false
 }
 
 // routes is the tree itself, before the middleware that wraps it. Separate so a test can ask what
@@ -310,6 +363,7 @@ func (s *Server) routes() *http.ServeMux {
 		"q", "style", "flagged", "properties", "notProperties"))
 	mux.HandleFunc("GET /api/accounts", s.accounts)
 	mux.HandleFunc("GET /api/owned-scope", s.ownedScope)
+	mux.HandleFunc("GET /api/owned-scope/decision", reading(s.ownedScopeDecision))
 	mux.HandleFunc("GET /api/properties", reading(s.properties, "property"))
 	mux.HandleFunc("GET /api/policies", s.policies)
 	mux.HandleFunc("PUT /api/policies", s.savePolicy)
@@ -325,6 +379,11 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/queries/ast", s.printQueryAST)
 	mux.HandleFunc("GET /api/queries/asts", reading(s.queryASTs, "query"))
 	mux.HandleFunc("GET /api/queries/step", reading(s.queryStep, "query", "step"))
+	mux.HandleFunc("GET /api/audit/authz", reading(s.authzLog, "after", "limit"))
+	mux.HandleFunc("GET /api/queries/components", reading(s.queryComponentsList, "query"))
+	mux.HandleFunc("GET /api/queries/component", reading(s.queryComponent, "query", "path"))
+	mux.HandleFunc("GET /api/queries/bundle", reading(s.queryBundle, "query"))
+	mux.HandleFunc("POST /api/queries/export", reading(s.exportQuery, "query", "bundle"))
 	mux.HandleFunc("GET /api/query-requests", s.queryRequests)
 	mux.HandleFunc("POST /api/query-requests", s.saveQueryRequest)
 	mux.HandleFunc("PUT /api/query-requests/{id}", s.editQueryRequest)
@@ -376,6 +435,8 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/accounts/{owner}/properties", s.accountProperties)
 	mux.HandleFunc("GET /api/owner-candidates", s.ownerCandidates)
 	mux.HandleFunc("GET /api/frontier", reading(s.frontier, "status", "top"))
+	// Prometheus scrapes this path by convention, outside /api/, in its own text format.
+	mux.HandleFunc("GET /metrics", reading(s.coverageMetrics))
 	mux.HandleFunc("GET /api/findings", reading(s.findings, findingReviewParameters...))
 	mux.HandleFunc("GET /api/findings/{id}/review", reading(s.findingReview,
 		append(append([]string{}, findingReviewParameters...), "evaluation")...))
@@ -405,6 +466,14 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/submissions/renew", s.renew)
 	mux.HandleFunc("POST /api/events/github", s.receiveGitHubEvent)
 	mux.HandleFunc("GET /api/events/github", s.gitHubEventStatus)
+	mux.HandleFunc("GET /healthz", healthy)
+	mux.HandleFunc("GET /api/me", reading(s.me))
+
+	if s.Access != nil {
+		mux.HandleFunc("GET /auth/login", s.Access.Login)
+		mux.HandleFunc("GET /auth/callback", s.Access.Callback)
+		mux.HandleFunc("POST /auth/logout", s.Access.Logout)
+	}
 
 	if s.UI != nil {
 		// Registered for every method rather than GET alone: a method-restricted catch-all
@@ -416,7 +485,9 @@ func (s *Server) routes() *http.ServeMux {
 	}
 	// Anything under /api/ that no route claimed is absent, whatever the method. Without this a
 	// withdrawn route answers a PUT with 405, which says the resource is still there.
-	mux.HandleFunc("/api/", http.NotFound)
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+		writeProblem(w, problemNotFound, "nothing answers "+r.Method+" "+r.URL.Path)
+	})
 	return mux
 }
 
@@ -1000,6 +1071,13 @@ func (s *Server) ownedScope(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out, nil)
 }
 
+// ownedScopeDecision serves whether the declaration on record is one a verified decision allowed,
+// which is whether discovery acts on it at all.
+func (s *Server) ownedScopeDecision(w http.ResponseWriter, _ *http.Request) {
+	verdict, err := s.Store.ScopeVerdict()
+	writeJSON(w, verdict, err)
+}
+
 // setOwnedScope replaces the declaration. An empty list is a real instruction — it stops
 // discovery — so it is accepted rather than treated as a malformed body.
 func (s *Server) setOwnedScope(w http.ResponseWriter, r *http.Request) {
@@ -1015,13 +1093,18 @@ func (s *Server) setOwnedScope(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, nil, err)
 		return
 	}
-	if err := s.Store.SetOwnedScope(accounts, store.DeclaredByInterface); err != nil {
+	if err := s.Store.DeclareOwnedScope(r.Context(), accounts, store.DeclaredByInterface); err != nil {
 		var refused *store.DeclarationRefused
-		if errors.As(err, &refused) {
-			writeError(w, http.StatusBadRequest, refused.Reason)
-			return
+		switch {
+		case errors.As(err, &refused) && refused.ByRole:
+			writeProblem(w, problemRoleCannotDeclare, refused.Reason)
+		case errors.As(err, &refused):
+			writeProblem(w, problemDeclarationRefused, refused.Reason)
+		case errors.Is(err, store.ErrNoDecisionKey):
+			undecided(w, "the declaration could not be decided, so nothing was written", err)
+		default:
+			writeJSON(w, nil, err)
 		}
-		writeJSON(w, nil, err)
 		return
 	}
 	s.ownedScope(w, r)
@@ -1374,7 +1457,7 @@ func reading(h http.HandlerFunc, params ...string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		for name, values := range r.URL.Query() {
 			if !applies[name] {
-				writeError(w, http.StatusBadRequest, misdirected(name))
+				writeProblem(w, problemUnknownParameter, misdirected(name))
 				return
 			}
 			if !wholeNumber[name] {
@@ -1401,6 +1484,13 @@ func misdirected(name string) string {
 func (s *Server) frontier(w http.ResponseWriter, r *http.Request) {
 	items, err := s.Store.FrontierSnapshot(
 		r.URL.Query().Get("status"), intParam(r, "top", 500))
+	stuckAfter := s.queue().StuckAfterAttempts()
+	for i, it := range items {
+		items[i].Stuck = it.Status == store.StatusPending && it.AwaitingCodeScanning == "" && it.Attempts >= stuckAfter
+		if it.Status == store.StatusUnavailable {
+			items[i].Cause = expand.Cause(it.Reason)
+		}
+	}
 	writeJSON(w, items, err)
 }
 
@@ -1633,7 +1723,7 @@ func intParam(r *http.Request, name string, fallback int) int {
 // half-written body that a client would parse as truncated data.
 func writeJSON(w http.ResponseWriter, payload any, err error) {
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeProblem(w, problemInternal, internalDetail(err))
 		return
 	}
 	started := time.Now()
@@ -1642,7 +1732,7 @@ func writeJSON(w http.ResponseWriter, payload any, err error) {
 		rec.marshalNanos = time.Since(started).Nanoseconds()
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("encoding response: %v", err))
+		writeProblem(w, problemInternal, fmt.Sprintf("encoding the answer: %v", err))
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -1674,10 +1764,3 @@ type gzipWriter struct {
 }
 
 func (g gzipWriter) Write(b []byte) (int, error) { return g.Writer.Write(b) }
-
-func writeError(w http.ResponseWriter, status int, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	// The status is already sent; there is no second error to report.
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
-}

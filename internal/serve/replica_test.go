@@ -104,7 +104,8 @@ func TestReaderInstancesCannotStartMutatingHandlers(t *testing.T) {
 // A paused replay, its lag and a refused write are what the stubbed replica above cannot show.
 func TestPhysicalReplicaReportsLagAndKeepsAControlsOwnWriteVisible(t *testing.T) {
 	primaryTarget, standbyTarget, onStandby := physicalStandby(t)
-	primary, err := store.OpenBackend(primaryTarget, store.Options{})
+	// A PostgreSQL database has no key directory of its own, and every control is a signed decision.
+	primary, err := store.OpenBackend(primaryTarget, store.Options{AuthzDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}

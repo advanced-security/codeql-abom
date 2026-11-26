@@ -821,6 +821,9 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"abom_frontier", "dependencies_moved", "INTEGER"},
 	// NULL on every row queued before a push could wait for code scanning: nothing held them.
 	{"abom_frontier", "awaiting_code_scanning", "TEXT"},
+	// When a retry last failed. NULL on a row that has not failed since this was recorded, which
+	// shows no failure time rather than one worked back from a schedule.
+	{"abom_frontier", "failed_at", "TEXT"},
 	{"repository", "origin", "TEXT NOT NULL DEFAULT 'seed'"},
 	// Nullable on purpose. NULL is "nobody enumerated this repository", which a gate has to be
 	// able to tell apart from a branch it knows the name of.
@@ -856,6 +859,8 @@ var addedColumns = []struct{ table, column, decl string }{
 	// Nullable, and rows written before it stay NULL. Defaulting them to a source would invent the
 	// provenance the column exists to establish.
 	{"abom_owned_scope", "declared_by", "TEXT"},
+	// NULL for every row written before declarations were signed, which is exactly what it says.
+	{"abom_owned_scope", "decision_digest", "TEXT"},
 	{"abom_property_schema", "value_type", "TEXT"},
 	{"abom_enumeration_state", "properties_judged_at", "TEXT"},
 	{"abom_enumeration_state", "properties_unjudged", "INTEGER"},

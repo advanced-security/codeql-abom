@@ -186,6 +186,9 @@ func (s *Store) ForgetAccounts() error {
 // An account, not ownership: one restricted to some of its repositories is still declared, so
 // anything judging a repository asks `OwnedAmong` or `RepositoryIsOwned`, which honor the scope.
 func (s *Store) DeclaredOwners() (map[string]bool, error) {
+	if ok, err := s.scopeActionable(); err != nil || !ok {
+		return map[string]bool{}, err
+	}
 	owners, err := queryAll(s, "reading declared accounts", func(r *sql.Rows) (string, error) {
 		var owner string
 		return owner, r.Scan(&owner)

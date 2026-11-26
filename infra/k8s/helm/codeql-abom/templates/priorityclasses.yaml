@@ -1,0 +1,22 @@
+{{- if .Values.priority.create }}
+# The coordinator outranks analysis: when a node is short, the scheduler and the kubelet give way
+# with workers first, and a worker never displaces anything to be placed.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: {{ include "abom.name" . }}-control
+  labels: {{- include "abom.labels" . | nindent 4 }}
+value: {{ .Values.priority.control }}
+globalDefault: false
+description: ABOM's coordinator, which every analysis depends on.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: {{ include "abom.name" . }}-worker
+  labels: {{- include "abom.labels" . | nindent 4 }}
+value: {{ .Values.priority.worker }}
+globalDefault: false
+preemptionPolicy: Never
+description: ABOM analysis Jobs, which wait for room rather than take it.
+{{- end }}

@@ -12,6 +12,7 @@ type Frontier interface {
 	NextAttemptAt() (time.Time, bool, error)
 	Complete(Key, Resolution) error
 	DueForRecheck(time.Duration, int) ([]Recheck, error)
+	DueForReprobe(time.Duration, []string, int, func(string) bool) ([]Recheck, error)
 	Touch(Key) error
 	MarkStale(Key, string) error
 	ReviewDependencies(Key, bool) error

@@ -46,6 +46,37 @@ public class QueryCatalogTests : AbomTestContext
     }
 
     /// <summary>
+    /// Only the version on disk has files to show: an older version of a custom query is history,
+    /// and a query ABOM or CodeQL ships is not the operator's to hand over.
+    /// </summary>
+    [Fact]
+    public void OnlyTheCustomVersionOnDiskOpensItsComponents()
+    {
+        Answer("api/queries/components?", """
+            {"query":"acme/a","version":"v2","pack":"abom/custom-queries","packVersion":"2.27.0","dependencies":[],
+             "outside":[],"development":true,"deployed":false,"bundleSha256":"ab","missing":[],"newestTest":null,
+             "components":[{"role":"query","path":"src/A.ql","sha256":"bb","size":3,"bundled":true}]}
+            """);
+        var dialogs = base.Render<MudBlazor.MudDialogProvider>();
+        var page = Render("""
+            {"queries":[
+              {"queryId":"acme/a","queryVersion":"v2","pack":"abom/custom-queries","source":"custom","working":true,"stage":""},
+              {"queryId":"acme/a","queryVersion":"v1","pack":"abom/custom-queries","source":"custom","working":false,"stage":""},
+              {"queryId":"abom/edges","queryVersion":"f4","pack":"advanced-security/abom","source":"abom","stage":""}
+            ],"stages":["dev","test","extended-test","review","deploy"]}
+            """);
+
+        page.WaitForAssertion(() => Assert.Single(page.FindAll("[data-abom-query-components]")));
+        page.Find("[data-abom-query-components]").Click();
+
+        dialogs.WaitForAssertion(() => Assert.NotNull(dialogs.Find("[data-abom-components='acme/a']")));
+
+        // It closes from its title bar, which is what a person reaches for, not only from Esc.
+        dialogs.Find(".mud-dialog-title .mud-button-close").Click();
+        dialogs.WaitForAssertion(() => Assert.Empty(dialogs.FindAll(".mud-dialog")));
+    }
+
+    /// <summary>
     /// A version nobody advanced has no stage. Rendering a default would report a decision the
     /// operator never made, which is the same failure as an unmeasured value printed as zero.
     /// </summary>

@@ -97,7 +97,7 @@ func TestAPreviewIsTheViewsRepositoriesAndChangesNothing(t *testing.T) {
 	if err := s.SaveView(store.SavedView{Name: "just-app", Predicate: "q=octo%2Fapp", CreatedBy: store.DeclaredByCLI}); err != nil {
 		t.Fatal(err)
 	}
-	rec := control(t, srv, "/api/code-scanning/previews", `{"view":"just-app","exclude":[]}`)
+	rec := control(t, srv, http.MethodPost, "/api/code-scanning/previews", `{"view":"just-app","exclude":[]}`)
 	if strings.Contains(rec.Body.String(), `"rows"`) {
 		t.Errorf("a preview answered with its rows, %s; at organization scale that is every repository", rec.Body.String())
 	}
@@ -124,7 +124,7 @@ func TestAPreviewIsTheViewsRepositoriesAndChangesNothing(t *testing.T) {
 	if rec := get(t, srv, fmt.Sprintf("/api/code-scanning/previews/%d/rows", got.ID+1)); rec.Code != http.StatusNotFound {
 		t.Errorf("the rows of a preview that does not exist answered %d, want 404", rec.Code)
 	}
-	if rec := control(t, srv, "/api/code-scanning/previews", `{"view":"nowhere"}`); rec.Code != http.StatusBadRequest {
+	if rec := control(t, srv, http.MethodPost, "/api/code-scanning/previews", `{"view":"nowhere"}`); rec.Code != http.StatusBadRequest {
 		t.Errorf("an unknown view answered %d, want 400", rec.Code)
 	}
 	if rec := get(t, srv, "/api/code-scanning/previews"); rec.Code != http.StatusOK {
@@ -141,8 +141,8 @@ func TestWritingIsControlledAndRefusedWhereTheServerWritesNothing(t *testing.T) 
 	}
 	created := decode[struct {
 		ID int64 `json:"id"`
-	}](t, control(t, srv, "/api/code-scanning/previews", `{}`))
-	if rec := control(t, srv, fmt.Sprintf("/api/code-scanning/previews/%d/approve", created.ID), ``); rec.Code != http.StatusConflict ||
+	}](t, control(t, srv, http.MethodPost, "/api/code-scanning/previews", `{}`))
+	if rec := control(t, srv, http.MethodPost, fmt.Sprintf("/api/code-scanning/previews/%d/approve", created.ID), ``); rec.Code != http.StatusConflict ||
 		!strings.Contains(rec.Body.String(), "--enable-targets") {
 		t.Errorf("approving on a server that writes nothing answered %d %s", rec.Code, rec.Body.String())
 	}
@@ -165,8 +165,8 @@ func TestAServerReadingAsAnAppSaysItWritesNothingAndOffersNoFlag(t *testing.T) {
 	srv.IdentityBy = IdentityByApp
 	created := decode[struct {
 		ID int64 `json:"id"`
-	}](t, control(t, srv, "/api/code-scanning/previews", `{}`))
-	rec := control(t, srv, fmt.Sprintf("/api/code-scanning/previews/%d/approve", created.ID), ``)
+	}](t, control(t, srv, http.MethodPost, "/api/code-scanning/previews", `{}`))
+	rec := control(t, srv, http.MethodPost, fmt.Sprintf("/api/code-scanning/previews/%d/approve", created.ID), ``)
 	if rec.Code != http.StatusConflict || strings.Contains(rec.Body.String(), "--enable") ||
 		!strings.Contains(rec.Body.String(), "App") {
 		t.Errorf("approving as an App answered %d %s, want a refusal naming the App and no flag", rec.Code, rec.Body.String())

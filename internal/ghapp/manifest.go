@@ -3,6 +3,7 @@ package ghapp
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"strings"
@@ -128,6 +129,13 @@ var Permissions = []Grant{
 			{"catalog.Client.ActionsPermissions", "GET /repos/{owner}/{repo}/actions/permissions",
 				"/actions/permissions"},
 		}},
+	// Signing people in with GitHub reads which organization and team each belongs to.
+	{Permission: "members", Access: "read",
+		Doc: docPermissions + "#organization-permissions-for-members",
+		Uses: []Use{
+			{"ghapp.App.Role", "GET /orgs/{org}/memberships/{username}", "/memberships/"},
+			{"ghapp.App.Role", "GET /orgs/{org}/teams/{team_slug}/memberships/{username}", "/teams/"},
+		}},
 	// Copilot requests from an installation token are billed to the installing organization.
 	{Permission: "organization_copilot_requests", Access: "read",
 		Doc: "https://docs.github.com/en/copilot/how-tos/copilot-sdk/auth/server-to-server-tokens",
@@ -167,12 +175,59 @@ func NewManifest(name, homepage, webhookURL, redirectURL string) Manifest {
 		DefaultPermissions: map[string]string{},
 		DefaultEvents:      []string{},
 	}
-	for _, g := range Permissions {
-		m.DefaultPermissions[g.Permission] = g.Access
-	}
+	maps.Copy(m.DefaultPermissions, permissionSetOf(Permissions))
 	for _, s := range Events {
 		m.DefaultEvents = append(m.DefaultEvents, s.Event)
 	}
+	return m
+}
+
+// PublisherGrants is everything the publisher App requests, each traced to the calls that need it:
+// one repository's contents and pull requests, which it writes, and the metadata every App reads. It
+// is a second App so the reader above can keep writing nothing.
+var PublisherGrants = []Grant{
+	{Permission: "contents", Access: "write",
+		Doc: docPermissions + "#repository-permissions-for-contents",
+		Uses: []Use{
+			{"publish.Publisher.Open", "GET /repos/{owner}/{repo}/git/ref/{ref}", "/git/ref/heads/"},
+			{"publish.Publisher.commit", "POST /repos/{owner}/{repo}/git/trees", "/git/trees"},
+			{"publish.Publisher.commit", "POST /repos/{owner}/{repo}/git/commits", "/git/commits"},
+			{"publish.Publisher.commit", "POST /repos/{owner}/{repo}/git/refs", "/git/refs"},
+		}},
+	{Permission: "pull_requests", Access: "write",
+		Doc: docPermissions + "#repository-permissions-for-pull-requests",
+		Uses: []Use{
+			{"publish.Publisher.Open", "POST /repos/{owner}/{repo}/pulls", "/pulls"},
+			{"publish.Publisher.Open", "GET /repos/{owner}/{repo}/pulls", "/pulls?"},
+		}},
+	{Permission: "metadata", Access: "read",
+		Doc:  docPermissions + `#repository-permissions-for-metadata (GitHub grants it to every App)`,
+		Uses: []Use{{"publish.Publisher.Open", "GET /repos/{owner}/{repo}", "/repos/"}}},
+}
+
+// PublisherPermissions is what each of the publisher's tokens carries: PublisherGrants, as a set.
+var PublisherPermissions = permissionSetOf(PublisherGrants)
+
+func permissionSetOf(grants []Grant) PermissionSet {
+	out := PermissionSet{}
+	for _, g := range grants {
+		out[g.Permission] = g.Access
+	}
+	return out
+}
+
+// NewPublisherManifest is the manifest for the publisher: PublisherPermissions, no events, and no
+// deliveries, because it reads nothing and is told nothing.
+func NewPublisherManifest(name, homepage, redirectURL string) Manifest {
+	m := Manifest{
+		Name: name, URL: homepage, RedirectURL: redirectURL,
+		Description: "Opens pull requests of codeql-abom query exports in the one repository it is " +
+			"installed on. Install it on that repository only; it is refused anywhere else.",
+		HookAttributes:     HookAttributes{URL: homepage, Active: false},
+		DefaultPermissions: map[string]string{},
+		DefaultEvents:      []string{},
+	}
+	maps.Copy(m.DefaultPermissions, PublisherPermissions)
 	return m
 }
 
@@ -204,14 +259,16 @@ func Convert(ctx context.Context, hc *http.Client, apiURL, code string) (Convers
 }
 
 // requested renders the table for the operator to read before creating the App.
-func requested() []map[string]string {
-	var out []map[string]string
-	for _, g := range Permissions {
+// requestedFrom is what the setup page lists for grants: each permission, and every call and event
+// that needs it.
+func requestedFrom(grants []Grant, events []Subscription) []map[string]string {
+	out := []map[string]string{}
+	for _, g := range grants {
 		var calls []string
 		for _, u := range g.Uses {
 			calls = append(calls, u.Calls)
 		}
-		for _, s := range Events {
+		for _, s := range events {
 			if s.Permission == g.Permission || s.Also == g.Permission {
 				calls = append(calls, s.Event+" events")
 			}

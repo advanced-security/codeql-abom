@@ -1,0 +1,187 @@
+Usage of serve:
+  -addr string
+    	address to listen on (default "localhost:8080")
+  -advisory-max-age duration
+    	longest the advisory set may go unrefreshed once the queue has drained (0: only on arrival) (default 24h0m0s)
+  -advisory-min-interval duration
+    	shortest gap between two advisory refreshes, however much arrives (default 15m0s)
+  -aggregate-after-edges int
+    	dependencies that must arrive before reach is recomputed (default 500)
+  -aggregate-max-age duration
+    	longest reach may go unmeasured, however little arrives (default 24h0m0s)
+  -aggregate-min-interval duration
+    	shortest gap between two reach rebuilds (default 5m0s)
+  -allow-host string
+    	comma-separated request hosts admitted beside loopback, exactly as written, such as a cluster Service name a scraper uses
+  -allow-remote-control
+    	allow non-loopback request hosts for reads and controls; this does not authenticate callers
+  -api-url string
+    	GitHub API base URL (default "https://api.github.com")
+  -app-dir string
+    	directory holding the GitHub App ABOM reads as (default: github-app beside --db; none there reads as you)
+  -app-public-reads string
+    	account whose installation reads owners the App is not installed on (default: the earliest installation)
+  -auth string
+    	who may use ABOM: none, only you at this machine; oidc, people signed in through an identity provider such as Entra ID; or github, people signed in with GitHub through the reading App (default "none")
+  -authoring-credits float
+    	AI credits one authoring session may spend (0: no limit)
+  -authoring-limit duration
+    	longest one authoring session may run (default 45m0s)
+  -authoring-model string
+    	model authoring sessions run (default "claude-opus-5")
+  -authoring-org string
+    	organization a GitHub App's Copilot requests are billed to (default: the App's owner)
+  -authz-dir string
+    	directory holding the key decisions are signed with and the bundle that verifies them (default: authz beside --db)
+  -cache-dir string
+    	retain fetched checkouts here and reuse each commit across references (default: off)
+  -cache-max-mb int
+    	ceiling for retained checkouts, least recently used evicted first (0: unbounded) (default 2048)
+  -code-scanning-reuse
+    	take code scanning's database and default setup's analysis where each is what ABOM would produce; false builds and evaluates everything (default true)
+  -code-scanning-wait duration
+    	longest a push to an owned default branch whose default setup reads Actions waits for code scanning's own analysis of it before ABOM builds anyway (0: never waits) (default 10m0s)
+  -codeql string
+    	codeql CLI to invoke (default: codeql on PATH)
+  -copilot-cli string
+    	Copilot CLI that runs authoring sessions (default: $COPILOT_CLI_PATH; off when empty)
+  -custom-ql-dir string
+    	directory holding your own CodeQL pack, scaffolded if empty (default: off)
+  -database-cache-dir string
+    	retain built CodeQL databases here and analyze them again without extracting (default: off)
+  -database-cache-max-mb int
+    	ceiling for retained databases, least recently used evicted first (0: unbounded) (default 25600)
+  -db string
+    	SQLite database path or PostgreSQL URL (required; defaults to ABOM_DB)
+  -declare-file string
+    	local file declaring owned accounts, applied only when nothing is declared (default "abom.local.json")
+  -diagnostics
+    	expose /api/metrics and /debug/pprof/ for local performance analysis
+  -enable-accounts string
+    	comma-separated accounts whose declared repositories' default setup may gain actions, once approved
+  -enable-targets string
+    	comma-separated repositories whose default setup may gain actions, once an approved preview lists them
+  -enumerate-every duration
+    	how often the declared accounts are re-read for new repositories (0: never) (default 1h0m0s)
+  -events-relay string
+    	relay channel to read deliveries from, such as https://smee.io/<channel> (default: $ABOM_EVENTS_RELAY)
+  -executor string
+    	where analysis runs: local, in this process, or kubernetes, as one Job per repository (default "local")
+  -expand
+    	start discovery as soon as the server is up
+  -expand-concurrency int
+    	repositories analyzed at once (default 4)
+  -expand-interval duration
+    	longest a cycle waits before looking for work again (default 30s)
+  -expand-lease duration
+    	how long a claimed dependency may sit before an interrupted run's work is taken back (default 1h0m0s)
+  -expand-limit int
+    	dependencies claimed per cycle (default 20)
+  -expand-ram int
+    	memory cap per codeql invocation in MB (0: codeql decides)
+  -expand-suite string
+    	query suite to run against each database instead of a single query
+  -expand-threads int
+    	threads per codeql invocation (0: share the machine between concurrent analyses)
+  -github-client-secret-file string
+    	file holding the reading App's client secret (default: $ABOM_GITHUB_CLIENT_SECRET)
+  -github-redirect-url string
+    	this deployment's /auth/callback, registered as a callback URL of the reading App
+  -github-role-map string
+    	memberships as ABOM roles: org/team, org or org:owners, such as acme/abom-operators=operator,acme=viewer
+  -github-role-refresh duration
+    	how old a role read from GitHub may be before a change reads it again (default 5m0s)
+  -group-property string
+    	repository custom property to group by on screen, for example business_id
+  -list-every duration
+    	how often every page of an account is read, which is the only way a deletion is seen (default 24h0m0s)
+  -max-depth int
+    	hops beyond a seed repository to follow (default 5)
+  -oidc-client-id string
+    	this deployment's client ID with the provider
+  -oidc-client-secret-file string
+    	file holding the client secret (default: $ABOM_OIDC_CLIENT_SECRET)
+  -oidc-issuer string
+    	the provider's issuer, such as https://login.microsoftonline.com/<tenant>/v2.0
+  -oidc-redirect-url string
+    	this deployment's /auth/callback as registered with the provider
+  -oidc-role-map string
+    	app role values as ABOM roles, such as Readers=viewer,Ops=operator (default: ABOM.Viewer, ABOM.Analyst, ABOM.Operator, ABOM.Admin)
+  -oidc-roles-claim string
+    	the ID token claim holding app roles (default: roles)
+  -probe-addr string
+    	address for a second listener serving only /healthz and /metrics, with no host check or sign-in, for a cluster's kubelet and scraper (default: off)
+  -publisher-app-dir string
+    	directory holding the GitHub App query exports open pull requests with (default: github-app-publisher beside --db; none there offers no export)
+  -ql-mcp string
+    	command line that starts ql-mcp for authoring sessions (default "npx -y codeql-development-mcp-server@2.27.3")
+  -query string
+    	single edges query to run instead of the stored per-tier suites
+  -query-id string
+    	ledger identity for the query (default "abom/edges")
+  -rate-limit-per-hour int
+    	git requests an hour for fetching and probing, where Settings saved no rate (0: none)
+  -read-replica string
+    	PostgreSQL standby URL for pure API reads (defaults to ABOM_READ_REPLICA)
+  -read-route string
+    	which API reads an account: graphql, rest, or empty to prefer graphql and fall back
+  -reader-only
+    	serve read-only APIs without acquiring a coordinator lease or starting work
+  -recheck-ttl duration
+    	how old an analysis must be before its ref is probed for drift (default 24h0m0s)
+  -replica-max-lag duration
+    	maximum measured standby lag for ordinary reads; zero requires catch-up, writes read back from primary
+  -run-worker-cpu string
+    	CPU each run Job requests and may use (default "2")
+  -run-worker-memory string
+    	memory each run Job requests and is limited to (default "4Gi")
+  -run-worker-service-account string
+    	ServiceAccount the Jobs analyzing a requested run's repositories run as (default "abom-worker-qlaas-run")
+  -run-worker-timeout duration
+    	longest a run Job may take, and its grant lasts (default 1h0m0s)
+  -spiffe-roots string
+    	CA certificates a worker's identity must chain to (default "/etc/abom/spiffe-roots/ca.crt")
+  -spiffe-trust-domain string
+    	SPIFFE trust domain workload identities are issued in (default "cluster.local")
+  -submit-targets string
+    	comma-separated repositories that may receive dependency snapshots
+  -test-worker-cpu string
+    	CPU each test Job requests and may use (default "1")
+  -test-worker-memory string
+    	memory each test Job requests and is limited to (default "2Gi")
+  -test-worker-service-account string
+    	ServiceAccount the Jobs running a query's tests run as (default "abom-worker-qlaas-test")
+  -test-worker-timeout duration
+    	longest a test Job may take, and its grant lasts (default 30m0s)
+  -ui-dir string
+    	directory containing the published interface (optional)
+  -wait-for-coordinator duration
+    	how long to wait for another coordinator's lease to lapse before refusing (default: refuse at once)
+  -webhook-secret-file string
+    	file holding the secret GitHub signs webhook deliveries with (default: $ABOM_WEBHOOK_SECRET; neither refuses every delivery; an App's own is used when one is configured)
+  -work-dir string
+    	scratch directory for checkouts (default: a temp dir)
+  -worker-cpu string
+    	CPU each analysis Job requests (default "2")
+  -worker-cpu-limit string
+    	CPU each analysis Job may use (default: --worker-cpu; 0 for no limit)
+  -worker-image string
+    	image analysis Jobs run (default: $ABOM_WORKER_IMAGE)
+  -worker-instance string
+    	the release analysis Jobs are labeled with, so releases sharing a namespace reap only their own
+  -worker-memory string
+    	memory each analysis Job requests and is limited to (default "4Gi")
+  -worker-namespace string
+    	namespace analysis Jobs run in (default: this pod's)
+  -worker-pool string
+    	the worker pool analysis Jobs belong to (default "discovery")
+  -worker-priority-class string
+    	PriorityClass analysis Jobs run at, below the coordinator's
+  -worker-s3-secret string
+    	Secret holding the object store credentials analysis Jobs read
+  -worker-service-account string
+    	ServiceAccount analysis Jobs run as (default "abom-worker-discovery")
+  -worker-timeout duration
+    	longest an analysis Job may take, and its grant lasts (default 1h0m0s)
+  -worker-trust-configmap string
+    	ConfigMap this server publishes its decision bundle to (default "abom-decision-trust")

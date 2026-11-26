@@ -107,6 +107,7 @@ func renewServer(t *testing.T, states map[string]SnapshotPreview, fail map[strin
 	sort.Strings(targets)
 
 	return &Server{
+		Store:              decisionStore(t),
 		AllowRemoteControl: true,
 		ApprovedTargets:    func() []string { return targets },
 		SnapshotPreview: func(repo string) (SnapshotPreview, error) {

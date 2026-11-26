@@ -58,3 +58,43 @@ func TestASecondCoordinatorCannotStartWork(t *testing.T) {
 		t.Fatalf("an unavailable lease returned usable work: %v", err)
 	}
 }
+
+// releasing is a lease another coordinator holds for its first busy attempts, then lets lapse.
+type releasing struct {
+	backend
+	busy     int
+	attempts int
+}
+
+func (b *releasing) AcquireLease(resource, owner string, ttl time.Duration) (store.Lease, bool, error) {
+	b.attempts++
+	return store.Lease{Resource: resource, Owner: owner, Fence: 1}, b.attempts > b.busy, nil
+}
+
+// A replacement for a coordinator that died holding the lease waits for it to lapse rather than
+// exiting into a restart loop whose backoff outlasts the lease.
+func TestAReplacementCoordinatorWaitsForTheLeaseToLapse(t *testing.T) {
+	b := &releasing{busy: 2}
+	retries := make(chan time.Time, 2)
+	retries <- time.Now()
+	retries <- time.Now()
+	ctx, _, release, err := waitFor(t.Context(), b, retries, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if ctx == nil || b.attempts != 3 {
+		t.Errorf("acquired after %d attempts; want the third", b.attempts)
+	}
+}
+
+// Waiting is bounded: a coordinator that is alive keeps its lease, and the replacement says so.
+func TestAReplacementGivesUpWhenItsWaitEnds(t *testing.T) {
+	b := &releasing{busy: 1 << 30}
+	giveUp := make(chan time.Time, 1)
+	giveUp <- time.Now()
+	ctx, _, release, err := waitFor(t.Context(), b, nil, giveUp, nil)
+	if !errors.Is(err, ErrCoordinatorActive) || ctx != nil || release != nil {
+		t.Fatalf("a held lease was not reported: %v", err)
+	}
+}

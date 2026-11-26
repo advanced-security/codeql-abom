@@ -31,6 +31,9 @@ type Report struct {
 	Unchanged int `json:"unchanged"`
 
 	Accounts []AccountEnumeration `json:"accounts"`
+	// Scope is whether the declaration listed was one a verified decision allowed. Anything but
+	// signed lists nothing, and its reason is why.
+	Scope store.ScopeVerdict `json:"scope"`
 	// Failed names the accounts that could not be reached, so that a short report is read as an
 	// incomplete answer rather than a small estate.
 	Failed []AccountFailure `json:"failed"`
@@ -180,12 +183,12 @@ func (o Options) period() time.Duration {
 
 // Run records every enabled declaration's repositories, then queues what is now owned.
 func Run(ctx context.Context, o Options) (Report, error) {
-	declared, err := o.Store.OwnedScope()
+	declared, verdict, err := o.Store.VerifiedScope()
 	if err != nil {
 		return Report{}, err
 	}
 
-	report := Report{Accounts: []AccountEnumeration{}, Failed: []AccountFailure{}}
+	report := Report{Accounts: []AccountEnumeration{}, Failed: []AccountFailure{}, Scope: verdict}
 	for _, account := range declared {
 		// A declaration that is recorded but switched off is an intention, not an instruction.
 		if !account.Enabled || !o.lists(account.Owner) {

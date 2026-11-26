@@ -95,16 +95,19 @@ type Stats struct {
 	// Reused counts trees served from the checkout cache: a clone this round did not pay for.
 	// Not a skip — every one of these was analyzed or settled on the ledger's say-so.
 	Reused int
-	// Fetched counts the clones this round did pay for. Measured at the clone rather than
+	// Fetched counts the clones this round paid for here. Measured at the clone rather than
 	// inferred from Processed, which counts neither the fetch a settled unit still made nor the
 	// one a cache hit avoided.
 	Fetched int
 	// TreeReads counts the listings this round read to recognize a commit's content without a
 	// clone, each one a request against GitHub's API whether or not it settled anything.
 	TreeReads int
-	// Built counts the databases CodeQL built for this round, where the build ran: never one code
-	// scanning supplied or the database cache held.
+	// Built counts the databases CodeQL built here for this round: never one code scanning
+	// supplied or the database cache held.
 	Built int
+	// Remote counts the repositories handed to workers, each fetched and built there, so neither
+	// Fetched nor Built counts them.
+	Remote int
 	// CodeScanning is what code scanning supplied this round, and why it did not supply the rest.
 	CodeScanning ReuseCounts
 }
@@ -114,6 +117,8 @@ type Stats struct {
 // Work is claimed and settled per repository rather than per dependency, because the clone and
 // the database build are the expensive steps and several actions often share one repository.
 type Expander struct {
+	// Remote runs each batch's fetch and CodeQL work elsewhere; nil runs it in this process.
+	Remote       RemoteRunner
 	Queue        *frontier.Queue
 	Store        store.Backend
 	Ingester     *ingest.Ingester
@@ -163,6 +168,8 @@ type Expander struct {
 	treeReads atomic.Int64
 	// builds counts the databases a round's analyses built, where CodeQL built them.
 	builds atomic.Int64
+	// remotes counts the analyses handed to workers.
+	remotes atomic.Int64
 	// reuse counts what code scanning supplied to the crawl's rounds, and why not, the same way.
 	reuse reuseCounter
 	// configs remembers briefly what each configuration file said, shared by every repository naming it.
@@ -225,12 +232,35 @@ func (b batch) key() string {
 	return b.full() + "@" + b.ref
 }
 
+// scopeNotDecided is a round refused because the declaration on record does not verify: every tier
+// is read from ownership, so working on would analyze your repositories as somebody
+// else's dependencies.
+type scopeNotDecided struct{ Verdict store.ScopeVerdict }
+
+func (e *scopeNotDecided) Error() string {
+	return "the declared scope is not confirmed, so nothing is claimed: " + e.Verdict.Reason
+}
+
+func (e *Expander) scopeDecided() error {
+	verdict, err := e.Store.ScopeVerdict()
+	if err != nil {
+		return err
+	}
+	if verdict.Undecided() {
+		return &scopeNotDecided{Verdict: verdict}
+	}
+	return nil
+}
+
 // Run claims a round of work, analyzes it, and enqueues what it discovers.
 func (e *Expander) Run(ctx context.Context, opts Options) (Stats, error) {
 	if opts.WorkDir == "" {
 		return Stats{}, fmt.Errorf("expand: WorkDir is required")
 	}
 
+	if err := e.scopeDecided(); err != nil {
+		return Stats{}, err
+	}
 	e.trimBetweenRounds()
 	before := e.roundCounts()
 
@@ -272,6 +302,7 @@ func (e *Expander) Run(ctx context.Context, opts Options) (Stats, error) {
 	stats.Fetched = int(e.fetches.Load() - before.fetched)
 	stats.TreeReads = int(e.treeReads.Load() - before.treeReads)
 	stats.Built = int(e.builds.Load() - before.built)
+	stats.Remote = int(e.remotes.Load() - before.remote)
 	stats.CodeScanning = e.ReuseCounts().since(before.codeScanning)
 	return stats, nil
 }
@@ -281,6 +312,7 @@ type expanderCounts struct {
 	fetched      int64
 	treeReads    int64
 	built        int64
+	remote       int64
 	codeScanning ReuseCounts
 }
 
@@ -299,7 +331,7 @@ func (e *Expander) trimBetweenRounds() {
 func (e *Expander) roundCounts() expanderCounts {
 	return expanderCounts{
 		reused: e.Cache.Hits(), fetched: e.fetches.Load(), treeReads: e.treeReads.Load(),
-		built: e.builds.Load(), codeScanning: e.ReuseCounts(),
+		built: e.builds.Load(), remote: e.remotes.Load(), codeScanning: e.ReuseCounts(),
 	}
 }
 
@@ -410,6 +442,20 @@ type pending struct {
 
 func (p pending) empty() bool { return len(p.bqrs) == 0 && !p.findings }
 
+// without names the lanes p holds that sent does not.
+func (p pending) without(sent pending) []string {
+	var out []string
+	for _, q := range p.bqrs {
+		if !slices.ContainsFunc(sent.bqrs, func(s plannedQuery) bool { return s.id == q.id }) {
+			out = append(out, q.id)
+		}
+	}
+	if p.findings && !sent.findings {
+		out = append(out, "the findings lane")
+	}
+	return out
+}
+
 // pendingWork reports which lanes still have something to prove against this exact database.
 //
 // Per lane rather than per repository, because the lanes come from different packs with different
@@ -515,12 +561,15 @@ func (e *Expander) prepare(
 	// Resolved once and carried, because the commit decides both whether anything is
 	// outstanding and which tree answers the fetch.
 	sha, resolved := e.commitWithoutFetching(ctx, b)
-	settled, ok, err := e.settleWithoutFetching(ctx, b, planned, sha, resolved)
+	settled, ok, lacking, err := e.settleWithoutFetching(ctx, b, planned, sha, resolved)
 	if err != nil {
 		return work.Prepared{}, err
 	}
 	if ok {
 		return settled, nil
+	}
+	if e.Remote != nil {
+		return e.prepareRemote(ctx, b, opts, planned, dir, lacking)
 	}
 
 	tree, retained, err := e.materialize(ctx, b, src, sha, resolved)
@@ -534,39 +583,42 @@ func (e *Expander) prepare(
 	if err != nil {
 		return work.Prepared{}, err
 	}
-	digest = scopedDigest(e.sourceFilter(), digest)
-	if digest != "" && tree.SHA != "" {
-		if err := e.Store.RecordCommitContent(b.full(), tree.SHA, digest); err != nil {
-			return work.Prepared{}, err
-		}
-	}
-
-	// Read from the tree at the commit being analyzed, never from the repository's current state:
-	// a lock describes the revision it was committed with. Discovery reads what it selects when
-	// this batch settles, so it has to be on record before then.
-	if tree.SHA != "" {
-		if err := e.recordLockCoverage(b.full(), tree); err != nil {
-			return work.Prepared{}, err
-		}
-	}
-
 	// Asked of every batch that reaches here, including one whose tree came from the cache: the
 	// bytes being on disk already says nothing about whether this pair has been analyzed.
-	outstanding, err := e.pendingWork(planned, b.full(), tree.SHA, digest)
+	outstanding, err := e.recordObserved(b, planned, tree, scopedDigest(e.sourceFilter(), digest))
 	if err != nil {
 		return work.Prepared{}, err
 	}
 	if outstanding.empty() {
 		discardTree(opts, tree, retained)
-		return work.Prepared{
-			Job:             work.Job{Repository: b.key()},
-			Commit:          tree.SHA,
-			AnalyzedRef:     tree.Ref,
-			AlreadyRecorded: true,
-		}, nil
+		return alreadyRecorded(b, tree.SHA, tree.Ref), nil
 	}
 
 	return e.analyzeTree(ctx, b, opts, planned, dir, tree, retained, outstanding)
+}
+
+// recordObserved records what a fetch of b found in tree, and answers the work still outstanding
+// at its commit. The scoped digest is recorded whether or not the round goes on to analyze: knowing
+// it lets a later commit be recognized as the same database. Lock coverage is read from the tree at
+// the commit, never from the repository's current state, since a lock describes the revision it was
+// committed with, and discovery reads what it selects when the batch settles.
+func (e *Expander) recordObserved(b batch, planned tierPlan, tree Tree, digest string) (pending, error) {
+	if digest != "" && tree.SHA != "" {
+		if err := e.Store.RecordCommitContent(b.full(), tree.SHA, digest); err != nil {
+			return pending{}, err
+		}
+	}
+	if tree.SHA != "" && tree.Dir != "" {
+		if err := e.recordLockCoverage(b.full(), tree); err != nil {
+			return pending{}, err
+		}
+	}
+	return e.pendingWork(planned, b.full(), tree.SHA, digest)
+}
+
+// alreadyRecorded settles b at commit with nothing new to ingest.
+func alreadyRecorded(b batch, commit, ref string) work.Prepared {
+	return work.Prepared{Job: work.Job{Repository: b.key()}, Commit: commit, AnalyzedRef: ref, AlreadyRecorded: true}
 }
 
 // materialize puts the batch's source on disk, reusing the tree already held for its commit.
@@ -758,9 +810,9 @@ func digestUnderFilter(recorded, filter string) string {
 // including what is already current, and those are settled here without a checkout.
 func (e *Expander) settleWithoutFetching(
 	ctx context.Context, b batch, planned tierPlan, sha string, resolved bool,
-) (work.Prepared, bool, error) {
+) (work.Prepared, bool, *pending, error) {
 	if !resolved {
-		return work.Prepared{}, false, nil
+		return work.Prepared{}, false, nil, nil
 	}
 	// A commit seen before has its content on record, so the equivalence is available here
 	// too. A commit never seen has none, and its listing may say what it holds. Neither has one
@@ -768,46 +820,41 @@ func (e *Expander) settleWithoutFetching(
 	// what settling here would decline to look at.
 	recorded, _, err := e.Store.CommitContentDigest(b.full(), sha)
 	if err != nil {
-		return work.Prepared{}, false, err
+		return work.Prepared{}, false, nil, err
 	}
 	digest := digestUnderFilter(recorded, e.sourceFilter())
 	listed := false
 	if digest == "" {
 		if digest, err = e.listedDigest(ctx, b, sha); err != nil {
-			return work.Prepared{}, false, err
+			return work.Prepared{}, false, nil, err
 		}
 		listed = digest != ""
 	}
 	outstanding, err := e.pendingWork(planned, b.full(), sha, digest)
 	if err != nil {
-		return work.Prepared{}, false, err
+		return work.Prepared{}, false, nil, err
 	}
 	if !outstanding.empty() {
-		return work.Prepared{}, false, nil
+		return work.Prepared{}, false, &outstanding, nil
 	}
 	// A database whose analyzed refs have no pending work never fetches again, and an upgrade or
 	// a tier requeue is exactly that case. Absence of rows means nobody looked, which is a
 	// different fact from "no lockfile", so the commit is read once to say which.
 	covered, err := e.lockCovered(b.full(), sha, digest)
 	if err != nil {
-		return work.Prepared{}, false, err
+		return work.Prepared{}, false, nil, err
 	}
 	if !covered {
-		return work.Prepared{}, false, nil
+		return work.Prepared{}, false, nil, nil
 	}
 	// Recorded only once it settles: the listing is the commit's measured content, and the walks
 	// read an identical commit's sightings for it from here on.
 	if listed {
 		if err := e.Store.RecordCommitContent(b.full(), sha, digest); err != nil {
-			return work.Prepared{}, false, err
+			return work.Prepared{}, false, nil, err
 		}
 	}
-	return work.Prepared{
-		Job:             work.Job{Repository: b.key()},
-		Commit:          sha,
-		AnalyzedRef:     analyzedRef(b.ref),
-		AlreadyRecorded: true,
-	}, true, nil
+	return alreadyRecorded(b, sha, analyzedRef(b.ref)), true, nil, nil
 }
 
 // listedDigest says what a never-fetched commit holds by reading its tree listing, or nothing.

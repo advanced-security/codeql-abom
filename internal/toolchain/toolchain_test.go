@@ -13,6 +13,13 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
+// A tool that answers is given long enough to be scheduled on a loaded machine; only a check that a
+// silent tool is a problem rather than a hang needs the short bound, and sets it itself.
+const (
+	answers = 10 * time.Second
+	hangs   = 500 * time.Millisecond
+)
+
 type place struct {
 	dir   string
 	store *store.Store
@@ -77,7 +84,7 @@ func (p place) chain(t *testing.T) *Toolchain {
 		Copilot: Tool{Path: p.script(t, "copilot", "1.0.4"), Source: "COPILOT_CLI_PATH"},
 		QLMCP:   []string{"sh", "-c", "true"},
 		Token:   func(context.Context) error { return nil },
-		Timeout: 500 * time.Millisecond,
+		Timeout: answers,
 	}
 }
 
@@ -134,6 +141,7 @@ func TestEachMissingDependencySaysWhyAndWhatToDo(t *testing.T) {
 func TestACLIThatNeverAnswersIsAProblemNotAHang(t *testing.T) {
 	p := newPlace(t)
 	tc := p.chain(t)
+	tc.Timeout = hangs
 	tc.Copilot = Tool{Path: p.script(t, "shim", ""), Source: "--copilot-cli"}
 	start := time.Now()
 	c := byKey(tc.Checks(context.Background(), false))[KeyCopilot]
@@ -163,6 +171,7 @@ func TestACopilotPathSetWhileServingIsCheckedKeptAndApplied(t *testing.T) {
 	if err := os.MkdirAll(directory, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	tc.Timeout = hangs
 	for name, path := range map[string]string{
 		"relative":       "bin/copilot",
 		"missing":        filepath.Join(p.dir, "absent", "copilot"),
@@ -178,6 +187,7 @@ func TestACopilotPathSetWhileServingIsCheckedKeptAndApplied(t *testing.T) {
 		t.Fatalf("a refused path was kept %v or applied %v", saved, applied)
 	}
 
+	tc.Timeout = answers
 	chosen := p.at(t, "v2", "copilot", "2.0.0")
 	if err := tc.SetTool(ctx, store.ToolCopilot, chosen, "alice"); err != nil {
 		t.Fatal(err)
@@ -345,8 +355,6 @@ func TestWithNoCopilotCLINamedTheOneVSCodeInstalledIsUsed(t *testing.T) {
 		"Code", "User", "globalStorage", "github.copilot-chat", "copilotCli"), "copilot", "1.0.88")
 	tc := p.chain(t)
 	tc.Copilot = Tool{}
-	// A whole-suite run can starve one probe past the bench's half second; this test is about the choice.
-	tc.Timeout = 10 * time.Second
 
 	said, err := tc.Load()
 	if err != nil {
@@ -431,7 +439,6 @@ func TestVSCodesCLIIsUsedOnlyWhereNoOtherAccountCouldChangeIt(t *testing.T) {
 			c.arrange(t, p, cli)
 			tc := p.chain(t)
 			tc.Copilot = Tool{}
-			tc.Timeout = 10 * time.Second
 
 			if _, err := tc.Load(); err != nil {
 				t.Fatal(err)

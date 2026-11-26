@@ -78,7 +78,7 @@ func TestAdoptingAPolicyNobodySimulatedIsRefusedWithTheReason(t *testing.T) {
 	}
 
 	var answer struct {
-		Error string `json:"error"`
+		Error string `json:"detail"`
 	}
 	code := postPolicy(t, srv, "/api/policies/p/adopt", `{"by":"alice"}`, &answer)
 
@@ -100,7 +100,7 @@ func TestAWaiverWrittenAsAPatternIsRefusedWithTheReason(t *testing.T) {
 	}
 
 	var answer struct {
-		Error string `json:"error"`
+		Error string `json:"detail"`
 	}
 	code := postPolicy(t, srv, "/api/policies/p/waivers",
 		`{"kind":"exclusion","repository":"octo-org/*","reason":"convenience","grantedBy":"alice"}`,

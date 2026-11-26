@@ -119,11 +119,12 @@ func callServer(ctx context.Context, method, target string, body any) ([]byte, e
 		return nil, err
 	}
 	if resp.StatusCode >= 300 {
+		// A refusal is an RFC 9457 problem; its detail is the reason in a sentence.
 		var refusal struct {
-			Error string `json:"error"`
+			Detail string `json:"detail"`
 		}
-		if json.Unmarshal(answer, &refusal) == nil && refusal.Error != "" {
-			return nil, errors.New(refusal.Error)
+		if json.Unmarshal(answer, &refusal) == nil && refusal.Detail != "" {
+			return nil, errors.New(refusal.Detail)
 		}
 		return nil, fmt.Errorf("the server answered %d", resp.StatusCode)
 	}

@@ -282,9 +282,20 @@ An enterprise still has a derivation ceiling: finding what changed reads the who
 exposure are derived for the changed inputs, with the wholesale recompute kept as the oracle that
 checks them. PostgreSQL now shares the store contract with SQLite, with fenced coordinator
 ownership and independent readers; that removes the requirement that every reader share the
-single-binary process, not the need to measure its queries. Distributed analysis and orchestration
-remain in the [deployment plan](../plans/tools/deployment.md). Efficiency at enterprise scale is
+single-binary process, not the need to measure its queries. Analysis runs in pools of Kubernetes
+Jobs, described in [Deploy on Kubernetes](deployment/kubernetes.md). Efficiency at enterprise scale is
 measured on real organizations as they become available, never extrapolated from this corpus.
+
+## A hosted instance that proves its own checks
+
+ABOM is moving to a hosted, scaled-out deployment: a coordinator and independently scalable pools of
+CodeQL workers on Kubernetes (kind locally, EKS first), readers signing in with Entra ID, and roles
+deciding what each may change. Checks that today live where a row is written move to where a
+permission is used. A decision point signs each decision, every consumer verifies it before acting,
+each worker does only what it was granted and signs what it returns, and an append-only log lets
+anybody re-check the whole chain offline. A query leaves ABOM whole, as a pull request in the
+organization's own query repository. `plans/api/access.md`, `plans/api/authoring-workers.md` and
+`plans/tools/kubernetes.md`
 
 ## Deliberately not on the roadmap
 

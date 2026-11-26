@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/advanced-security/codeql-abom/internal/authz"
 	"github.com/advanced-security/codeql-abom/internal/catalog"
 	"github.com/advanced-security/codeql-abom/internal/compare"
 	"github.com/advanced-security/codeql-abom/internal/coordination"
@@ -81,6 +82,9 @@ func wireEnumeration(
 		if err != nil {
 			return 0, err
 		}
+		if s := report.Scope; s.Undecided() {
+			return report.Queued, fmt.Errorf("the declared scope is not acted on: %s; %s", s.Reason, undecidedRemedy)
+		}
 		if len(report.Failed) > 0 {
 			return report.Queued, fmt.Errorf("%s could not be read: %s",
 				report.Failed[0].Owner, report.Failed[0].Error)
@@ -105,6 +109,12 @@ func prepareQueue(s store.Backend, queue *frontier.Queue, stdout, stderr io.Writ
 		fmt.Fprintf(stderr, "serve: requeueing locks another reader read: %v\n", err)
 	} else if requeued > 0 {
 		fmt.Fprintf(stdout, "serve: %d dependencies requeued to read their lock again\n", requeued)
+	}
+	if back, err := s.ReconsiderUnavailable(expand.Reconsidered); err != nil {
+		fmt.Fprintf(stderr, "serve: reconsidering unavailable dependencies: %v\n", err)
+	} else if back > 0 {
+		fmt.Fprintf(stdout,
+			"serve: %d dependencies settled unavailable for a reason that no longer holds were queued again\n", back)
 	}
 	if pinned, err := expand.ExpediteCompositePins(s, queue); err != nil {
 		fmt.Fprintf(stderr, "serve: prioritizing composite pins: %v\n", err)
@@ -284,6 +294,7 @@ func newProcessor(
 	}
 	if loop.Rechecker != nil {
 		processor.Probe = loop.Rechecker.Probe
+		processor.Reprobe = loop.ReprobeSoon
 	}
 	return processor
 }
@@ -307,6 +318,7 @@ type serveConfig struct {
 	graphviz       string
 	declareFile    string
 	addr           string
+	probeAddr      string
 	uiDir          string
 	allowRemote    bool
 	diagnostics    bool
@@ -320,6 +332,13 @@ type serveConfig struct {
 	enableAccounts string
 	webhookSecret  []byte
 	appDir         string
+	publisherDir   string
+	authzDir       string
+	executor       executorConfig
+	access         accessFlags
+	allowHosts     []string
+	// waitForLease is how long to wait for a coordinator that died holding the lease; zero refuses at once.
+	waitForLease   time.Duration
 	appPublicReads string
 	eventsRelay    string
 	// tokens is the App's token source once loaded, nil while reading as the operator.
@@ -359,11 +378,24 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) (res
 	}
 	defer s.Close()
 
-	ctx, s, release, err := coordination.Hold(ctx, s)
+	ctx, s, release, err := coordination.HoldWaiting(ctx, s, cfg.waitForLease)
 	if err != nil {
 		return fmt.Errorf("serve: acquiring coordinator ownership: %w", err)
 	}
 	defer func() { result = errors.Join(result, release()) }()
+
+	// After ownership: only the coordinator signs, and the checkpoint covers what it decided,
+	// including a seeded declaration.
+	decisions, err := openDecisionPoint(ctx, cfg.authzDir, s, stdout)
+	if err != nil {
+		return err
+	}
+	if decisions != nil {
+		defer func() { result = errors.Join(result, decisions.Checkpoint(context.WithoutCancel(ctx))) }()
+	}
+	if err := seedDeclaration(s, cfg.declareFile, stderr); err != nil {
+		return err
+	}
 
 	app, err := readerApp(cfg.appDir, cfg.appPublicReads, cfg.apiURL)
 	if err != nil {
@@ -388,13 +420,17 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) (res
 		return fmt.Errorf("serve: %w", err)
 	}
 	wireTrees(ctx, loop, cfg.apiURL, tokens)
-	wireSourcePolicy(ctx, loop.Expander, s, cfg.apiURL, tokens, stderr)
+	wireSourcePolicy(ctx, loop.Expander, s, cfg.apiURL, tokens)
 	wireCodeScanning(ctx, loop, s, cfg)
+	jobs, err := wireExecutor(ctx, cfg.executor, loop, decisions, cfg.authzDir, workerTokens(app), stdout)
+	if err != nil {
+		return err
+	}
 	if err := primeServedStore(s, loop.Queue, stdout, stderr); err != nil {
 		return err
 	}
 
-	srv, err := newConfiguredServer(ctx, cfg, s, loop, tokens, stderr)
+	srv, err := newConfiguredServer(ctx, cfg, s, loop, jobs, tokens, stderr)
 	if err != nil {
 		return err
 	}
@@ -439,7 +475,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) (res
 		}
 	}
 
-	return serveHTTP(ctx, &http.Server{Addr: cfg.addr, Handler: srv.Handler()}, cfg.addr, stdout)
+	return serveWithProbes(ctx, cfg, srv, stdout)
 }
 
 func parseServeArgs(args []string, stderr io.Writer) (serveConfig, error) {
@@ -454,6 +490,9 @@ func parseServeArgs(args []string, stderr io.Writer) (serveConfig, error) {
 	declareFile := fs.String("declare-file", declare.DefaultFileName,
 		"local file declaring owned accounts, applied only when nothing is declared")
 	addr := fs.String("addr", "localhost:8080", "address to listen on")
+	probeAddr := fs.String("probe-addr", "",
+		"address for a second listener serving only /healthz and /metrics, with no host check or sign-in, "+
+			"for a cluster's kubelet and scraper (default: off)")
 	uiDir := fs.String("ui-dir", "", "directory containing the published interface (optional)")
 	allowRemote := fs.Bool("allow-remote-control", false,
 		"allow non-loopback request hosts for reads and controls; this does not authenticate callers")
@@ -479,6 +518,17 @@ func parseServeArgs(args []string, stderr io.Writer) (serveConfig, error) {
 			"(default: $"+webhookSecretEnv+"; neither refuses every delivery; an App's own is used when one is configured)")
 	appDir := fs.String("app-dir", "",
 		"directory holding the GitHub App ABOM reads as (default: github-app beside --db; none there reads as you)")
+	publisherDir := fs.String("publisher-app-dir", "",
+		"directory holding the GitHub App query exports open pull requests with "+
+			"(default: github-app-publisher beside --db; none there offers no export)")
+	executor := addExecutorFlags(fs)
+	signIn := addAccessFlags(fs)
+	allowHosts := fs.String("allow-host", "",
+		"comma-separated request hosts admitted beside loopback, exactly as written, such as a cluster Service name a scraper uses")
+	waitForLease := fs.Duration("wait-for-coordinator", 0,
+		"how long to wait for another coordinator's lease to lapse before refusing (default: refuse at once)")
+	authzDir := fs.String("authz-dir", "",
+		"directory holding the key decisions are signed with and the bundle that verifies them (default: authz beside --db)")
 	eventsRelay := fs.String("events-relay", "",
 		"relay channel to read deliveries from, such as https://smee.io/<channel> (default: $"+eventsRelayEnv+")")
 	appPublicReads := fs.String("app-public-reads", "",
@@ -546,6 +596,10 @@ func parseServeArgs(args []string, stderr io.Writer) (serveConfig, error) {
 	if *readerOnly && d.autostart {
 		return serveConfig{}, errors.New("a reader-only instance cannot start discovery")
 	}
+	if *diagnostics && signIn.mode != "" && signIn.mode != "none" {
+		return serveConfig{}, errors.New("--diagnostics serves the heap, which holds sessions and the provider's " +
+			"secret; it is for this machine only and cannot be combined with --auth")
+	}
 	if *readReplica != "" && (!store.IsPostgresTarget(*dbPath) || !store.IsPostgresTarget(*readReplica)) {
 		return serveConfig{}, errors.New("read replicas require PostgreSQL primary and standby URLs")
 	}
@@ -568,6 +622,7 @@ func parseServeArgs(args []string, stderr io.Writer) (serveConfig, error) {
 		readerOnly:     *readerOnly,
 		declareFile:    *declareFile,
 		addr:           *addr,
+		probeAddr:      *probeAddr,
 		uiDir:          *uiDir,
 		allowRemote:    *allowRemote,
 		diagnostics:    *diagnostics,
@@ -580,7 +635,13 @@ func parseServeArgs(args []string, stderr io.Writer) (serveConfig, error) {
 		enableTargets:  *enableTargets,
 		enableAccounts: *enableAccounts,
 		webhookSecret:  secret,
-		appDir:         cmp.Or(*appDir, ghapp.DefaultDir(*dbPath)),
+		appDir:         cmp.Or(*appDir, readerAppDir(*dbPath)),
+		publisherDir:   cmp.Or(*publisherDir, ghapp.DefaultPublisherDir(*dbPath)),
+		authzDir:       cmp.Or(*authzDir, store.DefaultAuthzDir(*dbPath)),
+		executor:       *executor,
+		access:         *signIn,
+		allowHosts:     splitHosts(*allowHosts),
+		waitForLease:   *waitForLease,
 		appPublicReads: *appPublicReads,
 		eventsRelay:    cmp.Or(*eventsRelay, os.Getenv(eventsRelayEnv)),
 		discovery:      d,
@@ -589,7 +650,7 @@ func parseServeArgs(args []string, stderr io.Writer) (serveConfig, error) {
 }
 
 func openServeStore(cfg serveConfig, stdout, stderr io.Writer) (store.Backend, error) {
-	s, err := store.OpenBackend(cfg.dbPath, store.Options{})
+	s, err := store.OpenBackend(cfg.dbPath, store.Options{AuthzDir: cfg.authzDir})
 	if err != nil {
 		return nil, fmt.Errorf("opening %s: %w", store.DatabaseLabel(cfg.dbPath), err)
 	}
@@ -598,10 +659,6 @@ func openServeStore(cfg serveConfig, stdout, stderr io.Writer) (store.Backend, e
 		return nil, fmt.Errorf("migrating %s: %w", store.DatabaseLabel(cfg.dbPath), err)
 	}
 	migratePolicyScopes(s, cfg.groupProperty, stdout, stderr)
-	if err := seedDeclaration(s, cfg.declareFile, stderr); err != nil {
-		_ = s.Close()
-		return nil, err
-	}
 	return s, nil
 }
 
@@ -616,21 +673,56 @@ func primeServedStore(s store.Backend, queue *frontier.Queue, stdout, stderr io.
 	return reclaimAbandonedWork(s, queue, stdout, stderr)
 }
 
+// openDecisionPoint opens the key decisions are signed with, making it on first start, and names it.
+// No directory means none can be named here, as for a PostgreSQL database started without
+// --authz-dir; nothing this server decides can then be signed, and what needs a signature refuses.
+func openDecisionPoint(ctx context.Context, dir string, s store.Backend, stdout io.Writer) (*authz.Point, error) {
+	if dir == "" {
+		return nil, nil
+	}
+	point, err := s.DecisionPoint(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("serve: opening the decision key: %w", err)
+	}
+	fmt.Fprintf(stdout, "serve: decisions are signed with %s, trusted through %s\n", point.Signer.KeyID(),
+		filepath.Join(dir, authz.BundleFile))
+	return point, nil
+}
+
 func newConfiguredServer(
-	ctx context.Context, cfg serveConfig, s store.Backend, loop *supervisor.Supervisor,
+	ctx context.Context, cfg serveConfig, s store.Backend, loop *supervisor.Supervisor, jobs pools,
 	tokens ghapp.TokenSource, stderr io.Writer,
 ) (*serve.Server, error) {
 	srv := &serve.Server{
-		Store: s, Discovery: loop, AllowRemoteControl: cfg.allowRemote, Log: stderr,
+		Store: s, Discovery: loop, AllowRemoteControl: cfg.allowRemote, AllowedHosts: cfg.allowHosts, Log: stderr,
 		Graphviz:     cfg.graphviz,
 		Diagnostics:  cfg.diagnostics,
 		WorkDir:      loop.Options.WorkDir,
 		Pools:        processPools,
 		RecheckFloor: cmp.Or(loop.RecheckTTL, supervisor.DefaultRecheckTTL),
 	}
-	srv.Executor = newRunExecutor(s, loop.Expander, loop.Options.WorkDir, stderr)
+	through, err := wireAccess(ctx, cfg.access, cfg.credentials.app, srv)
+	if err != nil {
+		return nil, fmt.Errorf("serve: %w", err)
+	}
+	if srv.Access != nil {
+		fmt.Fprintf(stderr, "serve: people sign in through %s; every API request needs a session\n", through)
+	}
+	publisher, err := publisherFor(ctx, cfg.publisherDir, cfg.apiURL, stderr)
+	if err != nil {
+		return nil, err
+	}
+	srv.Publisher = publisher
+	runs := newRunExecutor(s, loop.Expander, loop.Options.WorkDir, stderr)
+	if jobs.runs != nil {
+		runs.Remote = jobs.runs
+	}
+	srv.Executor = runs
 	if tester, ok := loop.Expander.Resolver.(serve.QueryTester); ok {
 		srv.Tester, srv.QueryDir = tester, runner.CustomPackRoot()
+		if jobs.tests != nil {
+			srv.Tester = remoteTests{QueryTester: tester, pool: jobs.tests}
+		}
 	}
 	if printer, ok := loop.Expander.Resolver.(serve.ASTPrinter); ok && srv.QueryDir != "" {
 		srv.Printer = printer
@@ -701,6 +793,33 @@ func newConfiguredServer(
 	return srv, nil
 }
 
+// serveWithProbes runs the interface's listener, and the probe listener beside it when one is named.
+// Either failing stops both.
+func serveWithProbes(ctx context.Context, cfg serveConfig, srv *serve.Server, stdout io.Writer) error {
+	web := &http.Server{Addr: cfg.addr, Handler: srv.Handler()}
+	if cfg.probeAddr == "" {
+		return serveHTTP(ctx, web, cfg.addr, stdout)
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	probes := &http.Server{Addr: cfg.probeAddr, Handler: srv.ProbeHandler()}
+	stopped := make(chan error, 1)
+	go func() {
+		fmt.Fprintf(stdout, "serve: probes on http://%s\n", cfg.probeAddr)
+		err := probes.ListenAndServe()
+		cancel()
+		stopped <- err
+	}()
+	err := serveHTTP(ctx, web, cfg.addr, stdout)
+	shutdownCtx, done := context.WithTimeout(context.Background(), shutdownGrace)
+	defer done()
+	_ = probes.Shutdown(shutdownCtx)
+	if probeErr := <-stopped; err == nil && !errors.Is(probeErr, http.ErrServerClosed) {
+		return fmt.Errorf("serve: probes: %w", probeErr)
+	}
+	return err
+}
+
 func serveHTTP(ctx context.Context, httpServer *http.Server, addr string, stdout io.Writer) error {
 	errCh := make(chan error, 1)
 	go func() {
@@ -739,4 +858,14 @@ func absolute(paths ...*string) error {
 		*p = abs
 	}
 	return nil
+}
+
+func splitHosts(list string) []string {
+	var out []string
+	for _, h := range strings.Split(list, ",") {
+		if h = strings.TrimSpace(h); h != "" {
+			out = append(out, h)
+		}
+	}
+	return out
 }

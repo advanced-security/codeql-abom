@@ -30,13 +30,22 @@ type Objective struct {
 	Stages frontier.Stages `json:"stages"`
 }
 
+// queue reads the frontier with the attempt ceiling the running loop judges by, so everything that
+// counts or marks a stuck row agrees with it.
+func (s *Server) queue() *frontier.Queue {
+	q := &frontier.Queue{Store: s.Store, Closure: s.QueueClosure}
+	if s.Discovery != nil {
+		q.StuckAfter = s.Discovery.Status().StuckAfter
+	}
+	return q
+}
+
 func (s *Server) objective(w http.ResponseWriter, r *http.Request) {
 	out := Objective{Progress: []frontier.DepthProgress{}, Recent: []store.CycleSpend{}}
 
-	q := &frontier.Queue{Store: s.Store, Closure: s.QueueClosure}
+	q := s.queue()
 	if s.Discovery != nil {
-		st := s.Discovery.Status()
-		out.MaxDepth, q.StuckAfter = st.MaxDepth, st.StuckAfter
+		out.MaxDepth = s.Discovery.Status().MaxDepth
 	}
 	out.StuckAfter = q.StuckAfterAttempts()
 	progress, err := q.Completeness()

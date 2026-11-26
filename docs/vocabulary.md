@@ -114,6 +114,10 @@ file paths. Reporting build-time work as though this organization ran it would o
 | **Not claimed** (queued) | Queued for a repository nothing owned reaches any more. The crawl does not analyze it and it holds no depth open, until a prune removes it |
 | **Waiting for code scanning** | A push to a repository you own, held until code scanning's own analysis of that commit is reported or its wait runs out, so its database and findings can be taken rather than built. Still unanalyzed, and counted as outstanding |
 | **Missing** (from a full listing) | A declared repository the last full listing of its account did not name. No longer yours, and nothing removed for it; what only it reached is what the prune offers. Only a full listing can say it, and only one can say nothing is missing |
+| **Stuck** | Failed eight times or more. Still retried, waiting longer each time up to a day, and no longer holding its depth open |
+| **Needs access** | GitHub refused to show the repository to ABOM; installing the App on its owner, or adding the repository to the installation, heals it |
+| **Reference gone** | The reference names nothing any more: a deleted tag, branch or repository |
+| **Resync** | Put what you chose back ahead of the ranking: rows read again, and declared accounts listed again in full |
 
 A reader must be able to tell "we have not looked" from "there was nothing to look at", because
 only one of them is work somebody can do. Partial coverage is its own state, not a rounding of
@@ -158,6 +162,24 @@ analyzes `actions`, not that what it found was safe.
 
 A lock is evidence about what a workflow runs, never a verdict that it is safe. The declared
 reference stays on every count as written; what a lock selects is a second answer beside it.
+
+## Signing in and deciding
+
+| Word | Means |
+| --- | --- |
+| **Signed in** | You reached ABOM through its identity provider, or through GitHub, and every request carries your session |
+| **Viewer**, **Analyst**, **Operator**, **Admin** | The four roles, each allowing what the one before it does and more. A control your role does not allow is offered disabled, naming the role it needs |
+| **Confirm** (a declaration) | Decide the declaration as it stands, under the same rules as saving it, and sign that decision |
+| **Not confirmed** | No recorded decision shows that saving the declaration was allowed, so discovery does not act on it |
+| **Decided by** | Who asked for a decision, by what they were called when they did. **Judged against** is the GitHub login whose roles a declaration's claims were weighed against, which is ABOM's own and need not be the same |
+
+## Queries in your pack
+
+| Word | Means |
+| --- | --- |
+| **Components** | Every file that makes one query run, as the query directory holds it now, and what is missing |
+| **Bundle** | Those files as one archive, named by the SHA-256 digest of its contents |
+| **Open a pull request** | Export the bundle you reviewed to the one repository the publisher App may write to; that repository's own workflow tests and publishes it once it is merged |
 
 ## Analysis modes
 

@@ -32,15 +32,11 @@ func runRefresh(ctx context.Context, args []string, stdout, stderr io.Writer) er
 		return errors.New("refresh: --db is required")
 	}
 
-	s, err := store.OpenBackend(*dbPath, store.Options{})
+	s, err := openDecided(ctx, "refresh", args, *dbPath, store.Options{})
 	if err != nil {
-		return fmt.Errorf("opening %s: %w", store.DatabaseLabel(*dbPath), err)
+		return err
 	}
 	defer s.Close()
-	// Migrating first also builds any index the schema has gained since this database was made.
-	if err := s.Migrate(); err != nil {
-		return fmt.Errorf("migrating %s: %w", store.DatabaseLabel(*dbPath), err)
-	}
 
 	before, err := aggregateCounts(s)
 	if err != nil {

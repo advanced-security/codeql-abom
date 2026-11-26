@@ -200,44 +200,59 @@ func roleName(a Account) string {
 	return a.Role
 }
 
-// refuseUnsupportedClaims holds every writer to the rule the picker offers by: what an account newly
-// claims is refused unless the role on record makes it eligible, so the command line, the API and a
-// local file are judged as the page is. An account GitHub does not report stays declarable, and a
-// database nobody has verified refutes nothing.
-func (s *Store) refuseUnsupportedClaims(accounts []DeclaredAccount) error {
-	v, err := s.Accounts()
-	if err != nil || v.Login == "" {
-		return err
+// judgeClaims holds every writer to the rule the picker offers by: what an account newly claims is
+// refused unless the role on record makes it eligible, so the command line, the API and a local file
+// are judged as the page is. An account GitHub does not report stays declarable, and a database
+// nobody has verified refutes nothing. Each account's judgment is the decision's evidence.
+func (s *Store) judgeClaims(accounts []DeclaredAccount, v Verification) ([]claimJudgment, *DeclarationRefused, error) {
+	judgments := make([]claimJudgment, 0, len(accounts))
+	if v.Login == "" {
+		for _, a := range accounts {
+			judgments = append(judgments, claimJudgment{Owner: a.Owner, Kind: a.Kind, Judgment: judgedNotVerified})
+		}
+		return judgments, nil, nil
 	}
 	stored, err := s.OwnedScope()
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	before := make(map[string]DeclaredAccount, len(stored))
 	for _, a := range stored {
 		before[strings.ToLower(a.Owner)] = a
 	}
 	var roles map[string]RepositoryRole
+	var refused *DeclarationRefused
 	for _, a := range accounts {
+		judged := claimJudgment{Owner: a.Owner, Kind: a.Kind}
 		i := slices.IndexFunc(v.Accounts, func(known Account) bool { return strings.EqualFold(known.Owner, a.Owner) })
 		if i < 0 {
+			judged.Judgment = judgedUnreported
+			judgments = append(judgments, judged)
 			continue
 		}
+		judged.Role = roleName(v.Accounts[i])
 		claimed, ok := newlyClaimed(a, before[strings.ToLower(a.Owner)])
 		if !ok {
+			judged.Judgment = judgedNothingNew
+			judgments = append(judgments, judged)
 			continue
 		}
 		if roles == nil {
 			if roles, err = s.RepositoryRoles(); err != nil {
-				return err
+				return nil, nil, err
 			}
 		}
+		judged.Judgment = judgedEligible
 		if why := ineligible(claimed, v.Accounts[i], v.Login, roles); why != "" {
-			return &DeclarationRefused{ByRole: true,
-				Reason: fmt.Sprintf("declaring %s that way is refused: %s", a.Owner, why)}
+			judged.Judgment = why
+			if refused == nil {
+				refused = &DeclarationRefused{ByRole: true,
+					Reason: fmt.Sprintf("declaring %s that way is refused: %s", a.Owner, why)}
+			}
 		}
+		judgments = append(judgments, judged)
 	}
-	return nil
+	return judgments, refused, nil
 }
 
 // ineligible says why the picker would not offer what claimed claims, as login holds known, or "" where

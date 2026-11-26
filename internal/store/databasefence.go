@@ -36,7 +36,7 @@ func (s *Store) ActiveLease() (Lease, bool) {
 func (s *Store) withLease(lease Lease) *Store {
 	return &Store{
 		db:       &database{DB: s.db.DB, postgres: s.db.postgres, fence: &lease, ownerStore: s},
-		bulkMode: s.bulkMode, dsn: s.dsn, borrowed: true,
+		bulkMode: s.bulkMode, dsn: s.dsn, borrowed: true, decisions: s.decisions,
 	}
 }
 

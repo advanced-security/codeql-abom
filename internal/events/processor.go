@@ -19,6 +19,9 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/work"
 )
 
+// revokesAccess are the installation actions after which there is nothing left to probe.
+var revokesAccess = []string{"deleted", "suspend", "removed"}
+
 // Reasons a delivery settles the way it does. Fixed phrases, so the status can count by them.
 const (
 	ReasonRequeued             = "moved; requeued ahead of the ranking"
@@ -87,6 +90,9 @@ type Processor struct {
 	Setup func(ctx context.Context, repository string) error
 	// Installations re-reads the App's installations. Nil leaves them to their period.
 	Installations func()
+	// Reprobe has an account's unavailable references probed on the next cycle. Nil leaves them to
+	// their daily probe.
+	Reprobe func(owner string)
 	// Wake starts a discovery cycle once a delivery queued work. Nil leaves it to the next cycle.
 	Wake func()
 	// Dependencies asks dependency review what moved between two commits of an owned repository,
@@ -310,7 +316,7 @@ func (p *Processor) readOwned(repo, what string) (outcome, error) {
 
 // propertyScoped reports whether an account's declaration holds a property scope.
 func (p *Processor) propertyScoped(owner string) (bool, error) {
-	declared, err := p.Store.OwnedScope()
+	declared, _, err := p.Store.VerifiedScope()
 	if err != nil {
 		return false, err
 	}
@@ -321,7 +327,7 @@ func (p *Processor) propertyScoped(owner string) (bool, error) {
 
 // declaredAccount reports whether an account is declared and enabled.
 func (p *Processor) declaredAccount(owner string) (bool, error) {
-	declared, err := p.Store.OwnedScope()
+	declared, _, err := p.Store.VerifiedScope()
 	if err != nil {
 		return false, err
 	}
@@ -398,6 +404,10 @@ func (p *Processor) accountChange(d store.EventDelivery) (outcome, error) {
 	}
 	if p.Installations != nil {
 		p.Installations()
+	}
+	if p.Reprobe != nil && e.Installation != nil && e.Installation.Account.Login != "" &&
+		!slices.Contains(revokesAccess, e.Action) {
+		p.Reprobe(e.Installation.Account.Login)
 	}
 	if p.List == nil {
 		return notActedOn(d), nil

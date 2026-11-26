@@ -2,6 +2,8 @@ package frontier
 
 import (
 	"testing"
+
+	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
 // The crawl had no objective: `score DESC` first meant it did whatever looked cheapest, so it
@@ -235,7 +237,7 @@ func TestARowPastTheAttemptCeilingDoesNotHoldItsDepthOpen(t *testing.T) {
 	if err := q.Complete(analyzed.Key(), Resolution{Ref: "v1", SHA: "sha"}); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
-	pastCeiling(t, q, "b/stuck", 0, DefaultStuckAfter)
+	pastCeiling(t, q, "b/stuck", 0, store.DefaultStuckAfter)
 
 	got, err := q.Completeness()
 	if err != nil {
@@ -249,7 +251,7 @@ func TestARowPastTheAttemptCeilingDoesNotHoldItsDepthOpen(t *testing.T) {
 // Never read, and nothing said it cannot be: counting it either way is the coverage lie.
 func TestARowPastTheCeilingIsNeitherAnalyzedNorUnavailable(t *testing.T) {
 	q, _ := newQueue(t)
-	pastCeiling(t, q, "b/stuck", 0, DefaultStuckAfter+2)
+	pastCeiling(t, q, "b/stuck", 0, store.DefaultStuckAfter+2)
 
 	got, err := q.Completeness()
 	if err != nil {
@@ -275,7 +277,7 @@ func TestARowPastTheCeilingIsNeitherAnalyzedNorUnavailable(t *testing.T) {
 // Below the ceiling a failure is still a retry the crawl expects to win, so the depth stays open.
 func TestARowBelowTheCeilingStillHoldsItsDepthOpen(t *testing.T) {
 	q, _ := newQueue(t)
-	pastCeiling(t, q, "b/retrying", 0, DefaultStuckAfter-1)
+	pastCeiling(t, q, "b/retrying", 0, store.DefaultStuckAfter-1)
 
 	got, err := q.Completeness()
 	if err != nil {
@@ -307,7 +309,7 @@ func TestTheAttemptCeilingFollowsTheQueue(t *testing.T) {
 // Staying retryable is the point: a stuck row that succeeds is analyzed like any other.
 func TestAStuckRowThatLaterSucceedsReturnsToNormalAccounting(t *testing.T) {
 	q, _ := newQueue(t)
-	pastCeiling(t, q, "b/stuck", 0, DefaultStuckAfter)
+	pastCeiling(t, q, "b/stuck", 0, store.DefaultStuckAfter)
 	if err := q.Complete(Key{NodeKey: "b/stuck", Ref: "v1"},
 		Resolution{Ref: "v1", SHA: "sha"}); err != nil {
 		t.Fatalf("Complete: %v", err)
@@ -325,7 +327,7 @@ func TestAStuckRowThatLaterSucceedsReturnsToNormalAccounting(t *testing.T) {
 // One pending row that can never succeed meant the drained-queue passes never ran.
 func TestOnlyStuckWorkLeavesTheQueueDrained(t *testing.T) {
 	q, _ := newQueue(t)
-	pastCeiling(t, q, "b/stuck", 0, DefaultStuckAfter)
+	pastCeiling(t, q, "b/stuck", 0, store.DefaultStuckAfter)
 
 	drained, err := q.Drained()
 	if err != nil {

@@ -37,6 +37,8 @@ func (s *Store) SnapshotStore(dir string) (Backend, func() error, error) {
 		_ = os.RemoveAll(dir)
 		return nil, nil, err
 	}
+	// A copy verifies with the key of the database it copies, not one beside its scratch file.
+	snapshot.decisions = s.decisions
 	var once sync.Once
 	var cleanupErr error
 	cleanup := func() error {

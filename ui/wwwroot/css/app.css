@@ -1222,9 +1222,7 @@ code {
 .abom-grid .mud-table-root .mud-table-cell.abom-coverage-pick { width: 1%; padding-right: 0; }
 
 /* One account per line: what discovery could not do there, beside the box that asks it again. */
-.abom-coverage-account { display: flex; align-items: baseline; gap: 8px; flex-wrap: nowrap; }
-.abom-coverage-account > .mud-checkbox { flex-shrink: 0; align-self: center; }
-.abom-coverage-account-name { flex-shrink: 0; font-weight: 500; }
+.abom-coverage-accounts { width: fit-content; max-width: 100%; }
 
 /* A value and how much of the corpus it accounts for, on one line. Stacked, each row was two
    lines tall and a list of twenty-one rules scrolled for no reason. */
@@ -1464,6 +1462,56 @@ code {
 .abom-request-steps .mud-icon-button { padding: 2px; }
 .abom-request-step-name { font-weight: 500; white-space: nowrap; }
 .abom-step-body { max-height: 60vh; overflow: auto; }
+
+/* A query's components: what it is and what can be done with it stay in place, and below them the
+   file tree and the file open beside it, two panes that each scroll once. */
+.abom-components { display: flex; flex-direction: column; gap: 8px; }
+.abom-components-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.abom-components-actions { gap: 8px; flex-wrap: wrap; height: auto; min-height: 40px; }
+.abom-components-panes {
+    display: grid;
+    grid-template-columns: minmax(280px, 2fr) 3fr;
+    gap: 12px;
+    height: min(60vh, 640px);
+}
+.abom-components-tree, .abom-components-view { min-width: 0; overflow: auto; padding: 4px 8px; }
+.abom-component-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.abom-component-name { min-width: 0; overflow-wrap: anywhere; }
+.abom-component-role { flex-shrink: 0; }
+.abom-components-viewhead { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.abom-components-viewhead > * { flex: none; }
+/* One row however narrow: the path gives way to the controls beside it, and its tip holds all of it. */
+.abom-components-viewhead > .abom-components-viewpath { flex: 0 1 auto; min-width: 0; overflow: hidden; }
+.abom-components-viewpath > .abom-tip { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.abom-components-missing { display: flex; align-items: flex-start; gap: 8px; padding: 12px 4px; }
+.abom-components-empty { display: flex; align-items: center; justify-content: center; height: 100%; }
+.abom-components-back { display: none; }
+.abom-components-deps summary { cursor: pointer; font-size: var(--abom-text-sm); }
+/* Line numbers drawn by the stylesheet, so copying the file copies the file and not the numbers. */
+.abom-numbered { counter-reset: abom-line; white-space: pre; overflow-x: auto; }
+/* A row per line: Razor trims the newline each line carries, and an empty line keeps its height. */
+.abom-numbered .abom-line { display: block; min-height: 1lh; }
+.abom-numbered .abom-line::before {
+    counter-increment: abom-line;
+    content: counter(abom-line);
+    display: inline-block;
+    width: 32px;
+    margin-right: 12px;
+    text-align: right;
+    color: var(--mud-palette-text-secondary);
+    user-select: none;
+}
+/* Narrow: one pane at a time, the file replacing the tree it was chosen from, with a way back. */
+@media (max-width: 900px) {
+    .abom-components-panes { grid-template-columns: 1fr; }
+    .abom-components-panes[data-viewing] .abom-components-tree { display: none; }
+    .abom-components-panes:not([data-viewing]) .abom-components-view { display: none; }
+    .abom-components-panes[data-viewing] .abom-components-back { display: inline-flex; }
+}
+/* A refusal's own words from GitHub or a provider, there for whoever needs them. */
+.abom-alert { display: flex; flex-direction: column; gap: 4px; }
+.abom-alert-details summary { cursor: pointer; font-size: var(--abom-text-sm); }
+.abom-alert-details pre { max-height: 160px; overflow: auto; }
 
 /* MudBlazor's smallest spinner is 24px, taller than a small chip. */
 .mud-progress-circular.abom-request-working { width: 14px; height: 14px; }
@@ -2410,3 +2458,7 @@ code {
 .abom-node-head .mud-chip {
     margin: 0;
 }
+
+/* The account menu: who you are, your role, and what it lets you do, in a column a menu can hold. */
+.abom-account { padding: 8px 16px; max-width: 320px; }
+.abom-account-may { margin: 4px 0 0; padding-left: 18px; font-size: var(--abom-text-sm); }

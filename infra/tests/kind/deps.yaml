@@ -1,0 +1,85 @@
+# What the chart requires and does not provision: PostgreSQL for the store and an S3-compatible
+# store (RustFS) for attempt artifacts, in their own namespace, as a cluster's administrators would run
+# them beside ABOM. Their credentials are the Secrets up.sh writes into abom-deps.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: abom-deps
+---
+# The store outranks analysis as the coordinator does; both requested at their limits, so a busy
+# node evicts workers before either.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata: {name: abom-dependencies}
+value: 100000
+globalDefault: false
+description: The database and object store ABOM depends on.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: postgres, namespace: abom-deps}
+spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 5Gi}}}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: s3, namespace: abom-deps}
+spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 10Gi}}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: postgres, namespace: abom-deps}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: postgres}}
+  template:
+    metadata: {labels: {app: postgres}}
+    spec:
+      priorityClassName: abom-dependencies
+      containers:
+        - name: postgres
+          # The image the store's PostgreSQL tests run against.
+          image: postgres:17.6@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3
+          envFrom: [{secretRef: {name: postgres}}]
+          args: ["-c", "max_connections=200"]
+          ports: [{containerPort: 5432}]
+          env: [{name: PGDATA, value: /var/lib/postgresql/data/pgdata}]
+          resources: {requests: {cpu: "1", memory: 1Gi}, limits: {cpu: "1", memory: 1Gi}}
+          readinessProbe: {exec: {command: ["pg_isready", "-U", "abom"]}, periodSeconds: 3}
+          volumeMounts: [{name: data, mountPath: /var/lib/postgresql/data}]
+      volumes: [{name: data, persistentVolumeClaim: {claimName: postgres}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: postgres, namespace: abom-deps}
+spec: {selector: {app: postgres}, ports: [{port: 5432, targetPort: 5432}]}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: s3, namespace: abom-deps}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: s3}}
+  template:
+    metadata: {labels: {app: s3}}
+    spec:
+      priorityClassName: abom-dependencies
+      securityContext: {fsGroup: 10001}
+      containers:
+        - name: s3
+          image: rustfs/rustfs:1.0.6
+          env:
+            - {name: RUSTFS_VOLUMES, value: /data}
+            - {name: RUSTFS_ADDRESS, value: ":9000"}
+          envFrom: [{secretRef: {name: s3}}]
+          ports: [{containerPort: 9000}]
+          resources: {requests: {cpu: 500m, memory: 512Mi}, limits: {cpu: 500m, memory: 512Mi}}
+          readinessProbe: {tcpSocket: {port: 9000}, periodSeconds: 3}
+          volumeMounts: [{name: data, mountPath: /data}]
+      volumes: [{name: data, persistentVolumeClaim: {claimName: s3}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: s3, namespace: abom-deps}
+spec: {selector: {app: s3}, ports: [{port: 9000, targetPort: 9000}]}

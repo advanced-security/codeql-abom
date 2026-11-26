@@ -117,11 +117,16 @@ func TestWithAnAppEveryGitCallAuthenticatesAsTheOwnersInstallationOrTheLentOne(t
 		}
 	}
 
-	failing, _ := gitRecorder(t, 2)
-	c.Git = failing
+	// What GitHub says to a token that cannot see a private repository.
+	c.Git = gitSaying(t, "remote: Repository not found.\nfatal: repository 'https://github.com/acme/private.git/' not found")
 	_, err := c.Resolve(ctx, "acme", "private", "")
 	if !IsUnavailable(err) || !errors.Is(err, ghapp.ErrNotInstalled) || !strings.Contains(err.Error(), "acme") {
 		t.Errorf("a lent token refused = %v; want unavailable, naming acme as not installed", err)
+	}
+	// An outage says nothing about the installation, lent token or not.
+	c.Git = gitSaying(t, resolverOutage)
+	if _, err := c.Resolve(ctx, "acme", "private", ""); IsUnavailable(err) || errors.Is(err, ghapp.ErrNotInstalled) {
+		t.Errorf("an outage under a lent token = %v; want a retryable failure, not an App missing", err)
 	}
 	c.Tokens = installedTokens{err: ghapp.ErrNoInstallation}
 	_, err = c.Resolve(ctx, "actions", "checkout", "v4")

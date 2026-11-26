@@ -96,7 +96,31 @@ if [ "$scaffold" != "$lib" ]; then
 	note "internal/customql/customql.go scaffolds codeql/actions-all ${scaffold:-nothing}, but ql/actions/lib pins $lib"
 fi
 
+# The image builds with the Go the module names, pinned by digest like every base it starts from.
+toolchain=$(awk '$1 == "toolchain" {sub(/^go/, "", $2); print $2; exit}' go.mod 2>/dev/null || true)
+image_go=$(sed -n 's/^FROM .*golang:\([0-9.]*\)-.*/\1/p' infra/docker/Dockerfile 2>/dev/null | head -1)
+if [ -z "$toolchain" ]; then
+	note "go.mod names no toolchain to build the image with"
+elif [ "$image_go" != "$toolchain" ]; then
+	note "infra/docker/Dockerfile builds with Go ${image_go:-unpinned}, but go.mod's toolchain is go$toolchain"
+fi
+while read -r base; do
+	case "$base" in
+	*@sha256:*) ;;
+	*) note "infra/docker/Dockerfile starts from $base, which is not pinned by digest" ;;
+	esac
+done < <(awk '$1 == "FROM" {for (i = 2; i <= NF; i++) if ($i !~ /^--/) {print $i; break}}' infra/docker/Dockerfile 2>/dev/null)
+
+# The query repository's workflows are copied out and locked there, so nothing here verifies them;
+# each action they use is the one this repository's lock holds, so a copy starts from audited tags.
+templates=(infra/qlaas-repo-template/workflows/*.yml)
+[ -f "${templates[0]}" ] || note "infra/qlaas-repo-template/workflows holds no workflow to check"
+while read -r file ref; do
+	grep -qF "'$ref'" .github/workflows/actions.lock || note "$file uses $ref, which .github/workflows/actions.lock does not hold"
+done < <(awk '$1 == "-" && $2 == "uses:" {print FILENAME, $3} $1 == "uses:" {print FILENAME, $2}' \
+	"${templates[@]}" 2>/dev/null | grep -v ' \./')
+
 if [ "$fail" -ne 0 ]; then
 	exit 1
 fi
-echo "versions: consistent (CodeQL $cli)"
+echo "versions: consistent (CodeQL $cli, Go $toolchain)"
