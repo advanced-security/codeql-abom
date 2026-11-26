@@ -12,33 +12,45 @@ import (
 )
 
 func runReader(ctx context.Context, cfg serveConfig, stdout, stderr io.Writer) error {
-	primary, err := store.OpenBackend(cfg.dbPath, store.Options{ReadOnly: true})
+	srv, closeReader, err := openReader(cfg)
 	if err != nil {
-		return fmt.Errorf("opening read-only store: %w", err)
+		return err
 	}
-	defer primary.Close()
-	if _, err := primary.GraphVersion(); err != nil {
-		return fmt.Errorf("a reader needs a schema initialized by the coordinator: %w", err)
-	}
-	srv := &serve.Server{
-		Store: primary, ReadOnly: true, Graphviz: cfg.graphviz, GroupProperty: cfg.groupProperty, Log: stderr,
-	}
-	if cfg.uiDir != "" {
-		srv.UI = os.DirFS(cfg.uiDir)
-	}
-	if cfg.readReplica != "" {
-		replica, err := openReadReplica(cfg, primary)
-		if err != nil {
-			return err
-		}
-		defer replica.Close()
-		srv.SetReplica(replica, cfg.replicaMaxLag)
-	}
+	defer closeReader()
+	srv.Log = stderr
 	return serveWithProbes(ctx, cfg, srv, stdout)
 }
 
+// openReader opens a server that only reads, verifying declarations with the key directory the
+// coordinator signs with, as every view of the database does.
+func openReader(cfg serveConfig) (*serve.Server, func(), error) {
+	primary, err := store.OpenBackend(cfg.dbPath, store.Options{ReadOnly: true, AuthzDir: cfg.authzDir})
+	if err != nil {
+		return nil, nil, fmt.Errorf("opening read-only store: %w", err)
+	}
+	if _, err := primary.GraphVersion(); err != nil {
+		_ = primary.Close()
+		return nil, nil, fmt.Errorf("a reader needs a schema initialized by the coordinator: %w", err)
+	}
+	srv := &serve.Server{Store: primary, ReadOnly: true, Graphviz: cfg.graphviz, GroupProperty: cfg.groupProperty}
+	if cfg.uiDir != "" {
+		srv.UI = os.DirFS(cfg.uiDir)
+	}
+	closeReader := func() { _ = primary.Close() }
+	if cfg.readReplica != "" {
+		replica, err := openReadReplica(cfg, primary)
+		if err != nil {
+			closeReader()
+			return nil, nil, err
+		}
+		srv.SetReplica(replica, cfg.replicaMaxLag)
+		closeReader = func() { _ = replica.Close(); _ = primary.Close() }
+	}
+	return srv, closeReader, nil
+}
+
 func openReadReplica(cfg serveConfig, primary store.Backend) (store.Backend, error) {
-	reader, err := store.OpenBackend(cfg.readReplica, store.Options{ReadOnly: true})
+	reader, err := store.OpenBackend(cfg.readReplica, store.Options{ReadOnly: true, AuthzDir: cfg.authzDir})
 	if err != nil {
 		return nil, fmt.Errorf("opening read replica: %w", err)
 	}

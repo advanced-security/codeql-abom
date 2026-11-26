@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -420,5 +421,32 @@ func TestARecordedTestNamesAVersion(t *testing.T) {
 	if err := s.RecordQueryTest(QueryTest{QueryID: "acme/rule", CLIVersion: testCLI,
 		Passed: true}); err == nil {
 		t.Error("a test result with no version was stored")
+	}
+}
+
+// A queue keyed by dependency alone is rebuilt keyed by reference, and the rebuild keeps every column
+// the queue has, including one added since the table was first written.
+func TestSQLiteFrontierKeyedByDependencyAloneIsRebuiltKeepingEveryColumn(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "abom.db"), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	old := strings.Replace(frontierDDL, "PRIMARY KEY (node_key, ref)", "PRIMARY KEY (node_key)", 1)
+	if _, err := s.db.Exec(old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO abom_frontier (node_key, ref, owner, repo, depth, status, enqueued_at)
+		VALUES ('acme/tool', '', 'acme', 'tool', 1, 'pending', '2026-09-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Migrate(); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	var failedAt sql.NullString
+	if err := s.db.QueryRow(`SELECT failed_at FROM abom_frontier WHERE node_key = 'acme/tool'`).Scan(&failedAt); err != nil {
+		t.Errorf("after the rebuild the queue cannot be read with every column it has: %v", err)
 	}
 }

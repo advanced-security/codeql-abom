@@ -61,16 +61,9 @@ not the graph.
 ## Production readiness
 
 A hosted, scaled-out instance is one body of work, developed and verified as a unit and submitted as a
-series of related pull requests. It answers six requirements a customer raised, and where each stands:
-
-| Requirement | Where it stands |
-| --- | --- |
-| Production hosting that runs CodeQL in parallel (3) | A coordinator and pools of Kubernetes Jobs, drilled from zero on kind; [EKS and scale](tools/kubernetes.md) remain |
-| Every component of a query on screen (4) | Built: a file tree and viewer of every component, with the bundle's digest |
-| Exporting a query (5) | Built as a pull request to the one repository a publisher App may write to; an S3 export is not planned until a GitHub-native route is shown to fall short |
-| Authentication and authorization (7) | Built: sign-in through an identity provider or GitHub, roles on every route, every decision signed; [what is open](api/access.md) |
-| The command line bypassing the declaration check (9) | Fixed: every entry point reaches one signed decision, which names who asked |
-| Coverage stuck at *unavailable* after one failure (10) | Fixed: a failure ends coverage only for a reason still true, probes heal it, and alerts and Coverage say why ([how](../docs/architecture.md#the-queue)) |
+series of related pull requests. Of the six requirements a customer raised, two have work left:
+production hosting that runs CodeQL in parallel (3) needs [EKS and scale](tools/kubernetes.md), and
+authentication and authorization (7) needs [what is open](api/access.md).
 
 What follows, in order. The first is ranked above everything below by your decision: without it a
 hosted instance has no query authoring.
@@ -405,6 +398,9 @@ measurement makes it urgent.
 
 ## Not doing, and why
 
+- **A query is not exported to S3.** It goes to a GitHub repository, through a publisher App that may
+  write there and nowhere else, which keeps a hosted instance on least-privilege GitHub permissions.
+  S3 is reconsidered only once that route is shown to fall short for someone.
 - **ABOM does not change a repository's code scanning configuration.** By the operator's decision,
   default setup and its languages are the repository owner's to change outside ABOM, so the App asks
   for no administration write and a server reading as it refuses to start with a write target. This

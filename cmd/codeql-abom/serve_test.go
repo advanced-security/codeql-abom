@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -277,7 +278,7 @@ func TestALocalDeclarationTheRoleCannotSupportIsSkippedAndServingGoesOn(t *testi
 		t.Fatal(err)
 	}
 	defer served.Close()
-	if err := seedDeclaration(served, file, &stderr); err != nil {
+	if err := seedDeclaration(t.Context(), served, file, parityRole, &stderr); err != nil {
 		t.Fatalf("a declaration the role cannot support stopped the server: %v", err)
 	}
 	declared, err := served.OwnedScope()
@@ -291,7 +292,7 @@ func TestALocalDeclarationTheRoleCannotSupportIsSkippedAndServingGoesOn(t *testi
 	if err := os.WriteFile(file, []byte(`{"own": {"users": ["acme"], "properties": [{"org": "acme", "match": [{"name": "team", "value": "x"}]}]}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := seedDeclaration(served, file, io.Discard); err == nil {
+	if err := seedDeclaration(t.Context(), served, file, parityRole, io.Discard); err == nil {
 		t.Error("a file that cannot be a declaration at all no longer stops the server")
 	}
 }
@@ -310,7 +311,11 @@ func TestServesFlagsAndTheirHelpChangeOnlyOnPurpose(t *testing.T) {
 	if _, err := parseServeArgs([]string{"-help"}, &got); !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("serve -help: %v", err)
 	}
-	if got.String() != string(want) {
-		t.Errorf("serve -help differs from testdata/serve-help.txt:\n%s", got.String())
+	// The ql-mcp pin moves with every CodeQL upgrade, and check-versions holds it to the CLI.
+	shown := qlmcpPin.ReplaceAllString(got.String(), "${1}<pinned>")
+	if shown != string(want) {
+		t.Errorf("serve -help differs from testdata/serve-help.txt:\n%s", shown)
 	}
 }
+
+var qlmcpPin = regexp.MustCompile(`(codeql-development-mcp-server@)[0-9][^" ]*`)

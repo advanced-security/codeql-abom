@@ -386,6 +386,15 @@ func (f *fakeGitHub) mint(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if f.installations[at].Selection == "selected" {
+		for _, repo := range body.Repositories {
+			if !slices.Contains(f.installations[at].Repos, repo) {
+				f.fail(w, r, http.StatusUnprocessableEntity,
+					"There is at least one repository that does not exist or is not accessible to the parent installation.")
+				return
+			}
+		}
+	}
 	carries := granted
 	if body.Permissions != nil {
 		// GitHub refuses a token asking for more than the installation approved, rather than trimming it.

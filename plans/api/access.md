@@ -37,6 +37,17 @@ Cyber, Risk and Audit, who will not accept an interface anyone on the network ca
 5. **The KMS signer on EKS.** Decisions signed with an AWS KMS key, through the coordinator's own
    identity, by the [runbook](../../docs/deployment/kubernetes.md#on-eks), and `audit verify`
    passing over them. Depends on an EKS cluster.
+6. **Every role-checked control offered disabled.** Discovery control, declaring, pruning and export
+   are drawn disabled below the role they need, naming it. The rest are refused only when pressed:
+   suite binding and settings (`abom/configure`), lock verification, code scanning enablement,
+   policies, verifying who you are, saved views, query requests, authoring, query tests, query
+   lifecycle, requested runs and dependency snapshots. Each takes `RoleService.RefusalAsync` and a
+   `Tip` outside the control, and a bUnit case as a viewer in `RoleRefusalTests`. Depends on nothing.
+7. **A retired key's decision checked against the chain in the live gates.** The scope gate trusts a
+   retired key's decision by the position its row claims, within the range the replacing key's
+   checkpoint pins. Rewriting a row there needs the append-only triggers removed, and only
+   `audit verify`, walking the whole chain, sees it. Verify the chain from such an entry to that
+   checkpoint once and cache it by the checkpoint's digest. Depends on nothing.
 
 ## The constraints that must not be broken
 

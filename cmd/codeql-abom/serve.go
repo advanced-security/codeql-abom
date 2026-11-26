@@ -204,10 +204,19 @@ func shouldResume(s store.Backend, autostart bool, stdout, stderr io.Writer) boo
 }
 
 // seedDeclaration applies an untracked local declaration only when the database holds none.
-func seedDeclaration(s store.Backend, path string, stderr io.Writer) error {
+func seedDeclaration(ctx context.Context, s store.Backend, path string,
+	read func(ctx context.Context, owner, repo, login string) (string, error), stderr io.Writer) error {
 	accounts, err := declare.Load(path)
 	if err != nil {
 		return fmt.Errorf("serve: %w", err)
+	}
+	// Judged as Settings and `own` judge it: on the declarer's role on each repository it names.
+	if existing, err := s.OwnedScope(); err != nil {
+		return fmt.Errorf("serve: %w", err)
+	} else if len(existing) == 0 {
+		if err := serve.ReadClaimedRoles(ctx, s, accounts, read); err != nil {
+			return fmt.Errorf("serve: %w", err)
+		}
 	}
 	seeded, err := declare.Seed(s, accounts)
 	// Stopping here would take down the interface, which is where a declaration the role supports
@@ -393,10 +402,6 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) (res
 	if decisions != nil {
 		defer func() { result = errors.Join(result, decisions.Checkpoint(context.WithoutCancel(ctx))) }()
 	}
-	if err := seedDeclaration(s, cfg.declareFile, stderr); err != nil {
-		return err
-	}
-
 	app, err := readerApp(cfg.appDir, cfg.appPublicReads, cfg.apiURL)
 	if err != nil {
 		return fmt.Errorf("serve: %w", err)
@@ -405,6 +410,9 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) (res
 	cfg.tokens = tokens
 	cfg.credentials = newCredentials(app, cfg.authoring.org)
 	if err := cfg.credentials.refuseWrites(cfg); err != nil {
+		return err
+	}
+	if err := seedDeclaration(ctx, s, cfg.declareFile, cfg.credentials.roleReader(), stderr); err != nil {
 		return err
 	}
 	cfg.credentials.copilot(&cfg.authoring)

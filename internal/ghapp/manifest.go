@@ -258,7 +258,6 @@ func Convert(ctx context.Context, hc *http.Client, apiURL, code string) (Convers
 	return out, nil
 }
 
-// requested renders the table for the operator to read before creating the App.
 // requestedFrom is what the setup page lists for grants: each permission, and every call and event
 // that needs it.
 func requestedFrom(grants []Grant, events []Subscription) []map[string]string {

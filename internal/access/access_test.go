@@ -256,3 +256,25 @@ func TestASessionEndsAndCannotBeInvented(t *testing.T) {
 		t.Error("a session outlived its lifetime")
 	}
 }
+
+// Anyone can ask to sign in, so what is held for attempts not yet answered is bounded, and the newest
+// attempt still completes however many came before it.
+func TestAttemptsToSignInAreHeldWithinABound(t *testing.T) {
+	i := newIssuer(t)
+	i.People["user-1"] = ada(map[string]any{"roles": []string{"ABOM.Viewer"}})
+	a := newAuthenticator(t, i)
+
+	for range maxPendingLogins + 50 {
+		a.Login(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/auth/login", nil))
+	}
+
+	a.mu.Lock()
+	held := len(a.logins)
+	a.mu.Unlock()
+	if held > maxPendingLogins {
+		t.Errorf("%d attempts held; want at most %d", held, maxPendingLogins)
+	}
+	if _, cookies := signIn(t, a, i, "/"); session(cookies) == nil {
+		t.Error("the newest attempt did not complete after the bound was reached")
+	}
+}

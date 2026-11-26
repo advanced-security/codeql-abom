@@ -39,6 +39,9 @@ const defaultSessionTTL = 8 * time.Hour
 
 const loginTTL = 10 * time.Minute
 
+// maxPendingLogins bounds the attempts held for the provider to answer, since anyone may start one.
+const maxPendingLogins = 1024
+
 // Config names the provider and this client registration with it.
 type Config struct {
 	Issuer       string
@@ -178,10 +181,17 @@ func (a *Authenticator) Login(w http.ResponseWriter, r *http.Request) {
 		returnTo: localPath(r.URL.Query().Get("return")), expires: a.now().Add(loginTTL)}
 	id := random()
 	a.mu.Lock()
+	oldest := ""
 	for k, old := range a.logins {
 		if a.now().After(old.expires) {
 			delete(a.logins, k)
+		} else if oldest == "" || old.expires.Before(a.logins[oldest].expires) {
+			oldest = k
 		}
+	}
+	// Full, the oldest attempt gives way: one started seconds ago is still being answered.
+	if len(a.logins) >= maxPendingLogins {
+		delete(a.logins, oldest)
 	}
 	a.logins[id] = p
 	a.mu.Unlock()

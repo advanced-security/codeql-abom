@@ -66,7 +66,9 @@ placeholders are `<ACCOUNT_ID>`, `<REGION>`, `<CLUSTER>`, `<ECR_REPO>`, `<RDS_EN
    keys signed still verifies, and nothing they sign afterwards does. `audit rotate-key` refuses
    while a KMS key is named.
 6. **Identities.** EKS Pod Identity associations, or IRSA with
-   `serviceAccounts.<name>.annotations`, one role each:
+   `serviceAccounts.<name>.annotations`. The EKS profile lets workers reach the Pod Identity agent
+   at `169.254.170.23` on port 80; the rest of `169.254.0.0/16`, the instance metadata service among
+   it, stays refused. One role each:
    - `abom-coordinator`: `s3:GetObject` and `s3:PutObject` on `<prefix>attempts/*`, and
      `kms:Sign` and `kms:GetPublicKey` on the decision key, and nothing else.
    - `abom-worker-discovery`, `abom-worker-qlaas-test` and `abom-worker-qlaas-run`: the same two S3

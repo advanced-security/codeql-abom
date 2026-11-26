@@ -65,6 +65,15 @@ func TestARetiredKeyVerifiesOnlyTheEntriesTheLogHeldWhenItRetired(t *testing.T) 
 	if _, err := b.DecisionOf(ledger.entries[3]); err == nil {
 		t.Error("the forged decision opens as a logged one")
 	}
+	// A row can be inserted at a position of its own choosing, before the log's first; the
+	// append-only triggers refuse only changes to rows already there.
+	early := ledger.entries[3]
+	for _, seq := range []int64{0, -1} {
+		early.Seq = seq
+		if _, err := b.DecisionOf(early); err == nil {
+			t.Errorf("the forged decision opens as a logged one placed at %d, before the log begins", seq)
+		}
+	}
 	if _, err := b.DecisionOf(ledger.entries[0]); err != nil {
 		t.Errorf("what the local key decided before retiring no longer verifies: %v", err)
 	}
@@ -151,5 +160,25 @@ func TestARotationPinsTheHeadTheOldKeyRetiredAt(t *testing.T) {
 	decideOn(t, old, ledger, t0.Add(2*time.Minute))
 	if r := VerifyLog(ledger.entries, bundle(t, dir)); r.Failure == nil || r.Failure.Seq != 3 {
 		t.Errorf("the old key signing after the rotation verifies as %+v", r)
+	}
+}
+
+// A key is made for a database nothing has decided yet. One made in an empty directory beside a log
+// another key already signed would sign what no bundle trusting the log verifies, and the log
+// cannot be rewritten, so a directory that is not the log's own is refused.
+func TestNoKeyIsMadeBesideALogAnotherKeySigned(t *testing.T) {
+	ledger := &memLedger{}
+	if _, err := OpenSigner(context.Background(), filepath.Join(t.TempDir(), "authz"), ledger, t0); err != nil {
+		t.Fatalf("no key was made for a database nothing has decided: %v", err)
+	}
+	old, _ := signer(t)
+	decideOn(t, old, ledger, t0.Add(time.Minute))
+
+	elsewhere := filepath.Join(t.TempDir(), "authz")
+	if _, err := OpenSigner(context.Background(), elsewhere, ledger, t0.Add(time.Hour)); err == nil {
+		t.Fatal("a new key was made beside a log another key signed")
+	}
+	if _, err := os.Stat(filepath.Join(elsewhere, keyFile)); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the refused directory holds a key anyway: %v", err)
 	}
 }

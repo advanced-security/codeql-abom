@@ -82,6 +82,10 @@ func (e *Expander) AnalyzeTask(ctx context.Context, t RemoteTask, dir string) (R
 	}
 	out := RemoteOutput{Commit: tree.SHA, Ref: tree.Ref, Digest: digest, LockTree: lock}
 
+	if len(t.Queries) == 0 && len(t.Findings) == 0 {
+		_ = os.RemoveAll(src)
+		return out, nil
+	}
 	dbDir := filepath.Join(dir, "db")
 	if err := e.Builder.CreateDatabase(ctx, tree.Dir, dbDir, "actions"); err != nil {
 		return RemoteOutput{}, err

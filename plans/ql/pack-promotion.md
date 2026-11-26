@@ -9,11 +9,10 @@ started anywhere else refuses every run before a member is analyzed —
 `advanced-security/abom-actions-graph-extraction-src` cannot be found — which item 1 is what
 removes. `deploy` stays a stage set by hand for as long as this plan is deferred.
 
-**Handing your query over is not deferred, and is built.** The CodeQL catalog shows every component
-of a query, bundles it, and opens a pull request in the organization's query repository through a
-second App that can write there and nowhere else. You merge it, and that repository's workflow
-publishes the pack — which is item 2 below done by the organization rather than by ABOM, and
-leaves every constraint here intact.
+**Handing your query over is not this plan.** A query leaves ABOM as a pull request to the
+organization's query repository, opened by a second App that can write there and nowhere else. You
+merge it, and that repository's workflow publishes the pack: item 2 below done by the organization
+rather than by ABOM, which leaves every constraint here intact.
 
 ## Why this exists
 

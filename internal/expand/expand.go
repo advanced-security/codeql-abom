@@ -845,7 +845,8 @@ func (e *Expander) settleWithoutFetching(
 		return work.Prepared{}, false, nil, err
 	}
 	if !covered {
-		return work.Prepared{}, false, nil, nil
+		// Resolved, with every lane on record: only the lock is read, which a fetch alone answers.
+		return work.Prepared{}, false, &pending{}, nil
 	}
 	// Recorded only once it settles: the listing is the commit's measured content, and the walks
 	// read an identical commit's sightings for it from here on.

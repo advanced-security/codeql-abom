@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -24,34 +26,57 @@ var parityAccounts = []ghauth.Account{
 	{Owner: "member-org", Kind: "organization", Role: "member", SecurityManager: "no"},
 }
 
-// entryPoints declare one organization whole through each way in, on a database of its own.
-var entryPoints = map[string]func(t *testing.T, db, org string) error{
-	"command line": func(t *testing.T, db, org string) error {
-		return own(t, "--db", db, "--org", org)
+// parityRoles are the roles GitHub reports on the repositories a member declares by name.
+var parityRoles = map[string]string{"member-org/maintained": "maintain"}
+
+func parityRole(_ context.Context, owner, repo, _ string) (string, error) {
+	if role, ok := parityRoles[owner+"/"+repo]; ok {
+		return role, nil
+	}
+	return "", errors.New("gh cannot read the role on " + owner + "/" + repo)
+}
+
+// entryPoints declare one organization through each way in, on a database of its own: whole, or
+// only the one repository include names.
+var entryPoints = map[string]func(t *testing.T, db, org, include string) error{
+	"command line": func(t *testing.T, db, org, include string) error {
+		args := []string{"--db", db, "--org", org}
+		if include != "" {
+			args = append(args, "--include", org+"/"+include)
+		}
+		return own(t, args...)
 	},
-	"interface": func(t *testing.T, db, org string) error {
+	"interface": func(t *testing.T, db, org, include string) error {
 		s := openParity(t, db)
 		defer s.Close()
 		body := `[{"owner":"` + org + `","kind":"organization","enabled":true}]`
+		if include != "" {
+			body = `[{"owner":"` + org + `","kind":"organization","enabled":true,"includesOnly":true,` +
+				`"includes":["` + include + `"]}]`
+		}
 		r := httptest.NewRequest(http.MethodPut, "/api/owned-scope", strings.NewReader(body))
 		r.Host = "127.0.0.1:8080"
 		r.Header.Set("X-Abom-Control", "1")
 		rec := httptest.NewRecorder()
-		(&serve.Server{Store: s}).Handler().ServeHTTP(rec, r)
+		(&serve.Server{Store: s, ReadRepositoryRole: parityRole}).Handler().ServeHTTP(rec, r)
 		if rec.Code != http.StatusOK {
 			return &store.DeclarationRefused{Reason: rec.Body.String()}
 		}
 		return nil
 	},
-	"local file": func(t *testing.T, db, org string) error {
+	"local file": func(t *testing.T, db, org, include string) error {
 		path := filepath.Join(t.TempDir(), "declare.json")
-		if err := os.WriteFile(path, []byte(`{"own":{"orgs":["`+org+`"]}}`), 0o600); err != nil {
+		file := `{"own":{"orgs":["` + org + `"]}}`
+		if include != "" {
+			file = `{"own":{"orgs":["` + org + `"],"includes":["` + org + "/" + include + `"]}}`
+		}
+		if err := os.WriteFile(path, []byte(file), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		s := openParity(t, db)
 		defer s.Close()
 		var stderr strings.Builder
-		if err := seedDeclaration(s, path, &stderr); err != nil {
+		if err := seedDeclaration(t.Context(), s, path, parityRole, &stderr); err != nil {
 			return err
 		}
 		if declared, _ := s.OwnedScope(); len(declared) == 0 {
@@ -75,7 +100,7 @@ func openParity(t *testing.T, db string) store.Backend {
 func parityDB(t *testing.T) string {
 	t.Helper()
 	db := ownDB(t)
-	asks(t, verifiedAs("octocat", parityAccounts...), nil)
+	asks(t, verifiedAs("octocat", parityAccounts...), parityRoles)
 	s := openParity(t, db)
 	defer s.Close()
 	accounts := make([]store.Account, 0, len(parityAccounts))
@@ -151,12 +176,16 @@ func judgedOf(t *testing.T, d authz.Decision) judged {
 // same signed decision about the same declaration by the same operator, an administrator's
 // organization allowed and a member's refused, and each decision is logged as made.
 func TestEveryEntryPointReachesTheSameDecisionAboutADeclaration(t *testing.T) {
-	for org, allowed := range map[string]bool{"admin-org": true, "member-org": false} {
+	type claim struct{ org, include string }
+	for c, allowed := range map[claim]bool{
+		{"admin-org", ""}: true, {"member-org", ""}: false, {"member-org", "maintained"}: true,
+	} {
+		org := c.org + "/" + c.include
 		var first judged
 		var firstVia string
 		for via, declare := range entryPoints {
 			db := parityDB(t)
-			err := declare(t, db, org)
+			err := declare(t, db, c.org, c.include)
 			if (err == nil) != allowed {
 				t.Errorf("%s declaring %s: %v; want allowed=%v", via, org, err, allowed)
 			}

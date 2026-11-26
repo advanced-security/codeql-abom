@@ -6,7 +6,7 @@ kind: PriorityClass
 metadata:
   name: {{ include "abom.name" . }}-control
   labels: {{- include "abom.labels" . | nindent 4 }}
-value: {{ .Values.priority.control }}
+value: {{ .Values.priority.control | int64 }}
 globalDefault: false
 description: ABOM's coordinator, which every analysis depends on.
 ---
@@ -15,7 +15,7 @@ kind: PriorityClass
 metadata:
   name: {{ include "abom.name" . }}-worker
   labels: {{- include "abom.labels" . | nindent 4 }}
-value: {{ .Values.priority.worker }}
+value: {{ .Values.priority.worker | int64 }}
 globalDefault: false
 preemptionPolicy: Never
 description: ABOM analysis Jobs, which wait for room rather than take it.

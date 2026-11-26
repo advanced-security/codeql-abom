@@ -19,3 +19,6 @@ var ErrNotInstalled = errors.New("the GitHub App is not installed on this accoun
 
 // ErrNoInstallation reports an App installed nowhere, which has nothing to read with at all.
 var ErrNoInstallation = errors.New("the GitHub App has no installation to read with")
+
+// errNotSelected reports a repository the owner's installation does not cover, or that does not exist.
+var errNotSelected = errors.New("the App's installation does not cover the repository")

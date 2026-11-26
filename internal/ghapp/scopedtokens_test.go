@@ -237,3 +237,28 @@ func TestAWorkerIsLentAReadOfItsOneRepositoryAndNothingElse(t *testing.T) {
 		t.Error("lending for an owner without an installation minted another installation's token")
 	}
 }
+
+// A public repository in an organization whose installation selects others is cloned with no token,
+// as it is without workers. GitHub refuses to name it in a token, and that refusal is about the
+// repository, not a permission an owner has to approve.
+func TestAWorkerIsLentNothingForARepositoryTheInstallationDoesNotSelect(t *testing.T) {
+	key, _ := testKeys(t)
+	c := newClock()
+	gh := newFakeGitHub(t, key, c.Now, fakeInstallation{ID: 11, Login: "has-ghas", Type: "Organization",
+		Selection: "selected", Repos: []string{"dubbo"}, Granted: approvedEverything})
+	app := gh.app(c.Now)
+	ctx := context.Background()
+
+	token, err := app.RepositoryToken(ctx, "has-ghas", "dubbo")
+	if err != nil || token == "" {
+		t.Fatalf("RepositoryToken for a selected repository = %q, %v", token, err)
+	}
+	listings := gh.count("GET /app/installations")
+	if none, err := app.RepositoryToken(ctx, "has-ghas", "public-elsewhere"); none != "" || err != nil {
+		t.Errorf("a repository outside the selection was lent %q, %v; want nothing and no error", none, err)
+	}
+	if again, _ := app.RepositoryToken(ctx, "has-ghas", "dubbo"); again != token ||
+		gh.count("GET /app/installations") != listings {
+		t.Error("the refusal dropped what was known about the installation")
+	}
+}

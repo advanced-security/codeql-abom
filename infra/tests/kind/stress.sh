@@ -58,15 +58,20 @@ set +e
 end=$(( $(date +%s) + minutes * 60 ))
 while [ "$(date +%s)" -lt "$end" ]; do
   now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  summary=$(curl -o /dev/null -sS -w '%{time_total}' "$base/api/summary" || echo fail)
-  status=$(curl -sS -w '\n%{time_total}' "$base/api/discovery/status" || printf '{}\nfail')
-  printf '{"time":"%s","status":%s}\n' "$now" "$(echo "$status" | sed '$d')" >>"$out/discovery.jsonl"
+  # curl writes the time even when the request fails, so a failure replaces what it wrote.
+  summary=$(curl -o /dev/null -fsS -w '%{time_total}' "$base/api/summary" 2>/dev/null) || summary=fail
+  if status=$(curl -fsS -w '\n%{time_total}' "$base/api/discovery/status" 2>/dev/null); then
+    body=$(echo "$status" | sed '$d') took=$(echo "$status" | tail -1)
+  else
+    body='{}' took=fail
+  fi
+  printf '{"time":"%s","status":%s}\n' "$now" "$body" >>"$out/discovery.jsonl"
   running=$(k -n abom get jobs -l app.kubernetes.io/component=worker -o json |
     python3 -c 'import json,sys; print(sum(1 for j in json.load(sys.stdin)["items"] if j.get("status",{}).get("active")))')
   pending=$(k -n abom get pods -l app.kubernetes.io/component=worker --field-selector=status.phase=Pending --no-headers 2>/dev/null | wc -l | tr -d ' ')
   restarts=$(k -n abom get pods -l app.kubernetes.io/component=coordinator \
     -o jsonpath='{range .items[*]}{.status.containerStatuses[0].restartCount}{end}')
-  echo "$now,$summary,$(echo "$status" | tail -1),$running,$pending,${restarts:-0}" >>"$out/samples.csv"
+  echo "$now,$summary,$took,$running,$pending,${restarts:-0}" >>"$out/samples.csv"
   { echo "== $now"; k top nodes --no-headers 2>/dev/null; k top pods -n abom --no-headers 2>/dev/null
     k top pods -n abom-deps --no-headers 2>/dev/null; } >>"$out/top.txt"
   sleep "$interval"

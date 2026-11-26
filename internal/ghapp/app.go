@@ -225,6 +225,10 @@ func (a *App) mint(ctx context.Context, id int64, owner string, perms Permission
 			a.forget(id, owner)
 			return minted{}, fmt.Errorf("%w: %s (installation %d is gone)", ErrNotInstalled, owner, id)
 		case http.StatusUnprocessableEntity:
+			// With every permission approved, the refusal can only be of the one repository named.
+			if repo != "" && len(perms.missingFrom(a.granted(id))) == 0 {
+				return minted{}, fmt.Errorf("%w: %s/%s", errNotSelected, owner, repo)
+			}
 			// The listing reported an approval GitHub no longer holds, so the next request reads it again.
 			// GitHub does not say which permission it refused, so none is named.
 			a.forget(id, owner)

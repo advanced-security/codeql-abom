@@ -44,3 +44,32 @@ func TestAReaderCannotBeConfiguredToStartDiscovery(t *testing.T) {
 		t.Fatal("reader-only accepted expansion")
 	}
 }
+
+// A reader verifies the declaration with the key directory it is given, as the coordinator does, or
+// it shows a decided declaration as unverified and every owned figure as empty.
+func TestAReaderVerifiesTheDeclarationWithTheKeyDirectoryItIsGiven(t *testing.T) {
+	dir := t.TempDir()
+	path, keys := filepath.Join(dir, "abom.db"), filepath.Join(dir, "keys-elsewhere")
+	s, err := store.OpenBackend(path, store.Options{AuthzDir: keys})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetOwnedScope([]store.DeclaredAccount{{Owner: "acme", Kind: store.AccountOrganization, Enabled: true}},
+		store.DeclaredByCLI); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+
+	srv, closeReader, err := openReader(serveConfig{dbPath: path, authzDir: keys})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeReader()
+	accounts, verdict, err := srv.Store.VerifiedScope()
+	if err != nil || verdict.State != store.ScopeSigned || len(accounts) != 1 {
+		t.Errorf("the reader judged the declaration %+v with %d accounts, %v; want it signed", verdict, len(accounts), err)
+	}
+}

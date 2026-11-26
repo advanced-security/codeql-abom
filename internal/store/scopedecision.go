@@ -19,15 +19,11 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/authz"
 )
 
-// AuthzDirEnv names the decision key directory for every command that does not name one, which a
-// PostgreSQL database needs: it has no directory beside it to default to.
-const AuthzDirEnv = "ABOM_AUTHZ_DIR"
-
 // DefaultAuthzDir is where a database's decision key and trust bundle live when no flag says:
 // $ABOM_AUTHZ_DIR, else beside a SQLite file, as the database itself is. Empty for a PostgreSQL
 // target with no such variable, which can then verify nothing and declare nothing.
 func DefaultAuthzDir(path string) string {
-	if dir := os.Getenv(AuthzDirEnv); dir != "" {
+	if dir := os.Getenv(authz.KeyDirEnv); dir != "" {
 		return dir
 	}
 	if path == "" || IsPostgresTarget(path) || strings.HasPrefix(path, "file:") {
@@ -46,7 +42,7 @@ type decisionKeys struct {
 
 // ErrNoDecisionKey is a database with no decision key directory, which can then decide nothing.
 var ErrNoDecisionKey = errors.New("decisions are signed, and this database has no decision key; " +
-	"name its directory with --authz-dir")
+	"name its directory with " + authz.KeyDirEnv + ", or --authz-dir where a command takes one")
 
 func (k *decisionKeys) open(ctx context.Context, ledger authz.Ledger) (authz.Signer, error) {
 	if k == nil || k.dir == "" {

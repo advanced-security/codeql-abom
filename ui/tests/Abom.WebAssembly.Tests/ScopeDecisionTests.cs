@@ -69,6 +69,22 @@ public class ScopeDecisionTests : AbomTestContext
         Assert.Contains("\"owner\":\"acme\"", put.Body);
     }
 
+    // A refused confirmation says why where it was pressed, not beside Save at the foot of the page.
+    [Fact]
+    public void ARefusedConfirmationSaysWhyInTheBanner()
+    {
+        Serve("""{"state":"unsigned","reason":"no recorded decision shows that saving it was allowed","digest":"","decidedAt":"","decidedBy":""}""");
+        RefuseWrite("api/owned-scope", System.Net.HttpStatusCode.Forbidden,
+            "declaring acme that way is refused: octocat is a member of acme");
+
+        var cut = Render<Pages.Settings>();
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("[data-abom-confirm-scope]")));
+        cut.Find("[data-abom-confirm-scope]").Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("octocat is a member of acme",
+            cut.Find("[data-abom-scope-decision='unsigned']").TextContent));
+    }
+
     // A signed declaration says who decided it and whose GitHub roles it was judged against: on a
     // hosted instance those are two different accounts, and the second is ABOM's own.
     [Fact]
@@ -98,8 +114,9 @@ public class ScopeDecisionTests : AbomTestContext
         Assert.True(inOrder[0].HasAttribute("data-abom-scope-decision"), "the banner comes after the accounts table");
     }
 
-    // A declaration changed after it was decided is not confirmed by the page on its own say-so: the
-    // operator reviews what it now says before deciding it.
+    // A declaration changed after it was decided is not confirmed by the page on its own say-so: you
+    // review what it now says before deciding it. The link names the page, because against the
+    // document's base a bare fragment is the Dashboard's.
     [Fact]
     public void ADeclarationThatNoLongerMatchesItsDecisionIsNamedAsChanged()
     {
@@ -110,7 +127,7 @@ public class ScopeDecisionTests : AbomTestContext
         cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("[data-abom-scope-decision='unverified']")));
         var banner = cut.Find("[data-abom-scope-decision='unverified']").TextContent;
         Assert.Contains("changed after it was decided", banner);
-        Assert.NotNull(cut.Find("[data-abom-scope-decision='unverified'] a[href='#declared-accounts']"));
+        Assert.NotNull(cut.Find("[data-abom-scope-decision='unverified'] a[href='/settings#declared-accounts']"));
     }
 
     // Not being able to read the decision is not evidence against the declaration.

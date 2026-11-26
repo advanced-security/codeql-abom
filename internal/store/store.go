@@ -281,11 +281,11 @@ func (s *Store) finishMigration() error {
 			return err
 		}
 	}
-	// After the columns, which the views select on.
 	// Before the views: the honored scope reads it.
 	if err := s.indexLoggedDecisions(); err != nil {
 		return err
 	}
+	// After the columns, which the views select on.
 	if err := s.createViews(); err != nil {
 		return err
 	}

@@ -96,6 +96,20 @@ type Manifest struct {
 	BundleSHA256 string `json:"bundleSha256"`
 }
 
+// Unbundled says why m has no bundle, which happens when its query file could not be read; empty
+// when it has one.
+func (m Manifest) Unbundled() string {
+	if m.BundleSHA256 != "" {
+		return ""
+	}
+	for _, missing := range m.Missing {
+		if missing.Role == RoleQuery {
+			return fmt.Sprintf("%s has no bundle: %s: %s", m.Query, missing.Path, missing.Why)
+		}
+	}
+	return m.Query + " has no bundle: its components could not all be read"
+}
+
 // ExportName is what an export of the bundle is named by: the query, safe in a path, and the
 // bundle's digest, so two bundles of one query are told apart.
 func (m Manifest) ExportName() string {

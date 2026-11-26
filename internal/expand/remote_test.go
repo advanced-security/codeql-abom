@@ -7,6 +7,7 @@ import (
 
 	"github.com/advanced-security/codeql-abom/internal/catalog"
 	"github.com/advanced-security/codeql-abom/internal/frontier"
+	"github.com/advanced-security/codeql-abom/internal/lockfile"
 	"github.com/advanced-security/codeql-abom/internal/sourcepolicy"
 )
 
@@ -231,5 +232,45 @@ func TestACommitThatMovedUnderAWorkerIsPlannedAgain(t *testing.T) {
 	}
 	if analyzed != 0 {
 		t.Errorf("%d runs recorded at the moved commit, which was never analyzed in full", analyzed)
+	}
+}
+
+// A lock read by an earlier reader is read again after an upgrade, and that takes a fetch alone. A
+// worker sent the commit for it builds no database and runs no query the ledger already holds.
+func TestAWorkerSentOnlyToReadALockAgainBuildsNoDatabase(t *testing.T) {
+	h, tasks := remoteHarness(t)
+	h.files["gradle/actions"] = map[string]string{".github/workflows/actions.lock": "lockVersion: 0.0.3\n"}
+	h.enqueue(item("gradle", "actions", "setup-gradle", 1))
+	h.run(10)
+	if _, err := h.store.DB().Exec(`UPDATE abom_lock_coverage SET reader = '' WHERE repository = 'gradle/actions'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.store.DB().Exec(`UPDATE abom_frontier SET status = 'pending' WHERE owner = 'gradle'`); err != nil {
+		t.Fatal(err)
+	}
+	sent, built := len(*tasks), len(h.built)
+
+	h.run(2)
+
+	var reread []RemoteTask
+	for _, task := range (*tasks)[sent:] {
+		if task.Owner == "gradle" && task.Repo == "actions" {
+			reread = append(reread, task)
+		}
+	}
+	if len(reread) != 1 {
+		t.Fatalf("gradle/actions was sent %d times after the upgrade; want once, to read its lock again", len(reread))
+	}
+	if len(reread[0].Queries) != 0 || len(reread[0].Findings) != 0 {
+		t.Errorf("the lock re-read was sent %d graph and %d findings queries the ledger already holds",
+			len(reread[0].Queries), len(reread[0].Findings))
+	}
+	for _, dir := range h.built[built:] {
+		if strings.Contains(dir, "gradle") {
+			t.Errorf("the worker built a database in %s to read a lock", dir)
+		}
+	}
+	if covered, err := h.store.HasLockCoverage("gradle/actions", "sha-actions", lockfile.Reader); err != nil || !covered {
+		t.Errorf("the lock is not read by the current reader afterwards: %v, %v", covered, err)
 	}
 }

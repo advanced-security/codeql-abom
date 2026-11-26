@@ -22,6 +22,10 @@ import (
 // KMSKeyEnv names the AWS KMS key decisions are signed with; unset signs with the local key.
 const KMSKeyEnv = "ABOM_AUTHZ_KMS_KEY"
 
+// KeyDirEnv names the decision key directory for every command that does not name one, which a
+// PostgreSQL database needs: it has no directory beside it to default to.
+const KeyDirEnv = "ABOM_AUTHZ_DIR"
+
 // KMSClient is the part of AWS KMS a signer uses.
 type KMSClient interface {
 	GetPublicKey(ctx context.Context, in *kms.GetPublicKeyInput, opts ...func(*kms.Options)) (*kms.GetPublicKeyOutput, error)
@@ -116,6 +120,9 @@ func OpenKMS(ctx context.Context, client KMSClient, key, dir string, ledger Ledg
 func OpenSigner(ctx context.Context, dir string, ledger Ledger, now time.Time) (Signer, error) {
 	key := os.Getenv(KMSKeyEnv)
 	if key == "" {
+		if err := refuseAKeyBesideAWrittenLog(dir, ledger); err != nil {
+			return nil, err
+		}
 		return OpenLocal(dir, now)
 	}
 	cfg, err := awsconfig.LoadDefaultConfig(ctx)
@@ -123,4 +130,20 @@ func OpenSigner(ctx context.Context, dir string, ledger Ledger, now time.Time) (
 		return nil, fmt.Errorf("authz: configuring AWS for %s: %w", key, err)
 	}
 	return OpenKMS(ctx, kms.NewFromConfig(cfg), key, dir, ledger, now)
+}
+
+// refuseAKeyBesideAWrittenLog refuses to make a key in a directory holding neither key nor bundle for
+// a log that already holds decisions: what it signed would verify against no bundle the log's own
+// keys are in, and the log is append-only.
+func refuseAKeyBesideAWrittenLog(dir string, ledger Ledger) error {
+	for _, name := range []string{keyFile, BundleFile} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+	}
+	if _, written, err := ledger.Head(); err != nil || !written {
+		return err
+	}
+	return fmt.Errorf("authz: %s holds no decision key, and this database's decisions were signed with one "+
+		"kept elsewhere; name that directory with %s, which every command reads", dir, KeyDirEnv)
 }

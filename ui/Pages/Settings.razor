@@ -47,15 +47,19 @@ else
                 <MudText Typo="Typo.body2">Discovery does not act on it until it is confirmed.</MudText>
                 <div class="d-flex gap-2 mt-1">
                     <Tip Text="Read the declaration below before confirming it.">
-                        <MudButton Size="Size.Small" Variant="Variant.Text" Href="#declared-accounts">Review</MudButton>
+                        <MudButton Size="Size.Small" Variant="Variant.Text" Href="/settings#declared-accounts">Review</MudButton>
                     </Tip>
                     <Tip Text="@(_mayNotDeclare ?? "Decide the declaration as it stands, under the same rules as saving it, and sign that decision.")">
                         <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="@(_saving || _mayNotDeclare is not null)"
-                                   OnClick="Save" data-abom-confirm-scope>
+                                   OnClick="Confirm" data-abom-confirm-scope>
                             Confirm
                         </MudButton>
                     </Tip>
                 </div>
+                @if (_confirmError is not null)
+                {
+                    <MudText Typo="Typo.body2" Class="abom-unconfirmed mt-1" data-abom-confirm-error>@_confirmError</MudText>
+                }
             </div>
         </MudAlert>
     }
@@ -1628,6 +1632,16 @@ else
             // consequence is honest; refusing to let the operator declare would not be.
             _preview = null;
         }
+    }
+
+    private string? _confirmError;
+
+    // Said in the banner where Confirm was pressed, rather than beside Save at the foot of the page.
+    private async Task Confirm()
+    {
+        _confirmError = null;
+        await Save();
+        (_confirmError, _saveError) = (_saveError, null);
     }
 
     private async Task Save()

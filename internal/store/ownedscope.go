@@ -338,6 +338,7 @@ func (s *Store) SetOwnedScope(accounts []DeclaredAccount, by string) error {
 // The write is the decision point's alone: it judges the declaration, signs the verdict, and writes
 // only what was allowed, carrying the decision's digest. A refusal is signed before it is returned.
 func (s *Store) DeclareOwnedScope(ctx context.Context, accounts []DeclaredAccount, by string) error {
+	accounts = trimmedDeclaration(accounts)
 	if err := validateOwnedScope(accounts, by); err != nil {
 		return err
 	}
@@ -361,6 +362,34 @@ func (s *Store) DeclareOwnedScope(ctx context.Context, accounts []DeclaredAccoun
 		return err
 	}
 	return tx.Commit()
+}
+
+// trimmedDeclaration is accounts as they are written, so judging, signing and storing read one set of
+// names: an owner padded to match no account GitHub reports must not be saved as the account it pads.
+func trimmedDeclaration(accounts []DeclaredAccount) []DeclaredAccount {
+	out := make([]DeclaredAccount, len(accounts))
+	for i, a := range accounts {
+		a.Owner = strings.TrimSpace(a.Owner)
+		includes := make([]string, 0, len(a.Includes))
+		for _, repo := range a.Includes {
+			if repo = strings.TrimSpace(repo); repo != "" {
+				includes = append(includes, repo)
+			}
+		}
+		a.Includes = includes
+		clauses := make([]PropertyClause, len(a.Properties))
+		for j, c := range a.Properties {
+			terms := make([]PropertyTerm, len(c.Terms))
+			for k, t := range c.Terms {
+				terms[k] = PropertyTerm{Name: strings.TrimSpace(t.Name), Value: t.Value}
+			}
+			c.Terms = terms
+			clauses[j] = c
+		}
+		a.Properties = clauses
+		out[i] = a
+	}
+	return out
 }
 
 func validateOwnedScope(accounts []DeclaredAccount, by string) error {
@@ -546,13 +575,12 @@ func clearOwnedScope(tx *transaction) error {
 func insertOwnedScope(tx *transaction, accounts []DeclaredAccount, by, at, decision string) error {
 	seen := map[string]bool{}
 	for _, a := range accounts {
-		owner := strings.TrimSpace(a.Owner)
-		key := strings.ToLower(owner)
+		key := strings.ToLower(a.Owner)
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
-		if err := insertOwnedAccount(tx, owner, a, by, at, decision); err != nil {
+		if err := insertOwnedAccount(tx, a.Owner, a, by, at, decision); err != nil {
 			return err
 		}
 	}
@@ -567,10 +595,6 @@ func insertOwnedAccount(tx *transaction, owner string, a DeclaredAccount, by, at
 		return fmt.Errorf("declaring %s: %w", owner, err)
 	}
 	for _, repo := range a.Includes {
-		repo = strings.TrimSpace(repo)
-		if repo == "" {
-			continue
-		}
 		if _, err := tx.Exec(
 			`INSERT OR IGNORE INTO abom_owned_include (owner, repo) VALUES (?, ?)`,
 			owner, repo); err != nil {
@@ -590,7 +614,7 @@ func insertOwnedAccount(tx *transaction, owner string, a DeclaredAccount, by, at
 		for _, t := range c.Terms {
 			if _, err := tx.Exec(`INSERT OR IGNORE INTO abom_owned_property_term
 				(clause_id, property_name, value) VALUES (?, ?, ?)`,
-				id, strings.TrimSpace(t.Name), t.Value); err != nil {
+				id, t.Name, t.Value); err != nil {
 				return fmt.Errorf("declaring a property scope on %s: %w", owner, err)
 			}
 		}

@@ -120,7 +120,6 @@ public abstract class AbomTestContext : BunitContext
     /// </summary>
     protected void Fail(string path, HttpStatusCode status) => _handler.Fail(path, status);
 
-    /// <summary>Refuses a path with the server's own error message.</summary>
     /// <summary>A refusal as the server answers one: an RFC 9457 problem with a code for its status.</summary>
     protected static StringContent Problem(HttpStatusCode status, string? detail, string? code = null) =>
         new(System.Text.Json.JsonSerializer.Serialize(new
@@ -132,6 +131,7 @@ public abstract class AbomTestContext : BunitContext
             code = code ?? "refused",
         }), Encoding.UTF8, "application/problem+json");
 
+    /// <summary>Refuses a path with the server's own error message.</summary>
     protected void Refuse(string path, HttpStatusCode status, string message) =>
         _handler.Fail(path, status, message);
 

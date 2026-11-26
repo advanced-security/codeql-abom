@@ -153,6 +153,8 @@ func TestADeclarationTheRecordedRoleCannotSupportIsRefusedHoweverItArrives(t *te
 		reason string
 	}{
 		"a member's organization, whole": {org("member-org"), "repositories they administer or maintain"},
+		"a member's organization, padded to match nothing": {org(" member-org "),
+			"repositories they administer or maintain"},
 		"a member's repository they only write to": {org("member-org", "maintained", "written"),
 			"member-org/written"},
 		"a member's property scope":                  {scoped, "repositories they administer or maintain"},
@@ -175,7 +177,7 @@ func TestADeclarationTheRecordedRoleCannotSupportIsRefusedHoweverItArrives(t *te
 		for name, c := range refused {
 			err := s.SetOwnedScope([]DeclaredAccount{c.claim}, by)
 			var refusal *DeclarationRefused
-			if !errors.As(err, &refusal) || !strings.Contains(refusal.Reason, c.claim.Owner) ||
+			if !errors.As(err, &refusal) || !strings.Contains(refusal.Reason, strings.TrimSpace(c.claim.Owner)) ||
 				!strings.Contains(refusal.Reason, c.reason) {
 				t.Errorf("%s, by %s: %v, want it refused naming %s and %q", name, by, err, c.claim.Owner, c.reason)
 			}
@@ -272,5 +274,23 @@ func TestAddingRolesKeepsTheRestOnRecord(t *testing.T) {
 	if len(roles) != 3 || roles["member-org/maintained"].Role != "maintain" ||
 		roles["member-org/written"].Role != "maintain" || roles["member-org/hidden"].Unread == "" {
 		t.Errorf("roles on record %+v, want the earlier read kept and the new reads added", roles)
+	}
+}
+
+// A row nobody decided is shown so it can be confirmed, and confirming it is a new claim: what an
+// unsigned row says was never judged, so it cannot be what a later save claims nothing beyond.
+func TestConfirmingARowWrittenAroundTheDecisionPointIsJudgedAsANewClaim(t *testing.T) {
+	s := newTestStore(t)
+	verifiedAsMember(t, s)
+	if _, err := s.db.Exec(`INSERT INTO abom_owned_scope (owner, kind, enabled, includes_only, declared_at)
+		VALUES ('member-org', 'organization', 1, 0, '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+
+	err := s.SetOwnedScope([]DeclaredAccount{{Owner: "member-org", Kind: AccountOrganization, Enabled: true}}, DeclaredByCLI)
+
+	var refusal *DeclarationRefused
+	if !errors.As(err, &refusal) || !strings.Contains(refusal.Reason, "repositories they administer or maintain") {
+		t.Errorf("confirming a member's undecided whole-organization row: %v; want it refused by role", err)
 	}
 }

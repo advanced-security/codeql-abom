@@ -169,8 +169,10 @@ only what it newly claims; Settings reports whether the role behind what is alre
 supports it. A declaration is a claim of responsibility, not proof of license eligibility.
 
 Every declaration, from `own`, Settings or a local file, is a decision signed with the key in
-`authz/` beside the database and logged; a PostgreSQL database names that directory with
-`--authz-dir` or `ABOM_AUTHZ_DIR`. A declaration no decision holds for drives nothing until it is
+`authz/` beside the database and logged. A PostgreSQL database, or a key kept anywhere else, names
+that directory with `ABOM_AUTHZ_DIR`, which every command reads; `serve`, `own` and `audit` also
+take `--authz-dir`. A command refuses rather than make a new key beside a log another key signed. A
+declaration no decision holds for drives nothing until it is
 confirmed: press **Confirm** at the head of Settings, or run the same `own` command again. In a pod,
 `own` reads as the App `ABOM_APP_DIR` names, and its decision names the pod's ServiceAccount.
 
@@ -295,8 +297,9 @@ listener or proxy as part of source setup.
 With sign-in on, every API request needs a session, each control is refused below the role its
 operation needs, and every decision names who asked by an identifier their provider keeps for
 them: the issuer and subject, or the GitHub account ID. What they were called is kept beside it.
-The interface offers a control your role does not allow disabled, naming the role it needs. TLS is
-the ingress's to terminate. Choose one provider:
+Discovery, declaring, pruning and export are offered disabled when your role does not allow them,
+naming the role they need; any other control is refused when pressed, saying the same. TLS is the
+ingress's to terminate. Choose one provider:
 
 - **`--auth=oidc`**, through an OpenID Connect provider: `--oidc-issuer`, `--oidc-client-id`,
   `--oidc-redirect-url` (this deployment's `/auth/callback`) and the client secret in

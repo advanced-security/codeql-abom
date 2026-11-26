@@ -123,4 +123,48 @@ public sealed class RoleRefusalTests : AbomTestContext
 
         cut.WaitForAssertion(() => SaysTheRoleItNeeds(cut.Find("[data-abom-run]")));
     }
+
+    // Every control on the panel is one act, discovery control, so the role that may not start
+    // analysis may not re-analyze or change how it resumes either.
+    [Fact]
+    public void EveryDiscoveryControlTheRoleMayNotUseIsDisabledNamingTheRole()
+    {
+        Answer("api/me", Viewer);
+        Answer("api/discovery/status", DiscoveryStateBuilder.NeverStarted().WithOwned(198, 0).ToJson());
+        Answer("api/frontier", "[]");
+        Answer("api/owned-scope", """[{"owner":"octo-org"}]""");
+
+        var cut = Render<Shared.DiscoveryControls>();
+
+        cut.WaitForAssertion(() =>
+        {
+            var controls = cut.FindAll("button.abom-requeue");
+            Assert.NotEmpty(controls);
+            foreach (var control in controls)
+            {
+                SaysTheRoleItNeeds(control);
+            }
+            SaysTheRoleItNeeds(cut.Find("[data-abom-resume-on-start] input"));
+        });
+    }
+
+    // A refusal the page did not foresee still says why, rather than ending the page.
+    [Fact]
+    public void AReanalysisTheServerRefusesSaysWhy()
+    {
+        Answer("api/discovery/status", DiscoveryStateBuilder.NeverStarted().WithOwned(198, 0).ToJson());
+        Answer("api/frontier", "[]");
+        Answer("api/owned-scope", """[{"owner":"octo-org"}]""");
+        foreach (var tier in new[] { "owned", "direct", "transitive" })
+        {
+            RefuseWrite("api/discovery/requeue/" + tier, System.Net.HttpStatusCode.Forbidden,
+                "re-analyzing needs the operator role");
+        }
+
+        var cut = Render<Shared.DiscoveryControls>();
+        cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll(".abom-requeue-tier")));
+        cut.FindAll(".abom-requeue-tier")[0].Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("re-analyzing needs the operator role", cut.Markup));
+    }
 }

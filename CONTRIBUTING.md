@@ -20,8 +20,8 @@ make verify
 
 That is the same command CI runs, so if it passes locally it should pass on the pull request. It
 needs everything the [README's requirements](README.md#requirements) list, plus Python 3, Node,
-Playwright's Chromium, `golangci-lint`, the `gh actions-lock` extension and a running Docker
-daemon.
+Playwright's Chromium, `golangci-lint`, the `gh actions-lock` extension, Helm (`scripts/setup-helm.sh`
+installs the pinned one) and a running Docker daemon.
 
 `.github/workflows/copilot-setup-steps.yml` installs all of it, and is a working reference if you
 would rather not read a list.

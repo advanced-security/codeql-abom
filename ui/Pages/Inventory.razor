@@ -1787,7 +1787,7 @@ else if (_unit != UnitFindings && _countedUnit == _unit)
         if (got.Relisted.Count > 0) parts.Add($"{string.Join(", ", got.Relisted)} listed again in full");
         var said = parts.Count == 0
             ? "Nothing chosen could be resynced."
-            : char.ToUpperInvariant(parts[0][0]) + string.Join("; ", parts)[1..] + ".";
+            : "Resynced: " + string.Join("; ", parts) + ".";
         return got.State.Status.IsRunning ? said : said + " Discovery is not running, so this happens once it starts.";
     }
 

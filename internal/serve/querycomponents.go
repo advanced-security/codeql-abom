@@ -121,6 +121,10 @@ func (s *Server) queryBundle(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if why := m.Unbundled(); why != "" {
+		writeError(w, http.StatusConflict, why)
+		return
+	}
 	var body strings.Builder
 	var changed *querypack.ComponentError
 	if err := querypack.Write(&body, s.QueryDir, m); errors.As(err, &changed) {

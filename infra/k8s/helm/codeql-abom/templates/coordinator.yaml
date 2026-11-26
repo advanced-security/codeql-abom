@@ -79,8 +79,8 @@ spec:
             {{- $size := index $.Values.workers $pool.key }}
             - --{{ $pool.flags }}-service-account={{ include "abom.name" $ }}-{{ $pool.account }}
             - --{{ $pool.flags }}-cpu={{ $size.cpu }}
-            {{- with $size.cpuLimit }}
-            - --{{ $pool.flags }}-cpu-limit={{ . }}
+            {{- if and (hasKey $size "cpuLimit") (ne (toString $size.cpuLimit) "") }}
+            - --{{ $pool.flags }}-cpu-limit={{ $size.cpuLimit }}
             {{- end }}
             - --{{ $pool.flags }}-memory={{ $size.memory }}
             - --{{ $pool.flags }}-timeout={{ $size.timeout }}

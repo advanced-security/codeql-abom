@@ -57,6 +57,8 @@ CREATE TABLE IF NOT EXISTS abom_frontier (
   -- The pushed commit a pending row waits for code scanning to analyze, its ceiling in
   -- next_attempt_at; NULL when nothing holds it. Cleared when the row is claimed or settles.
   awaiting_code_scanning TEXT,
+  -- When a retry last failed. NULL on a row that has not failed since this was recorded.
+  failed_at       TEXT,
   PRIMARY KEY (node_key, ref)
 );
 `
@@ -73,7 +75,7 @@ CREATE INDEX IF NOT EXISTS idx_frontier_check  ON abom_frontier(status, checked_
 const frontierColumns = `node_key, ref, owner, repo, subpath, depth, status, attempts, score,
 	cost_estimate, reason, discovered_from, enqueued_at, next_attempt_at, completed_at,
 	claimed_at, claim_id, expedited_at, analyzed_ref, resolved_sha, analyzed_at, checked_at,
-	analysis_count, supply_chain, requeued_for, dependencies_moved, awaiting_code_scanning`
+	analysis_count, supply_chain, requeued_for, dependencies_moved, awaiting_code_scanning, failed_at`
 
 // migrateFrontierRefKey re-keys the queue from the dependency to the dependency at a reference.
 //

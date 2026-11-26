@@ -26,6 +26,7 @@ type github struct {
 	tokenRepos    []any
 	trees         []map[string]any
 	refs          []map[string]any
+	moved         []map[string]any
 	pulls         []map[string]any
 	// branches and open hold what the repository already has: branch names, and the open pull
 	// requests' head branches with their addresses.
@@ -88,6 +89,17 @@ func (g *github) serve(t *testing.T) *httptest.Server {
 	})
 	mux.HandleFunc("GET /repos/acme/queries/git/commits/head-sha", func(w http.ResponseWriter, _ *http.Request) {
 		reply(w, map[string]any{"tree": map[string]any{"sha": "head-tree"}})
+	})
+	mux.HandleFunc("GET /repos/acme/queries/git/commits/export-sha", func(w http.ResponseWriter, _ *http.Request) {
+		reply(w, map[string]any{"tree": map[string]any{"sha": "export-tree"}})
+	})
+	mux.HandleFunc("PATCH /repos/acme/queries/git/refs/heads/{branch...}", func(w http.ResponseWriter, r *http.Request) {
+		body := read(r)
+		body["branch"] = r.PathValue("branch")
+		g.mu.Lock()
+		g.moved = append(g.moved, body)
+		g.mu.Unlock()
+		reply(w, map[string]any{"ref": "refs/heads/" + r.PathValue("branch")})
 	})
 	mux.HandleFunc("POST /repos/acme/queries/git/trees", func(w http.ResponseWriter, r *http.Request) {
 		g.mu.Lock()
@@ -265,12 +277,24 @@ func TestExportingTheSameBundleAgainAnswersItsOpenPullRequest(t *testing.T) {
 			len(g.trees), len(g.refs), len(g.pulls))
 	}
 
+	// Exported again after its pull request closed, under a decision of its own: the branch holds the
+	// bundle already, and its record is brought up to this decision on top of it.
 	delete(g.open, unpinned.Branch)
-	reopened, reused, err := p.Open(context.Background(), target, unpinned)
+	again2 := unpinned
+	again2.Files = append([]File{}, unpinned.Files...)
+	again2.Files[len(again2.Files)-1] = File{Path: again2.Files[len(again2.Files)-1].Path, Content: []byte("{\"decision\":\"second\"}\n")}
+	reopened, reused, err := p.Open(context.Background(), target, again2)
 	if err != nil || reopened == first || reused {
 		t.Errorf("exporting after its pull request closed = %q, reused %v, %v; want a new pull request", reopened, reused, err)
 	}
-	if len(g.trees) != 1 || len(g.refs) != 1 || len(g.pulls) != 2 {
-		t.Errorf("reopening wrote %d trees and %d refs; want the branch already there proposed again", len(g.trees), len(g.refs))
+	if len(g.refs) != 1 || len(g.pulls) != 2 || len(g.trees) != 2 || len(g.moved) != 1 {
+		t.Fatalf("reopening wrote %d trees, created %d refs and moved %d; want the branch moved to a commit holding this decision",
+			len(g.trees), len(g.refs), len(g.moved))
+	}
+	if g.trees[1]["base_tree"] != "export-tree" || !strings.Contains(fmt.Sprint(g.trees[1]["tree"]), "second") {
+		t.Errorf("the re-export's tree is %+v; want this decision's record on the branch's own tree", g.trees[1])
+	}
+	if g.moved[0]["branch"] != unpinned.Branch || g.moved[0]["sha"] != "new-commit" {
+		t.Errorf("the branch moved as %+v", g.moved[0])
 	}
 }

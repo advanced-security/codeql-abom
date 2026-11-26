@@ -44,7 +44,6 @@ const (
 	problemUnauthorized    problemCode = "unauthorized"
 	problemForbidden       problemCode = "forbidden"
 	problemNotFound        problemCode = "not-found"
-	problemMethod          problemCode = "method-not-allowed"
 	problemConflict        problemCode = "conflict"
 	problemTooLarge        problemCode = "too-large"
 	problemMediaType       problemCode = "unsupported-media-type"
@@ -91,7 +90,6 @@ var problems = map[problemCode]problemSpec{
 	problemUnauthorized:    {status: http.StatusUnauthorized, title: "Not signed in", generic: true},
 	problemForbidden:       {status: http.StatusForbidden, title: "Refused", generic: true},
 	problemNotFound:        {status: http.StatusNotFound, title: "Not found", generic: true},
-	problemMethod:          {status: http.StatusMethodNotAllowed, title: "Method not allowed", generic: true},
 	problemConflict:        {status: http.StatusConflict, title: "Conflict", generic: true},
 	problemTooLarge:        {status: http.StatusRequestEntityTooLarge, title: "Too large", generic: true},
 	problemMediaType:       {status: http.StatusUnsupportedMediaType, title: "Unsupported media type", generic: true},

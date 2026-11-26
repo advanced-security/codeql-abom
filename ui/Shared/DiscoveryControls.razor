@@ -207,9 +207,11 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
        operator who finds it stopped after a restart needs to know that was the arrangement
        rather than a failure. *@
     <div class="mt-2" data-abom-resume-on-start>
-        <MudSwitch T="bool" Value="_state.ResumeOnStart" ValueChanged="ToggleResumeOnStart"
-                   Color="Color.Primary" Size="Size.Small" Disabled="@_busy"
-                   Label="Resume the crawl when the server starts" />
+        <Tip Text="@(_mayNotSteer ?? "Whether a restart resumes the crawl when it was running as the server stopped.")">
+            <MudSwitch T="bool" Value="_state.ResumeOnStart" ValueChanged="ToggleResumeOnStart"
+                       Color="Color.Primary" Size="Size.Small" Disabled="@(_busy || _mayNotSteer is not null)"
+                       Label="Resume the crawl when the server starts" />
+        </Tip>
         <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">
             @(_state.ResumeOnStart
                 ? "A restart resumes the crawl if it was running when the server stopped."
@@ -273,34 +275,37 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
            database building that nothing here can take back. *@
         @foreach (var tier in Tiers)
         {
-            <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="@_busy"
-                       StartIcon="@Icons.Material.Filled.Refresh"
-                       Class="abom-requeue abom-requeue-tier"
-                       OnClick="@(() => Requeue(tier))"
-                       title="@RequeueHint(tier)">
-                @($"{tier} ({TierOf(tier).Analyzed:N0})")
-            </MudButton>
+            <Tip Text="@(_mayNotSteer ?? RequeueHint(tier))">
+                <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="@(_busy || _mayNotSteer is not null)"
+                           StartIcon="@Icons.Material.Filled.Refresh"
+                           Class="abom-requeue abom-requeue-tier"
+                           OnClick="@(() => Requeue(tier))">
+                    @($"{tier} ({TierOf(tier).Analyzed:N0})")
+                </MudButton>
+            </Tip>
         }
         @* No count on this one, deliberately: how much is out of date is only knowable by
            resolving the bound packs through CodeQL, and doing that on every poll would spend a
            subprocess a minute to price a button. *@
-        <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="@_busy"
-                   StartIcon="@Icons.Material.Filled.Refresh"
-                   Class="abom-requeue abom-requeue-stale"
-                   OnClick="RequeueStale"
-                   title="Re-analyze only what has not been analyzed by the packs and CodeQL version currently in use. Cheaper than a tier: everything already on record is left alone. How much that is has to be worked out by resolving the packs, so it is reported after it runs rather than before.">
-            out of date
-        </MudButton>
+        <Tip Text="@(_mayNotSteer ?? "Re-analyze only what has not been analyzed by the packs and CodeQL version currently in use. Cheaper than a tier: everything already on record is left alone. How much that is has to be worked out by resolving the packs, so it is reported after it runs rather than before.")">
+            <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="@(_busy || _mayNotSteer is not null)"
+                       StartIcon="@Icons.Material.Filled.Refresh"
+                       Class="abom-requeue abom-requeue-stale"
+                       OnClick="RequeueStale">
+                out of date
+            </MudButton>
+        </Tip>
         @* Only on request: Git reports a missing credential and a deleted repository alike, so
            only the operator knows that access changed. *@
-        <MudButton Size="Size.Small" Variant="Variant.Text"
-                   Disabled="@(_busy || _state.Count("unavailable") == 0)"
-                   StartIcon="@Icons.Material.Filled.Refresh"
-                   Class="abom-requeue abom-requeue-unavailable"
-                   OnClick="RetryUnavailable" data-abom-retry-unavailable
-                   title="Try again to fetch what could not be fetched, after fixing access. Nothing retries it on its own. A reference that names no repository, such as one built from an expression, stays unavailable.">
-            @($"unavailable ({_state.Count("unavailable"):N0})")
-        </MudButton>
+        <Tip Text="@(_mayNotSteer ?? "Try again to fetch what could not be fetched, after fixing access. Nothing retries it on its own. A reference that names no repository, such as one built from an expression, stays unavailable.")">
+            <MudButton Size="Size.Small" Variant="Variant.Text"
+                       Disabled="@(_busy || _mayNotSteer is not null || _state.Count("unavailable") == 0)"
+                       StartIcon="@Icons.Material.Filled.Refresh"
+                       Class="abom-requeue abom-requeue-unavailable"
+                       OnClick="RetryUnavailable" data-abom-retry-unavailable>
+                @($"unavailable ({_state.Count("unavailable"):N0})")
+            </MudButton>
+        </Tip>
     </div>
 
     @* Its own line rather than beside the tier buttons: a field that takes typing is a different
@@ -308,19 +313,20 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
     <div class="d-flex align-center gap-2 mt-1 abom-run-row abom-requeue-repo">
         <MudText Typo="Typo.caption" Class="mud-text-secondary abom-requeue-label">Or one repository</MudText>
         <MudTextField T="string" @bind-Value="_requeueRepo" Placeholder="owner/name"
-                      Immediate="true" Disabled="@_busy" Margin="Margin.Dense"
+                      Immediate="true" Disabled="@(_busy || _mayNotSteer is not null)" Margin="Margin.Dense"
                       Variant="Variant.Text" Class="abom-requeue-field"
                       Label="Repository to re-analyze" OnKeyDown="OnRequeueKey" />
         @* Ahead of the ranking, because someone who has just fixed something is asking for that
            one answer, and filing it behind nine hundred better-scored items refuses the request
            in all but name. *@
-        <MudButton Size="Size.Small" Variant="Variant.Text"
-                   Disabled="@(_busy || string.IsNullOrWhiteSpace(_requeueRepo))"
-                   StartIcon="@Icons.Material.Filled.Refresh" Class="abom-requeue"
-                   OnClick="RequeueRepository"
-                   title="Re-analyze the dependencies this repository names, ahead of everything else in the queue.">
-            Re-analyze
-        </MudButton>
+        <Tip Text="@(_mayNotSteer ?? "Re-analyze the dependencies this repository names, ahead of everything else in the queue.")">
+            <MudButton Size="Size.Small" Variant="Variant.Text"
+                       Disabled="@(_busy || _mayNotSteer is not null || string.IsNullOrWhiteSpace(_requeueRepo))"
+                       StartIcon="@Icons.Material.Filled.Refresh" Class="abom-requeue"
+                       OnClick="RequeueRepository">
+                Re-analyze
+            </MudButton>
+        </Tip>
         @if (_requeueNote is { } note)
         {
             <MudText Typo="Typo.caption" Class="mud-text-secondary">@note</MudText>
@@ -594,6 +600,10 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
         {
             _state = await Api.RequeueTierAsync(tier);
             await Load();
+        }
+        catch (Exception ex)
+        {
+            _requeueNote = ex.Message;
         }
         finally
         {

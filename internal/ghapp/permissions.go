@@ -153,18 +153,9 @@ var workerPermissions = PermissionSet{"contents": "read", "metadata": "read"}
 // installed on lends nothing: a public repository needs no token, and the installation that reads
 // public repositories would also read every private one it covers.
 func (a *App) RepositoryToken(ctx context.Context, owner, repo string) (string, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	id, err := a.installationFor(ctx, owner)
-	if errors.Is(err, ErrNotInstalled) {
+	token, _, err := a.tokenWith(ctx, owner, repo, workerPermissions, false)
+	if errors.Is(err, ErrNotInstalled) || errors.Is(err, errNotSelected) {
 		return "", nil
 	}
-	if err != nil {
-		return "", err
-	}
-	t, err := a.mint(ctx, id, owner, workerPermissions, repo, false)
-	if errors.Is(err, ErrNotInstalled) {
-		return "", nil
-	}
-	return t.token, err
+	return token, err
 }

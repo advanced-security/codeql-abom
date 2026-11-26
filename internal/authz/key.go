@@ -294,6 +294,11 @@ func (b Bundle) Open(e Envelope, at time.Time) (Statement, error) {
 // OpenLogged verifies an envelope as the log's entry at seq: signed by a key the bundle names that
 // had not retired before the log reached seq.
 func (b Bundle) OpenLogged(e Envelope, seq int64) (Statement, error) {
+	// A row can be inserted at a position of its own choosing, and one before the log's first would
+	// otherwise sit inside every retired key's trusted range.
+	if seq < 1 {
+		return Statement{}, fmt.Errorf("authz: entry %d is before the log begins", seq)
+	}
 	return open(e, func(id string) (*ecdsa.PublicKey, bool) { return b.trustedAt(id, seq) },
 		fmt.Sprintf("no signature verifies with a key not retired before entry %d", seq)+retiredSignNothing)
 }

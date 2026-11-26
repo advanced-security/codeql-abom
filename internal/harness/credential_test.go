@@ -151,12 +151,14 @@ func TestAnAppSessionStartsOnAFreshlyMintedToken(t *testing.T) {
 }
 
 // The agent reads what a repository and a prompt put in front of it, so its environment holds none
-// of the server's own secrets: the database's address and password, the identity provider's client
-// secret, the cloud credentials that read the object store or sign decisions, or the webhook secret.
+// of the server's own secrets: the database's address and password, a sign-in client secret, the
+// cloud credentials that read the object store or sign decisions, or the webhook secret. A secret
+// added later is named as one, and that is enough to keep it out.
 func TestASessionNeverInheritsTheServersSecrets(t *testing.T) {
 	secrets := map[string]string{
 		"DATABASE_URL": "postgres://abom:pw@db/abom", "ABOM_DB": "postgres://abom:pw@db/abom",
 		"ABOM_READ_REPLICA": "postgres://r:pw@replica/abom", "ABOM_OIDC_CLIENT_SECRET": "oidc-secret",
+		"ABOM_GITHUB_CLIENT_SECRET": "app-client-secret", "ABOM_NEXT_PROVIDER_SECRET": "unlisted",
 		"ABOM_WEBHOOK_SECRET": "hook-secret", "ABOM_AUTHZ_KMS_KEY": "arn:aws:kms:k",
 		"AWS_SECRET_ACCESS_KEY": "aws-secret", "AWS_CONTAINER_AUTHORIZATION_TOKEN": "pod-identity",
 	}

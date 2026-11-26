@@ -110,9 +110,10 @@ func differ(granted map[string]string) []string {
 	return out
 }
 
-// Open writes the export's files as one commit on a new branch off the default branch, and opens a
-// pull request from it; reused is a pull request already open from that branch, which answers for
-// the same bundle without writing anything. Nothing is merged: you do that, in that repository.
+// Open writes the export's files as one commit on the bundle's branch, made off the default branch
+// or moved forward where an earlier export left it, and opens a pull request from it; reused is a
+// pull request already open from that branch, which answers for the same bundle without writing
+// anything. Nothing is merged: you do that, in that repository.
 func (p *Publisher) Open(ctx context.Context, t Target, e Export) (url string, reused bool, err error) {
 	for _, f := range e.Files {
 		if !utf8.Valid(f.Content) {
@@ -144,7 +145,11 @@ func (p *Publisher) Open(ctx context.Context, t Target, e Export) (url string, r
 	}
 	switch err := c.do(ctx, http.MethodGet, repo+"/git/ref/heads/"+e.Branch, nil, nil); {
 	case err == nil:
-		// The branch is named after the bundle, so it already holds these files.
+		// Named after the bundle, the branch holds these files from an export whose pull request
+		// closed; its record names that export's decision, so this one's is committed on top.
+		if err := p.commit(ctx, c, repo, e.Branch, e); err != nil {
+			return "", false, err
+		}
 	case errors.Is(err, errNotFound):
 		if err := p.commit(ctx, c, repo, meta.DefaultBranch, e); err != nil {
 			return "", false, err
@@ -162,7 +167,8 @@ func (p *Publisher) Open(ctx context.Context, t Target, e Export) (url string, r
 	return pull.HTMLURL, false, nil
 }
 
-// commit writes the export's files as one commit off base, on the export's branch.
+// commit writes the export's files as one commit on top of base, and points the export's branch at
+// it: made from base when base is another branch, moved forward when base is the branch itself.
 func (p *Publisher) commit(ctx context.Context, c client, repo, base string, e Export) error {
 	var head struct {
 		Object struct {
@@ -194,6 +200,9 @@ func (p *Publisher) commit(ctx context.Context, c client, repo, base string, e E
 	if err := c.do(ctx, http.MethodPost, repo+"/git/commits",
 		map[string]any{"message": e.Title, "tree": tree.SHA, "parents": []string{head.Object.SHA}}, &made); err != nil {
 		return err
+	}
+	if base == e.Branch {
+		return c.do(ctx, http.MethodPatch, repo+"/git/refs/heads/"+e.Branch, map[string]any{"sha": made.SHA}, nil)
 	}
 	return c.do(ctx, http.MethodPost, repo+"/git/refs",
 		map[string]any{"ref": "refs/heads/" + e.Branch, "sha": made.SHA}, nil)

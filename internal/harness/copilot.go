@@ -268,15 +268,15 @@ func withoutGitHubTokens(env []string) []string {
 	})
 }
 
-// serverSecrets are what the server itself signs in with: its database, its identity provider, its
-// webhook and the cloud account its object store and decision key live in. The agent reads what a
-// repository and a prompt put in front of it, so none of them reaches it.
-var serverSecrets = []string{"DATABASE_URL", "ABOM_DB", "ABOM_READ_REPLICA", "ABOM_OIDC_CLIENT_SECRET",
-	"ABOM_WEBHOOK_SECRET", "ABOM_AUTHZ_KMS_KEY"}
+// serverSecrets are what the server itself signs in with whose names do not say so: its database
+// and the decision key. The agent reads what a repository and a prompt put in front of it, so none of
+// them reaches it, nor any variable named a secret, nor the cloud account the object store lives in.
+var serverSecrets = []string{"DATABASE_URL", "ABOM_DB", "ABOM_READ_REPLICA", "ABOM_AUTHZ_KMS_KEY"}
 
 func withoutServerSecrets(env []string) []string {
 	return without(env, func(name string) bool {
-		return strings.HasPrefix(strings.ToUpper(name), "AWS_") ||
+		upper := strings.ToUpper(name)
+		return strings.HasPrefix(upper, "AWS_") || strings.Contains(upper, "SECRET") ||
 			slices.ContainsFunc(serverSecrets, func(v string) bool { return strings.EqualFold(v, name) })
 	})
 }

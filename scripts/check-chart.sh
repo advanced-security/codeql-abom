@@ -59,9 +59,17 @@ oidc=(--set signIn.mode=oidc --set signIn.issuer=https://issuer.example --set si
 	--set signIn.clientSecretName=abom-oidc --set signIn.redirectUrl=https://abom.example/auth/callback)
 
 render default
+! grep -qE -- '-cpu-limit=$' "$out" || note "a pool with no CPU limit set renders an empty one"
 render eks "${filled[@]}"
 # The key's own region signs, which need not be the bucket's.
 grep -qF 'name: AWS_REGION, value: "eu-west-1"' "$out" || note "decisions are not signed in the KMS key's own region"
+# EKS Pod Identity hands a worker its credentials from the node's agent, inside the refused link-local range.
+grep -qF '169.254.170.23/32' "$out" || note "on EKS a worker cannot reach the Pod Identity agent for its credentials"
+# Numbers as a values file gives them: 0 lifts a Job's CPU cap, and a priority is written as an integer.
+render numbers --set-json workers.discovery.cpuLimit=0 --set-json priority.control=2000000
+for want in --worker-cpu-limit=0 'value: 2000000'; do
+	grep -qF -- "$want" "$out" || note "numeric values do not render $want"
+done
 render kind -f infra/tests/kind/values.yaml --set image.tag=dev-0123456789ab --set githubApp.secretName=abom-github-app
 github=(--set signIn.mode=github --set signIn.clientSecretName=abom-github-signin
 	--set signIn.redirectUrl=https://abom.example/auth/callback --set 'signIn.roleMap=acme/abom-operators=operator\,acme:owners=admin'
@@ -91,6 +99,6 @@ refuse "an ingress the network policy admits nothing to" "needs networkPolicy.we
 	--set ingress.enabled=true --set ingress.host=abom.example
 
 if [ $fail -eq 0 ]; then
-	echo "check-chart: the chart lints, renders 5 profiles and refuses 8"
+	echo "check-chart: the chart lints, renders 6 profiles and refuses 8"
 fi
 exit $fail

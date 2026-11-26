@@ -114,7 +114,7 @@ Usage of serve:
   -publisher-app-dir string
     	directory holding the GitHub App query exports open pull requests with (default: github-app-publisher beside --db; none there offers no export)
   -ql-mcp string
-    	command line that starts ql-mcp for authoring sessions (default "npx -y codeql-development-mcp-server@2.27.3")
+    	command line that starts ql-mcp for authoring sessions (default "npx -y codeql-development-mcp-server@<pinned>")
   -query string
     	single edges query to run instead of the stored per-tier suites
   -query-id string

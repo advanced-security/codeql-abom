@@ -122,6 +122,23 @@ public class CoverageResyncTests : AbomTestContext
         page.WaitForAssertion(() => Assert.True(page.Find("[data-abom-coverage-resync]").HasAttribute("disabled")));
     }
 
+    // An account is named as it is written, even when the note starts with it.
+    [Fact]
+    public void AResyncOfAnAccountAloneNamesItAsWritten()
+    {
+        AnswerWrite("api/discovery/resync", $$$"""
+            {"requeued":0,"queued":0,"waiting":0,"running":0,"namesNoRepository":0,"notFound":0,
+             "repositories":[],"owned":[],"expedited":0,"reread":[],
+             "relisted":["advanced-security"],"state":{{{DiscoveryStateBuilder.Drained().ToJson()}}}}
+            """);
+        var page = Coverage();
+        Input(page.Find("[data-abom-coverage-account-pick='advanced-security']")).Change(true);
+        page.Find("[data-abom-coverage-resync]").Click();
+
+        page.WaitForAssertion(() => Assert.Contains("advanced-security listed again in full",
+            page.Find("[data-abom-coverage-resync-note]").TextContent));
+    }
+
     // An account discovery could not list, or lists and cannot act on, holds no rows, so the grid
     // alone would say nothing about it. Coverage names it and why; one listed and confirmed, or
     // switched off, is not offered.

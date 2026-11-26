@@ -116,7 +116,7 @@ file paths. Reporting build-time work as though this organization ran it would o
 | **Missing** (from a full listing) | A declared repository the last full listing of its account did not name. No longer yours, and nothing removed for it; what only it reached is what the prune offers. Only a full listing can say it, and only one can say nothing is missing |
 | **Stuck** | Failed eight times or more. Still retried, waiting longer each time up to a day, and no longer holding its depth open |
 | **Needs access** | GitHub refused to show the repository to ABOM; installing the App on its owner, or adding the repository to the installation, heals it |
-| **Reference gone** | The reference names nothing any more: a deleted tag, branch or repository |
+| **Reference gone** | The repository answered and holds no such tag or branch any more. A deleted repository reads as **needs access**: GitHub answers the same for one it will not show |
 | **Resync** | Put what you chose back ahead of the ranking: rows read again, and declared accounts listed again in full |
 
 A reader must be able to tell "we have not looked" from "there was nothing to look at", because
@@ -168,7 +168,7 @@ reference stays on every count as written; what a lock selects is a second answe
 | Word | Means |
 | --- | --- |
 | **Signed in** | You reached ABOM through its identity provider, or through GitHub, and every request carries your session |
-| **Viewer**, **Analyst**, **Operator**, **Admin** | The four roles, each allowing what the one before it does and more. A control your role does not allow is offered disabled, naming the role it needs |
+| **Viewer**, **Analyst**, **Operator**, **Admin** | The four roles, each allowing what the one before it does and more. A control your role does not allow names the role it needs, disabled before you press it or refused when you do |
 | **Confirm** (a declaration) | Decide the declaration as it stands, under the same rules as saving it, and sign that decision |
 | **Not confirmed** | No recorded decision shows that saving the declaration was allowed, so discovery does not act on it |
 | **Decided by** | Who asked for a decision, by what they were called when they did. **Judged against** is the GitHub login whose roles a declaration's claims were weighed against, which is ABOM's own and need not be the same |

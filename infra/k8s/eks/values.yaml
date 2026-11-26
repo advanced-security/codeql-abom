@@ -29,10 +29,15 @@ signIn:
   redirectUrl: https://<host>/auth/callback
 
 # In ip target mode the ALB reaches the pod from its subnets; name them, and Prometheus's namespace
-# if one scrapes the probe port.
+# if one scrapes the probe port. A worker gets its pool's S3 credentials from the node's EKS Pod
+# Identity agent at a link-local address; the rest of that range, the instance metadata service
+# among it, stays refused. IRSA needs no rule: STS is reached over HTTPS.
 networkPolicy:
   webFrom:
     - ipBlock: {cidr: <alb-subnets-cidr>}
+  workerEgress:
+    - to: [{ipBlock: {cidr: 169.254.170.23/32}}, {ipBlock: {cidr: "fd00:ec2::23/128"}}]
+      ports: [{port: 80, protocol: TCP}]
 
 # An internal Application Load Balancer, terminating TLS with an ACM certificate.
 ingress:

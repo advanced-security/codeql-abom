@@ -212,7 +212,8 @@ func (s *Store) judgeClaims(accounts []DeclaredAccount, v Verification) ([]claim
 		}
 		return judgments, nil, nil
 	}
-	stored, err := s.OwnedScope()
+	// Only a declaration that verifies was judged; a row written around the decision point claims anew.
+	stored, _, err := s.VerifiedScope()
 	if err != nil {
 		return nil, nil, err
 	}

@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -117,5 +119,32 @@ func TestTheBundleDownloadsWithTheDigestItWasShownWith(t *testing.T) {
 	}
 	if cd := rec.Header().Get("Content-Disposition"); !strings.HasPrefix(cd, "attachment; filename=") || !strings.Contains(cd, ".tar.gz") {
 		t.Errorf("Content-Disposition = %q", cd)
+	}
+}
+
+// A query whose own file cannot be read has no bundle to download, which is said rather than served.
+// A symbolic link is listed as a query and refused as a component, since the bundle never follows one.
+func TestAQueryWhoseFileCannotBeReadHasNoBundleToDownload(t *testing.T) {
+	s, _ := newServer(t)
+	s.QueryDir = queryWorkspace(t, []string{"A"})
+	query := filepath.Join(s.QueryDir, "src", "A.ql")
+	body, err := os.ReadFile(query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	elsewhere := filepath.Join(t.TempDir(), "A.ql")
+	if err := os.WriteFile(elsewhere, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(query); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, query); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := get(t, s, "/api/queries/bundle?query=acme/a")
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "src/A.ql") {
+		t.Errorf("bundle of a query whose file is refused answered %d: %s", rec.Code, rec.Body.String())
 	}
 }
