@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -168,7 +169,7 @@ func TestARoleClaimOfOneStringGrantsItsRole(t *testing.T) {
 }
 
 // A callback that does not answer this browser's own login, or an ID token not issued for this
-// client, signs nobody in, and sends the browser back to the interface saying which it was.
+// client, signs nobody in, and sends the browser to the sign-in page saying which it was.
 func TestACallbackThatIsNotThisLoginsAnswerSignsNobodyIn(t *testing.T) {
 	t.Run("another state", func(t *testing.T) {
 		i := newIssuer(t)
@@ -182,7 +183,7 @@ func TestACallbackThatIsNotThisLoginsAnswerSignsNobodyIn(t *testing.T) {
 		}
 		w := httptest.NewRecorder()
 		a.Callback(w, r)
-		if w.Code != http.StatusFound || w.Header().Get("Location") != "/?signin=mismatch" || session(w.Result().Cookies()) != nil {
+		if w.Code != http.StatusFound || w.Header().Get("Location") != "/auth/?signin=mismatch" || session(w.Result().Cookies()) != nil {
 			t.Errorf("a forged state answered %d to %q with session %v", w.Code, w.Header().Get("Location"),
 				session(w.Result().Cookies()))
 		}
@@ -201,7 +202,7 @@ func TestACallbackThatIsNotThisLoginsAnswerSignsNobodyIn(t *testing.T) {
 		i.Audience = "some-other-app"
 		a := newAuthenticator(t, i)
 		w, cookies := signIn(t, a, i, "/")
-		if w.Header().Get("Location") != "/?signin=failed" || session(cookies) != nil {
+		if w.Header().Get("Location") != "/auth/?signin=failed" || session(cookies) != nil {
 			t.Errorf("a token for another client answered %d to %q and signed in", w.Code, w.Header().Get("Location"))
 		}
 	})
@@ -251,7 +252,7 @@ func TestASessionEndsAndCannotBeInvented(t *testing.T) {
 
 	_, cookies = signIn(t, a, i, "/")
 	c = session(cookies)
-	a.now = func() time.Time { return time.Now().Add(defaultSessionTTL + time.Minute) }
+	a.now = func() time.Time { return time.Now().Add(oidcSessionTTL + time.Minute) }
 	if _, ok := a.User(asked(c)); ok {
 		t.Error("a session outlived its lifetime")
 	}
@@ -276,5 +277,185 @@ func TestAttemptsToSignInAreHeldWithinABound(t *testing.T) {
 	}
 	if _, cookies := signIn(t, a, i, "/"); session(cookies) == nil {
 		t.Error("the newest attempt did not complete after the bound was reached")
+	}
+}
+
+// The sign-in page is where a browser without a session is told how signing in went: signed out,
+// or which kind of refusal, never the provider's words, which a crafted callback could choose. It
+// offers to sign in and never does so itself, or signing out would last only until the provider
+// answered again.
+func TestTheSignInPageSaysHowSigningInWentAndOffersToSignIn(t *testing.T) {
+	i := newIssuer(t)
+	a := newAuthenticator(t, i)
+	for query, want := range map[string]string{
+		"":                             "Sign in to use ABOM.",
+		"?signin=signed-out":           "You signed out of ABOM.",
+		"?signin=not-started":          "That sign-in was not started in this browser",
+		"?signin=mismatch":             "did not answer the one this browser started",
+		"?signin=refused":              "refused the sign-in",
+		"?signin=failed":               "can see why in its log",
+		"?signin=%3Cscript%3E":         "Sign in to use ABOM.",
+		"?signin=refused&x=%3Cmarquee": "refused the sign-in",
+	} {
+		w := httptest.NewRecorder()
+		a.Page(w, httptest.NewRequest(http.MethodGet, "/auth/"+query, nil))
+		body := w.Body.String()
+		if w.Code != http.StatusOK || !strings.HasPrefix(w.Header().Get("Content-Type"), "text/html") ||
+			w.Header().Get("Cache-Control") != "no-store" {
+			t.Errorf("/auth/%s answered %d %q %q", query, w.Code, w.Header().Get("Content-Type"), w.Header().Get("Cache-Control"))
+		}
+		if !strings.Contains(body, want) || strings.Contains(body, "<script") || strings.Contains(body, "marquee") {
+			t.Errorf("/auth/%s says %q; want %q and nothing from the address", query, body, want)
+		}
+		if !strings.Contains(body, `href="/auth/login?return=%2F"`) || strings.Contains(body, "http-equiv") {
+			t.Errorf("/auth/%s does not offer to sign in, or signs in by itself: %s", query, body)
+		}
+	}
+}
+
+// Who signed somebody in is said alongside who they are, so the interface can tell them.
+func TestASignedInPersonSaysWhichProviderSignedThemIn(t *testing.T) {
+	i := newIssuer(t)
+	i.People["user-1"] = ada(map[string]any{"roles": []string{"ABOM.Viewer"}})
+	a := newAuthenticator(t, i)
+	_, cookies := signIn(t, a, i, "/")
+	issuer, _ := url.Parse(i.srv.URL)
+	if u, _ := a.User(asked(session(cookies))); u.Provider != issuer.Host {
+		t.Errorf("Provider = %q; want the issuer's host %q", u.Provider, issuer.Host)
+	}
+}
+
+// An identity provider's app roles are said with the ABOM role each maps to; one that maps to
+// none is kept among what was claimed and grants nothing.
+func TestEachClaimedAppRoleSaysWhichRoleItGranted(t *testing.T) {
+	i := newIssuer(t)
+	i.People["user-1"] = ada(map[string]any{"roles": []string{"ABOM.Viewer", "ABOM.Operator", "Unrelated.Role"}})
+	a := newAuthenticator(t, i)
+	_, cookies := signIn(t, a, i, "/")
+
+	u, _ := a.User(asked(session(cookies)))
+
+	want := []Grant{{By: "ABOM.Viewer", Role: authz.RoleViewer}, {By: "ABOM.Operator", Role: authz.RoleOperator}}
+	if !slices.Equal(u.Grants, want) || len(u.Claimed) != 3 {
+		t.Errorf("Grants = %+v, Claimed = %v; want %+v of three claimed", u.Grants, u.Claimed, want)
+	}
+}
+
+// An identity provider's roles are read once, from the ID token at sign-in, so a session through one
+// lasts an hour: a role it takes away is gone within that. GitHub sign-in reads memberships again
+// before a change, so its session may last the working day.
+func TestASessionThroughAnIdentityProviderLastsAnHour(t *testing.T) {
+	i := newIssuer(t)
+	i.People["user-1"] = ada(map[string]any{"roles": []string{"ABOM.Operator"}})
+	a := newAuthenticator(t, i)
+	_, cookies := signIn(t, a, i, "/")
+	c := session(cookies)
+
+	a.now = func() time.Time { return time.Now().Add(59 * time.Minute) }
+	if _, ok := a.User(asked(c)); !ok {
+		t.Fatal("a session ended before its hour")
+	}
+	a.now = func() time.Time { return time.Now().Add(61 * time.Minute) }
+	if _, ok := a.User(asked(c)); ok {
+		t.Error("a session through an identity provider outlived its hour")
+	}
+
+	g := &gitHub{person: octocat, roles: map[string]string{"acme|octocat": "member"}}
+	gh, now := newGitHubSignIn(t, g, map[string]string{"acme": authz.RoleViewer})
+	gc := signInWithGitHub(t, gh)
+	for range 7 {
+		*now = now.Add(time.Hour)
+		if _, ok := gh.User(asked(gc)); !ok {
+			t.Fatalf("a GitHub session in use ended %s in, before the working day did", now.Sub(time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)))
+		}
+	}
+}
+
+// kept stands in for the store: sessions by digest, as the store holds them.
+type kept struct {
+	records map[string][]byte
+	expires map[string]time.Time
+}
+
+func newKept() *kept { return &kept{records: map[string][]byte{}, expires: map[string]time.Time{}} }
+
+func (k *kept) PutSession(digest string, record []byte, _, expires time.Time) error {
+	k.records[digest], k.expires[digest] = append([]byte(nil), record...), expires
+	return nil
+}
+
+func (k *kept) Session(digest string, now time.Time) ([]byte, bool, error) {
+	r, ok := k.records[digest]
+	if !ok || now.After(k.expires[digest]) {
+		return nil, false, nil
+	}
+	return r, true, nil
+}
+
+func (k *kept) DeleteSession(digest string) error {
+	delete(k.records, digest)
+	delete(k.expires, digest)
+	return nil
+}
+
+func keptAuthenticator(t *testing.T, i *issuer, sessions SessionStore) *Authenticator {
+	t.Helper()
+	a, err := New(context.Background(), Config{Issuer: i.srv.URL, ClientID: "abom", ClientSecret: "s3cret",
+		RedirectURL: "https://abom.example/auth/callback", Sessions: sessions})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
+
+// A restart or a rollout signs nobody out: the session is kept where the next server reads it, by
+// the digest of its cookie, so the cookie itself is nowhere but in the browser that holds it.
+func TestASessionOutlivesTheServerThatSignedItIn(t *testing.T) {
+	i := newIssuer(t)
+	i.People["user-1"] = ada(map[string]any{"roles": []string{"ABOM.Operator"}})
+	sessions := newKept()
+	_, cookies := signIn(t, keptAuthenticator(t, i, sessions), i, "/")
+	c := session(cookies)
+
+	next := keptAuthenticator(t, i, sessions)
+	u, ok := next.User(asked(c))
+	if !ok || u.Username != "ada@example.com" || u.Role != authz.RoleOperator {
+		t.Fatalf("after a restart User = %+v, %v; want Ada as an operator", u, ok)
+	}
+	for digest, record := range sessions.records {
+		if strings.Contains(digest, c.Value) || strings.Contains(string(record), c.Value) {
+			t.Errorf("the session cookie is kept in the store: %q %s", digest, record)
+		}
+	}
+
+	out := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
+	r.AddCookie(c)
+	next.Logout(out, r)
+	if len(sessions.records) != 0 {
+		t.Errorf("signing out left %d sessions kept", len(sessions.records))
+	}
+	if _, ok := keptAuthenticator(t, i, sessions).User(asked(c)); ok {
+		t.Error("a session signed out on one server was honored by the next")
+	}
+}
+
+// A session nobody has used for two hours ends, whatever its lifetime; one in use carries on.
+func TestASessionUnusedForTwoHoursEnds(t *testing.T) {
+	g := &gitHub{person: octocat, roles: map[string]string{"acme|octocat": "member"}}
+	a, now := newGitHubSignIn(t, g, map[string]string{"acme": authz.RoleViewer})
+	c := signInWithGitHub(t, a)
+
+	*now = now.Add(110 * time.Minute)
+	if _, ok := a.User(asked(c)); !ok {
+		t.Fatal("a session in use ended")
+	}
+	*now = now.Add(110 * time.Minute)
+	if _, ok := a.User(asked(c)); !ok {
+		t.Fatal("a session used within the last two hours ended")
+	}
+	*now = now.Add(121 * time.Minute)
+	if _, ok := a.User(asked(c)); ok {
+		t.Error("a session unused for more than two hours was honored")
 	}
 }

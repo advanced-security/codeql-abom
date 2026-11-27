@@ -6,6 +6,7 @@
 @inject AbomApi Api
 @inject FollowService Follow
 @inject RoleService Roles
+@inject DeclarationService Declaration
 
 @* Starting the crawl and deciding what it runs, in one box. Per-dependency progress is read where
    the data is — the Inventory's Coverage unit and the Explorer — so what is here is only what the
@@ -25,12 +26,22 @@
                     of both.
                 </span>
             }
+            else if (objective.Progress.Count == 0 && _unconfirmed && _declared is { Count: > 0 })
+            {
+                @* Declared and listed, but honored nowhere until confirmed: "nothing enumerated"
+                   would deny the listing on the Accounts tab. *@
+                <span data-abom-objective-empty>
+                    <b>Nothing is outstanding</b> because your declaration is @DeclarationWords.NotConfirmed:
+                    until it is, nothing counts as yours and the crawl does not act on it. This is not a
+                    statement about coverage.
+                </span>
+            }
             else if (objective.Progress.Count == 0)
             {
                 @* An empty closure and a drained one both report nothing outstanding. Reading
                    the first as the second announces complete coverage of nothing, which is the
                    one claim a first run must not make. *@
-                <span>
+                <span data-abom-objective-empty>
                     <b>Nothing has been enumerated yet</b>, so there is nothing to be outstanding.
                     This is not a statement about coverage.
                 </span>
@@ -233,7 +244,7 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
                     @if (LinkToSettings)
                     {
                         <span>
-                            Declare one in <MudLink Href="/settings"
+                            Declare one in <MudLink Href="/settings?tab=accounts"
                                                      title="Open Settings to declare an account and enumerate its repositories.">Settings</MudLink> to list
                             the repositories underneath it.
                         </span>
@@ -243,6 +254,13 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
                         <span>Declare one above to list the repositories underneath it.</span>
                     }
                     Anything already in the queue arrived as a dependency.
+                </span>
+            }
+            else if (_unconfirmed)
+            {
+                <span>
+                    @string.Join(", ", declared.Select(a => a.Owner)) declared, and @DeclarationWords.NotConfirmed:
+                    nothing under it counts as yours until it is.
                 </span>
             }
             else if (TierOf("owned").Total == 0)
@@ -275,12 +293,13 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
            database building that nothing here can take back. *@
         @foreach (var tier in Tiers)
         {
-            <Tip Text="@(_mayNotSteer ?? RequeueHint(tier))">
-                <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="@(_busy || _mayNotSteer is not null)"
+            var waiting = tier == "owned" && _unconfirmed;
+            <Tip Text="@(_mayNotSteer ?? (waiting ? OwnedWaits : RequeueHint(tier)))">
+                <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="@(_busy || _mayNotSteer is not null || waiting)"
                            StartIcon="@Icons.Material.Filled.Refresh"
                            Class="abom-requeue abom-requeue-tier"
                            OnClick="@(() => Requeue(tier))">
-                    @($"{tier} ({TierOf(tier).Analyzed:N0})")
+                    @(waiting ? $"{tier} ({DeclarationWords.NotConfirmed})" : $"{tier} ({TierOf(tier).Analyzed:N0})")
                 </MudButton>
             </Tip>
         }
@@ -403,6 +422,7 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
 
     private DiscoveryState _state = new();
     private IReadOnlyList<DeclaredAccount>? _declared;
+    private bool _unconfirmed;
     private SuiteBinding? _suites;
     private Objective? _objective;
     private PropertiesView? _properties;
@@ -496,10 +516,10 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
     }
 
     private static string UnreachedSentence(int unreached) => unreached == 1
-        ? "1 queued for a repository nothing you own reaches is not claimed: the crawl does not "
-          + "analyze it, and it keeps no depth open. Pruning, in Settings, removes it."
-        : $"{unreached:N0} queued for repositories nothing you own reaches are not claimed: the crawl "
-          + "does not analyze them, and they keep no depth open. Pruning, in Settings, removes them.";
+        ? "1 queued for a repository nothing you own reaches is set aside: the crawl does not "
+          + "analyze it, so nothing it uses is followed. Pruning, in Settings → Data, removes it."
+        : $"{unreached:N0} queued for repositories nothing you own reaches are set aside: the crawl "
+          + "does not analyze them, so nothing they use is followed. Pruning, in Settings → Data, removes them.";
 
     private static string Seconds(long millis) => (millis / 1000.0).ToString("N1");
 
@@ -583,6 +603,9 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
             : string.Empty;
 
     private int BoundCount(string tier) => SuiteBindingText.BoundTo(_suites, tier).Count;
+
+    private const string OwnedWaits = "Your declaration is " + DeclarationWords.NotConfirmed +
+        ", so nothing counts as yours to re-analyze until it is. Confirm it in Settings → Accounts.";
 
     private string RequeueHint(string tier) => tier switch
     {
@@ -735,6 +758,7 @@ else if (!string.IsNullOrEmpty(_state.Status.LastError))
     {
         _state = await Api.GetDiscoveryAsync();
         _declared = await Api.GetOwnedScopeAsync();
+        _unconfirmed = DeclarationService.Unconfirmed(await Declaration.ReadAsync());
         _suites = await Api.GetTierSuitesAsync();
         _objective = await Api.GetObjectiveAsync();
         _properties = await Api.GetPropertiesAsync();

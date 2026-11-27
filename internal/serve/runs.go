@@ -39,6 +39,7 @@ func (s *Server) startRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "the request body is not the expected JSON")
 		return
 	}
+	body.By = s.actor(r, body.By)
 	held := body.Held != nil && *body.Held
 	if body.Held == nil && len(body.Queries) > 0 {
 		suggested, err := s.Store.SuggestFindings(body.Queries)
@@ -181,6 +182,7 @@ func (s *Server) convertHeld(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	body.By = s.actor(r, body.By)
 	converted, err := s.Store.ConvertHeld(id, body.Repository, body.Results, body.By)
 	switch {
 	case errors.Is(err, store.ErrNoRunMember):

@@ -36,7 +36,7 @@ func headDecision(t *testing.T, s *store.Store, authzDir string) (authz.Decision
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, err := bundle.DecisionOf(head)
+	d, err := bundle.DecisionOf(head, s, nil)
 	if err != nil {
 		t.Fatalf("the head of the log is not a decision that verifies: %v", err)
 	}

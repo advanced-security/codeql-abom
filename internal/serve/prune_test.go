@@ -3,6 +3,7 @@ package serve
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/advanced-security/codeql-abom/internal/store"
@@ -199,6 +200,23 @@ func TestAskingWhatAPruneCostsBeforeAnythingIsEnumerated(t *testing.T) {
 	// unmeasured corpus is a false reassurance rather than a missing one.
 	if got.Removed.Nodes != 0 || got.Removed.Edges != 0 || got.Removed.Repositories != 0 {
 		t.Errorf("removal counted against an empty closure: %+v", got.Removed)
+	}
+}
+
+// Declared and listed, but not confirmed: the closure is empty because nothing counts as yours yet,
+// and saying nothing was enumerated denies the listing Settings shows beside it.
+func TestAPruneUnderAnUnconfirmedDeclarationSaysWhyItsClosureIsEmpty(t *testing.T) {
+	srv, s := newServer(t)
+	declareOcto(t, s)
+	if _, err := s.DB().Exec(`UPDATE abom_owned_scope SET decision_digest = NULL`); err != nil {
+		t.Fatal(err)
+	}
+
+	got := decode[PruneView](t, get(t, srv, "/api/prune"))
+
+	if !strings.Contains(got.Unavailable, "not confirmed") || strings.Contains(got.Unavailable, "enumerated") ||
+		strings.Contains(got.Unavailable, "closure") {
+		t.Errorf("unavailable = %q; want it to say the declaration is not confirmed", got.Unavailable)
 	}
 }
 

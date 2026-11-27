@@ -6,6 +6,7 @@
 @inject InstanceService Instance
 @inject ThemeService Theme
 @inject AccountService Accounts
+@inject DeclarationService Declaration
 @inject RoleService Roles
 @inject RunDraft Draft
 @inject IJSRuntime Js
@@ -1470,9 +1471,12 @@ else if (_unit != UnitFindings && _countedUnit == _unit)
 
     public void Dispose()
     {
+        _disposed = true;
         Nav.LocationChanged -= OnLocationChanged;
         _ = _rows?.DisposeAsync();
     }
+
+    private bool _disposed;
 
     // The repositories a run drafted here is over; the versions are the shared draft's.
     private bool _choosing;
@@ -1595,8 +1599,15 @@ else if (_unit != UnitFindings && _countedUnit == _unit)
         {
             return;
         }
-        StateHasChanged();
-        await Reload();
+        try
+        {
+            StateHasChanged();
+            await Reload();
+        }
+        catch (ObjectDisposedException) when (_disposed)
+        {
+            // Left before the reload answered: there is no page to say anything on.
+        }
     }
 
     protected override async Task OnInitializedAsync()
@@ -1679,6 +1690,7 @@ else if (_unit != UnitFindings && _countedUnit == _unit)
         StateHasChanged();
         _coverage = await Api.GetFrontierAsync(_coverageState, top: CoverageCap);
         _coverageAccounts = await Api.ReadOwnedScopeAsync();
+        _coverageUnconfirmed = DeclarationService.Unconfirmed(await Declaration.ReadAsync());
         _shown = _coverage.Count;
         _total = _coverage.Count;
         _countedUnit = UnitCoverage;
@@ -1693,6 +1705,7 @@ else if (_unit != UnitFindings && _countedUnit == _unit)
     }
 
     private IReadOnlyList<DeclaredAccount>? _coverageAccounts = [];
+    private bool _coverageUnconfirmed;
     private readonly Dictionary<string, FrontierItem> _picked = [];
     private readonly HashSet<string> _pickedAccounts = new(StringComparer.OrdinalIgnoreCase);
     private bool _resyncing;
@@ -1736,7 +1749,7 @@ else if (_unit != UnitFindings && _countedUnit == _unit)
         (a.Contradicted || a.Enumeration is not { } marks || marks.Failures.Count > 0 ||
          (string.IsNullOrEmpty(marks.ListedAt) && string.IsNullOrEmpty(marks.SweptAt))));
 
-    private static string ListingWords(DeclaredAccount account)
+    private string ListingWords(DeclaredAccount account)
     {
         var words = new List<string>();
         if (account.Contradicted)
@@ -1751,7 +1764,9 @@ else if (_unit != UnitFindings && _countedUnit == _unit)
             (f.FailedAt.Length > 0 ? $" {TimeText.DayAndTime(f.FailedAt)}" : "") + $": {f.Reason}"));
         if (words.Count == 0)
         {
-            return "not listed yet; discovery lists it on its next cycle.";
+            return _coverageUnconfirmed
+                ? $"not listed: your declaration is {DeclarationWords.NotConfirmed}, so discovery does not act on it until it is."
+                : "not listed yet; discovery lists it when it next runs.";
         }
         return string.Join("; ", words);
     }

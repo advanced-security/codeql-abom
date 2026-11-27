@@ -1,6 +1,6 @@
 # ABOM Tutorials
 
-Use the collapsible **ABOM Tutorials** section above the home page's scope cards or in Settings.
+Use the collapsible **ABOM Tutorials** section above the home page's scope cards.
 Each title describes the lesson in its tooltip and starts it when clicked. The play icon starts
 a lesson; the restart icon repeats a completed one. An unfinished lesson explicitly resumes at
 its previous step, including its selected example, while this tab remains open.

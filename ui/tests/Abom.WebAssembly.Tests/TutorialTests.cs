@@ -79,14 +79,17 @@ public class TutorialTests : AbomTestContext
         Assert.NotNull(cut.Find("[data-abom-crawl]"));
     }
 
+    // The list sat above every Settings tab, pushing what you came to change off the screen. It is
+    // Home's, where somebody arrives to learn.
     [Fact]
-    public void SettingsOffersTheSameTutorialListAsHome()
+    public void SettingsLeavesTheTutorialListToHome()
     {
         Answer("api/accounts", """{"authenticated":true,"login":"operator","accounts":[]}""");
         Answer("api/owned-scope", "[]");
         var cut = Render<Pages.Settings>();
 
-        Assert.Equal(6, cut.FindAll("[data-abom-tutorial-title]").Count);
+        cut.WaitForElement("[data-abom-tabs]");
+        Assert.Empty(cut.FindAll("[data-abom-tutorial-title]"));
     }
 
     [Fact]

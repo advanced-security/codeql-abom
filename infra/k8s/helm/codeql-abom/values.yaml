@@ -65,7 +65,7 @@ signIn:
   issuer: ""
   clientId: ""
   rolesClaim: ""
-  # This deployment's /auth/callback as registered with the provider, or as a callback URL of the
+  # This deployment's /auth/callback as registered with the provider, or as a redirect URI of the
   # reading App for github.
   redirectUrl: ""
   # oidc: claim values as ABOM roles, such as Readers=viewer,Ops=operator; empty reads ABOM.Viewer

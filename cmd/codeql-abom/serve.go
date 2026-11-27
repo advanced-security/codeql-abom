@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -607,6 +608,17 @@ func parseServeArgs(args []string, stderr io.Writer) (serveConfig, error) {
 	if *diagnostics && signIn.mode != "" && signIn.mode != "none" {
 		return serveConfig{}, errors.New("--diagnostics serves the heap, which holds sessions and the provider's " +
 			"secret; it is for this machine only and cannot be combined with --auth")
+	}
+	// Without sign-in nobody is asked who they are, so the interface listens on loopback alone.
+	if signIn.mode == "" || signIn.mode == "none" {
+		if host, _, err := net.SplitHostPort(*addr); err != nil || !isLoopbackHost(host) {
+			return serveConfig{}, fmt.Errorf("--addr %s is reachable beyond this machine, and without sign-in "+
+				"anyone who reaches it may change anything; listen on loopback, or have people sign in with --auth", *addr)
+		}
+		if *allowRemote {
+			return serveConfig{}, errors.New("--allow-remote-control admits requests from beyond this machine, and " +
+				"without sign-in anyone who reaches it may change anything; have people sign in with --auth")
+		}
 	}
 	if *readReplica != "" && (!store.IsPostgresTarget(*dbPath) || !store.IsPostgresTarget(*readReplica)) {
 		return serveConfig{}, errors.New("read replicas require PostgreSQL primary and standby URLs")

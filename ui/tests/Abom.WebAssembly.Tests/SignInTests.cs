@@ -44,6 +44,18 @@ public class SignInTests : AbomTestContext
         Assert.NotEmpty(menu.FindAll("[data-abom-sign-out]"));
     }
 
+    // An administrator may do everything, which a list of every operation says less clearly.
+    [Fact]
+    public void TheMenuTellsAnAdministratorTheirRoleLetsThemDoEverything()
+    {
+        Answer("api/me", GitHubAdmin);
+
+        var (menu, _) = Account();
+
+        Assert.Contains("Every operation ABOM has", menu.Find("[data-abom-account-may]").TextContent);
+        Assert.Empty(menu.FindAll("[data-abom-account-may] li"));
+    }
+
     [Fact]
     public void APersonWithNoRoleIsToldSo()
     {
@@ -78,7 +90,7 @@ public class SignInTests : AbomTestContext
         menu.Find("[data-abom-sign-out]").Click();
 
         menu.WaitForAssertion(() => Assert.Contains(Sent, r => r.Method == "POST" && r.Url.EndsWith("auth/logout")));
-        Assert.Equal("http://localhost/", navigation.Uri);
+        Assert.Equal("http://localhost/auth/?signin=signed-out", navigation.Uri);
     }
 
     // A session that did not end is not reported as one that did.
@@ -110,16 +122,133 @@ public class SignInTests : AbomTestContext
         Assert.Empty(cut.FindAll("[data-the-page]"));
     }
 
-    // A sign-in the server refused comes back to the interface, which says which kind it was.
+    // Until ABOM has said who is asking, no page is drawn: one drawn first fetches figures the server
+    // may refuse, and shows them as none.
     [Fact]
-    public void ARefusedSignInIsExplainedOnArrival()
+    public void NoPageIsDrawnUntilABOMHasSaidWhoIsAsking()
     {
-        Answer("api/me", """{"mode":"signed-in","user":null,"may":[]}""");
-        Services.GetRequiredService<NavigationManager>().NavigateTo("/?signin=refused");
+        var release = Withhold("api/me");
+        Answer("api/me", Operator);
 
         var cut = Render<Shared.AccessState>(p => p.AddChildContent("<p data-the-page>page</p>"));
 
-        Assert.Contains("refused the sign-in", cut.WaitForElement("[data-abom-signin-refused='refused']").TextContent);
+        Assert.Empty(cut.FindAll("[data-the-page]"));
+        release();
+        cut.WaitForElement("[data-the-page]");
+    }
+
+    // Who is asking could not be read: the page is drawn, and says for itself what it could not read.
+    [Fact]
+    public void APageIsDrawnWhenWhoIsAskingCannotBeRead()
+    {
+        Refuse("api/me", HttpStatusCode.InternalServerError, "the store is unavailable");
+
+        var cut = Render<Shared.AccessState>(p => p.AddChildContent("<p data-the-page>page</p>"));
+
+        cut.WaitForElement("[data-the-page]");
+    }
+
+    private const string GitHubAdmin = """
+        {"mode":"signed-in","user":{"id":"https://github.com#583231","name":"The Octocat","username":"octocat","role":"admin",
+          "claimed":["acme","acme:owners"],"grants":[{"by":"acme","role":"viewer"},{"by":"acme:owners","role":"admin"}],
+          "provider":"GitHub","expires":"2026-11-25T20:00:00Z"},
+         "may":["abom/declare-scope","abom/configure"],"needs":{"abom/declare-scope":"operator","abom/configure":"admin"}}
+        """;
+
+    // The bar says who is signed in, by the name the provider knows them by, and under which role,
+    // without opening anything: initials alone did not tell a person the account was theirs.
+    [Fact]
+    public void TheBarSaysWhoIsSignedInAndUnderWhichRole()
+    {
+        Answer("api/me", GitHubAdmin);
+
+        var bar = Render<Shared.SignedIn>();
+
+        Assert.Equal("octocat", bar.WaitForElement("[data-abom-account-login]").TextContent.Trim());
+        Assert.Equal("admin", bar.Find("[data-abom-account-bar-role]").TextContent.Trim());
+    }
+
+    // Settings says who you are to ABOM: the account and who vouched for it, the role and what
+    // granted it, what the role lets you do, when the session ends, and that ABOM reads GitHub as
+    // its App rather than as you.
+    [Fact]
+    public void SettingsSaysWhoYouAreToABOM()
+    {
+        Answer("api/me", GitHubAdmin);
+        var app = new Models.AccountIdentity { Authenticated = true, Login = "abom-acme[bot]", Host = "github.com", IdentityBy = "app", ReadByApp = true };
+
+        var cut = Render<Shared.WhoYouAre>(p => p.Add(x => x.Reader, app));
+
+        var you = cut.WaitForElement("[data-abom-you='signed-in']").TextContent;
+        Assert.Contains("The Octocat", you);
+        Assert.Contains("octocat", you);
+        Assert.Contains("GitHub", cut.Find("[data-abom-you-provider]").TextContent);
+        Assert.Contains("admin", cut.Find("[data-abom-you-role]").TextContent);
+        var granted = cut.FindAll("[data-abom-you-grant]").Select(g => g.TextContent.Trim()).ToList();
+        Assert.Equal(["owner of acme: admin", "member of acme: viewer"], granted);
+        Assert.Contains("the highest applies", cut.Find("[data-abom-you-granted]").TextContent);
+        Assert.Contains("every operation", cut.Find("[data-abom-you-may]").TextContent);
+        Assert.NotEmpty(cut.FindAll("[data-abom-you-expires]"));
+        Assert.Contains("its own GitHub App, abom-acme[bot]", you);
+    }
+
+    // Below admin, what the role allows is listed, and what it does not is named with the role it needs.
+    [Fact]
+    public void ARoleBelowAdminSaysWhatNeedsAHigherOne()
+    {
+        Answer("api/me", """
+            {"mode":"signed-in","user":{"id":"https://github.com#1","name":"","username":"vera","role":"viewer",
+              "claimed":["acme"],"grants":[{"by":"acme","role":"viewer"}],"provider":"GitHub"},
+             "may":["abom/saved-view"],"needs":{"abom/saved-view":"viewer","abom/declare-scope":"operator","abom/configure":"admin"}}
+            """);
+
+        var cut = Render<Shared.WhoYouAre>();
+
+        Assert.Contains("Save named views", cut.WaitForElement("[data-abom-you-may]").TextContent);
+        var higher = cut.Find("[data-abom-you-needs]").TextContent;
+        Assert.Contains("Declare the accounts ABOM covers (operator)", higher);
+        Assert.Contains("Change how ABOM is configured (admin)", higher);
+        Assert.DoesNotContain("Save named views", higher);
+    }
+
+    // An identity provider's app roles and groups are its own words, and are shown as they came.
+    [Fact]
+    public void WhatAnIdentityProviderGrantedIsShownInItsWords()
+    {
+        Answer("api/me", Operator.Replace("\"role\":\"operator\"", "\"role\":\"operator\",\"claimed\":[\"ABOM.Operator\",\"Other\"],\"grants\":[{\"by\":\"ABOM.Operator\",\"role\":\"operator\"}],\"provider\":\"login.example.com\""));
+
+        var cut = Render<Shared.WhoYouAre>();
+
+        Assert.Equal("ABOM.Operator: operator", cut.WaitForElement("[data-abom-you-grant]").TextContent.Trim());
+        Assert.Contains("login.example.com", cut.Find("[data-abom-you-provider]").TextContent);
+    }
+
+    // With sign-in off ABOM listens on this machine alone and cannot tell who you are, so Settings
+    // says both, and that every change is recorded as this machine's.
+    [Fact]
+    public void WithoutSignInSettingsSaysOnlyThisMachineReachesIt()
+    {
+        Answer("api/me", """{"mode":"local","user":null,"may":[]}""");
+
+        var cut = Render<Shared.WhoYouAre>();
+
+        var local = cut.WaitForElement("[data-abom-you='local']").TextContent;
+        Assert.Contains("Sign-in is off", local);
+        Assert.Contains("only on this machine's loopback address", local);
+        Assert.Contains("recorded as made at this machine", local);
+        Assert.DoesNotContain("Anybody", local);
+    }
+
+    // Unread is not nobody: Settings says it could not tell, rather than that sign-in is off.
+    [Fact]
+    public void WhoYouAreUnreadIsSaidToBeUnknown()
+    {
+        Refuse("api/me", HttpStatusCode.InternalServerError, "the store is unavailable");
+
+        var cut = Render<Shared.WhoYouAre>();
+
+        cut.WaitForElement("[data-abom-you='unknown']");
+        Assert.Empty(cut.FindAll("[data-abom-you='local']"));
     }
 
     // An API answer that says to sign in takes the browser there, remembering where it was.

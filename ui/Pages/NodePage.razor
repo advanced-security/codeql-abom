@@ -519,7 +519,13 @@ else
         }
     }
 
-    public void Dispose() => Nav.LocationChanged -= OnLocationChanged;
+    public void Dispose()
+    {
+        _disposed = true;
+        Nav.LocationChanged -= OnLocationChanged;
+    }
+
+    private bool _disposed;
 
     // Runs on parameter change too, so following a neighbor link reloads rather than sticking.
     protected override async Task OnParametersSetAsync()
@@ -557,12 +563,19 @@ else
         var before = Scope.ToQueryString();
         Scope.ReadFrom(Nav.Uri);
         if (Scope.ToQueryString() == before) return;
-        await InvokeAsync(async () =>
+        try
         {
-            if (At != _loadedAt) await LoadDetail();
-            StateHasChanged();
-            if (_usesGrid is not null) await _usesGrid.ReloadServerData();
-        });
+            await InvokeAsync(async () =>
+            {
+                if (At != _loadedAt) await LoadDetail();
+                StateHasChanged();
+                if (_usesGrid is not null) await _usesGrid.ReloadServerData();
+            });
+        }
+        catch (ObjectDisposedException) when (_disposed)
+        {
+            // Left before the reload answered: there is no page to say anything on.
+        }
     }
 
     private async Task OnPickerChanged()

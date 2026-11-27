@@ -1,0 +1,44 @@
+@using Abom.WebAssembly.Models
+@using Abom.WebAssembly.Services
+@inject DeclarationService Declaration
+@implements IDisposable
+
+@* Said wherever figures count what is yours: an unconfirmed declaration otherwise reads as an empty
+   one. Confirming is on Settings → Accounts, beside the declaration it confirms. *@
+@if (DeclarationService.Unconfirmed(_decision))
+{
+    var unsigned = _decision!.State == "unsigned";
+    <MudAlert Dense="true" Severity="@(unsigned ? Severity.Warning : Severity.Error)" Class="mb-3"
+              data-abom-declaration-state="@_decision.State">
+        <div class="abom-alert">
+            <MudText Typo="Typo.subtitle2">
+                @(unsigned ? "Your declaration is not confirmed" : "Your declaration changed after it was decided")
+            </MudText>
+            <MudText Typo="Typo.body2">
+                Discovery does not act on it, and nothing counts as yours, until it is confirmed@(unsigned ? "" : " as it now stands").
+            </MudText>
+            <MudLink Href="/settings?tab=accounts#declared-accounts" Typo="Typo.body2"
+                     title="Open Settings at your declaration, to review it and confirm it.">
+                @(unsigned ? "Review and confirm it" : "Review what changed")
+            </MudLink>
+        </div>
+    </MudAlert>
+}
+
+@code {
+    private ScopeDecision? _decision;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Declaration.Changed += Reread;
+        _decision = await Declaration.ReadAsync();
+    }
+
+    private void Reread() => _ = InvokeAsync(async () =>
+    {
+        _decision = await Declaration.ReadAsync();
+        StateHasChanged();
+    });
+
+    public void Dispose() => Declaration.Changed -= Reread;
+}

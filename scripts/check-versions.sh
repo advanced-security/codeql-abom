@@ -80,25 +80,25 @@ done < <(find ql -name '*.qls')
 
 # ql-mcp releases alongside the CodeQL CLI, and ABOM names that release, never a pre-release of
 # it. Read whole, so a suffix is compared rather than cut off.
-tools=$(sed -n 's/.*toolsPackName + "@\([^"]*\)".*/\1/p' internal/runner/printast.go | head -1)
+tools=$(sed -n 's/.*toolsPackName + "@\([^"]*\)".*/\1/p' internal/runner/printast.go | sed -n 1p)
 if [ "$tools" != "$cli" ]; then
 	note "internal/runner/printast.go pins ql-mcp's tool pack at ${tools:-nothing}, but .codeql-version is $cli"
 fi
-qlmcp=$(sed -n 's/.*codeql-development-mcp-server@\([^" ]*\).*/\1/p' internal/harness/copilot.go | head -1)
+qlmcp=$(sed -n 's/.*codeql-development-mcp-server@\([^" ]*\).*/\1/p' internal/harness/copilot.go | sed -n 1p)
 if [ "$qlmcp" != "$cli" ]; then
 	note "internal/harness/copilot.go starts ql-mcp ${qlmcp:-nothing}, but .codeql-version is $cli"
 fi
 
 # The operator's pack is scaffolded against ABOM's actions library.
 lib=$(awk '$1 == "codeql/actions-all:" {print $2; exit}' ql/actions/lib/codeql-pack.yml)
-scaffold=$(sed -n 's/.*ActionsAll = "\([^"]*\)".*/\1/p' internal/customql/customql.go | head -1)
+scaffold=$(sed -n 's/.*ActionsAll = "\([^"]*\)".*/\1/p' internal/customql/customql.go | sed -n 1p)
 if [ "$scaffold" != "$lib" ]; then
 	note "internal/customql/customql.go scaffolds codeql/actions-all ${scaffold:-nothing}, but ql/actions/lib pins $lib"
 fi
 
 # The image builds with the Go the module names, pinned by digest like every base it starts from.
 toolchain=$(awk '$1 == "toolchain" {sub(/^go/, "", $2); print $2; exit}' go.mod 2>/dev/null || true)
-image_go=$(sed -n 's/^FROM .*golang:\([0-9.]*\)-.*/\1/p' infra/docker/Dockerfile 2>/dev/null | head -1)
+image_go=$(sed -n 's/^FROM .*golang:\([0-9.]*\)-.*/\1/p' infra/docker/Dockerfile 2>/dev/null | sed -n 1p)
 if [ -z "$toolchain" ]; then
 	note "go.mod names no toolchain to build the image with"
 elif [ "$image_go" != "$toolchain" ]; then

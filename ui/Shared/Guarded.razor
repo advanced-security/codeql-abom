@@ -1,0 +1,25 @@
+@using Abom.WebAssembly.Services
+@inject RoleService Roles
+
+@* A control the signed-in role may not use, offered disabled with the role it needs rather than
+   refused on press. The content is given the refusal, null when the role allows the operation, to
+   disable the control by; the tip sits outside it, because a disabled control shows none. *@
+<Tip Text="@(_refusal ?? Tip)" Placement="@Placement" Class="@Class">@ChildContent?.Invoke(_refusal)</Tip>
+
+@code {
+    /// <summary>The operation the control asks for, such as <c>abom/configure</c>.</summary>
+    [Parameter, EditorRequired] public string Operation { get; set; } = string.Empty;
+
+    /// <summary>What the control does, in a sentence, shown when the role allows it.</summary>
+    [Parameter, EditorRequired] public string Tip { get; set; } = string.Empty;
+
+    [Parameter] public Placement Placement { get; set; } = Placement.Top;
+
+    [Parameter] public string? Class { get; set; }
+
+    [Parameter] public RenderFragment<string?>? ChildContent { get; set; }
+
+    private string? _refusal;
+
+    protected override async Task OnParametersSetAsync() => _refusal = await Roles.RefusalAsync(Operation);
+}

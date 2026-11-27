@@ -4,14 +4,19 @@
 @inject RoleService Roles
 @inject NavigationManager Navigation
 
-@* Shown only when people sign in; at this machine without sign-in there is nobody to be. The menu
-   says who you are, what your role lets you do, and signs you out, saying so if it could not. *@
+@* Shown only when people sign in; at this machine without sign-in there is nobody to be. The bar
+   names the account and its role without opening anything; the menu says what the role lets you
+   do, and signs you out, saying so if it could not. *@
 @if (_me is { Mode: "signed-in", User: { } user })
 {
     <MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" data-abom-signed-in
              AriaLabel="@($"Your account: {Display(user)}")">
         <ActivatorContent>
-            <MudAvatar Size="Size.Small" Color="Color.Secondary" data-abom-account-avatar>@Initials(user)</MudAvatar>
+            <span class="abom-account-bar" title="@($"Signed in as {Login(user)}, {RoleWords(user)}. Open your account.")">
+                <MudAvatar Size="Size.Small" Color="Color.Secondary" data-abom-account-avatar>@Initials(user)</MudAvatar>
+                <span class="abom-account-login" data-abom-account-login>@Login(user)</span>
+                <span class="abom-account-bar-role" data-abom-account-bar-role>@(string.IsNullOrEmpty(user.Role) ? "no role" : user.Role)</span>
+            </span>
         </ActivatorContent>
         <ChildContent>
             <div class="abom-account" data-abom-account>
@@ -24,7 +29,13 @@
                          Color="@(string.IsNullOrEmpty(user.Role) ? Color.Warning : Color.Default)" data-abom-account-role>
                     @(string.IsNullOrEmpty(user.Role) ? "No ABOM role" : $"Role: {user.Role}")
                 </MudChip>
-                @if (_me.May.Count > 0)
+                @if (user.Role == "admin")
+                {
+                    <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-2" data-abom-account-may>
+                        Every operation ABOM has is yours to do.
+                    </MudText>
+                }
+                else if (_me.May.Count > 0)
                 {
                     <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-2">What your role lets you do</MudText>
                     <ul class="abom-account-may" data-abom-account-may>
@@ -42,6 +53,7 @@
                 }
             </div>
             <MudDivider />
+            <MudMenuItem Icon="@Icons.Material.Outlined.Badge" Href="/settings?tab=you" title="Open Settings at what ABOM knows about you." data-abom-account-settings>Who you are to ABOM</MudMenuItem>
             <MudMenuItem Icon="@Icons.Material.Outlined.Logout" OnClick="SignOut" title="End this session with ABOM." data-abom-sign-out>Sign out</MudMenuItem>
         </ChildContent>
     </MudMenu>
@@ -58,11 +70,16 @@
         _signOutFailed = !await Api.SignOutAsync();
         if (!_signOutFailed)
         {
-            Navigation.NavigateTo("/", forceLoad: true);
+            Navigation.NavigateTo("auth/?signin=signed-out", forceLoad: true);
         }
     }
 
     private static string Display(SignedInUser u) => string.IsNullOrEmpty(u.Name) ? u.Username : u.Name;
+
+    private static string Login(SignedInUser u) => string.IsNullOrEmpty(u.Username) ? u.Name : u.Username;
+
+    private static string RoleWords(SignedInUser u) =>
+        string.IsNullOrEmpty(u.Role) ? "with no ABOM role" : $"with the {u.Role} role";
 
     private static string Initials(SignedInUser u)
     {

@@ -5,6 +5,7 @@
 @inject NavigationManager Nav
 @inject RequestDraft Draft
 @inject AccountService Accounts
+@inject RoleService Roles
 
 @* Repositories with results by default: a page of zeros hides the rows a query's author wants. *@
 @if (_run is null)
@@ -393,13 +394,20 @@ else
     private string? _conversionRefusal;
     private bool _converting;
 
-    private bool CanConvert => !_converting && Accounts.Identity.Login.Length > 0;
+    private bool CanConvert => !_converting && Accounts.Identity.Login.Length > 0 && _mayNotRun is null;
 
-    private string ConvertAllReason => Accounts.Identity.Login.Length == 0
+    private string ConvertAllReason => _mayNotRun ?? (Accounts.Identity.Login.Length == 0
         ? "Sign in with gh: a conversion records who made it."
-        : "Store every result this run held as a finding, attributed to the evaluation that reported it.";
+        : "Store every result this run held as a finding, attributed to the evaluation that reported it.");
 
-    protected override async Task OnInitializedAsync() => await Accounts.EnsureLoadedAsync();
+    // What the signed-in role does not allow, offered disabled with the role it needs.
+    private string? _mayNotRun;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _mayNotRun = await Roles.RefusalAsync("abom/requested-run");
+        await Accounts.EnsureLoadedAsync();
+    }
 
     private async Task ToggleHeld(string repository)
     {

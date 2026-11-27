@@ -334,7 +334,7 @@
             {
                 var catalog = await Api.GetQueryCatalogAsync();
                 if (_disposed || generation != _generation) return;
-                if (Api.LastError is not null)
+                if (catalog is null || Api.LastError is not null)
                 {
                     Tutorial.Report("The query catalog could not be read: " + Api.LastError);
                     return;

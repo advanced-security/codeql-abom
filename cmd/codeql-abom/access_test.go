@@ -91,6 +91,35 @@ func TestDiagnosticsAreRefusedWhenPeopleSignIn(t *testing.T) {
 	}
 }
 
+// Without sign-in nobody is asked who they are, so ABOM listens on loopback alone: an address a
+// network reaches, or relaxing the host check, would hand every control to whoever reaches it.
+func TestWithoutSignInOnlyLoopbackIsServed(t *testing.T) {
+	for _, args := range [][]string{
+		{"--addr", "0.0.0.0:8080"},
+		{"--addr", ":8080"},
+		{"--addr", "10.0.0.5:8080"},
+		{"--addr", "abom.example:8080"},
+		{"--allow-remote-control"},
+	} {
+		_, err := parseServeArgs(append([]string{"--db", "abom.db"}, args...), io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "--auth") {
+			t.Errorf("serve %v without sign-in: %v; want it refused, naming --auth", args, err)
+		}
+	}
+	for _, addr := range []string{"localhost:8080", "127.0.0.1:8099", "[::1]:8080"} {
+		if _, err := parseServeArgs([]string{"--db", "abom.db", "--addr", addr}, io.Discard); err != nil {
+			t.Errorf("serve --addr %s without sign-in refused: %v", addr, err)
+		}
+	}
+	signedIn := []string{"--db", "abom.db", "--addr", "0.0.0.0:8080", "--auth=oidc",
+		"--oidc-issuer=https://login.example/t/v2.0", "--oidc-client-id=abom",
+		"--oidc-redirect-url=https://abom.example/auth/callback"}
+	t.Setenv("ABOM_OIDC_CLIENT_SECRET", "s")
+	if _, err := parseServeArgs(signedIn, io.Discard); err != nil {
+		t.Errorf("serve on 0.0.0.0 with sign-in refused: %v", err)
+	}
+}
+
 // The probe listener is off unless named, and takes its address as given.
 func TestTheProbeListenerIsOffUnlessNamed(t *testing.T) {
 	off, err := parseServeArgs([]string{"--db", "abom.db"}, io.Discard)

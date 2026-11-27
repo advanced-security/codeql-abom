@@ -81,6 +81,7 @@ func (s *Server) decodePrintQueryAST(w http.ResponseWriter, r *http.Request) (pr
 		writeError(w, http.StatusBadRequest, "the request body is not the expected JSON")
 		return printQueryASTRequest{}, false
 	}
+	body.By = s.actor(r, body.By)
 	switch {
 	case s.Printer == nil || s.QueryDir == "":
 		writeError(w, http.StatusServiceUnavailable, "this server has no query directory to print a tree "+

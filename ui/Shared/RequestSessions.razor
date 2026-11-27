@@ -14,19 +14,19 @@
         <MudSpacer />
         @if (Live is not null)
         {
-            <Tip Text="End the agent's work on this request. What it wrote stays.">
+            <Guarded Operation="abom/authoring" Context="denied" Tip="End the agent's work on this request. What it wrote stays.">
                 <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
-                           StartIcon="@Icons.Material.Outlined.StopCircle" Disabled="@_busy" OnClick="Stop"
+                           StartIcon="@Icons.Material.Outlined.StopCircle" Disabled="@(_busy || denied is not null)" OnClick="Stop"
                            data-abom-session-stop>Stop the session</MudButton>
-            </Tip>
+            </Guarded>
         }
         else
         {
-            <Tip Text="@StartTip">
+            <Guarded Operation="abom/authoring" Context="denied" Tip="@StartTip">
                 <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
-                           StartIcon="@Icons.Material.Outlined.SmartToy" Disabled="@(!CanStart || Blocking is not null || _busy)"
+                           StartIcon="@Icons.Material.Outlined.SmartToy" Disabled="@(!CanStart || Blocking is not null || _busy || denied is not null)"
                            OnClick="Start" data-abom-session-start>Work it with an agent</MudButton>
-            </Tip>
+            </Guarded>
         }
     </div>
     @if (Live is null && Blocking is { } blocking)

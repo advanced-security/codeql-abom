@@ -192,7 +192,7 @@ func (s *Store) trackPostgresWrites() error {
 	// A transaction changes the revision atomically with its writes, including non-graph facts.
 	rows, err := s.db.DB.Query(`SELECT tablename FROM pg_tables WHERE schemaname = current_schema()
 		AND (tablename = 'repository' OR starts_with(tablename, 'abom_'))
-		AND tablename NOT IN ('abom_store_revision', 'abom_coordination_lease', 'abom_ingest_receipt')`)
+		AND tablename NOT IN ('abom_store_revision', 'abom_coordination_lease', 'abom_ingest_receipt', 'abom_session')`)
 	if err != nil {
 		return err
 	}
@@ -220,7 +220,7 @@ func (s *Store) trackPostgresWrites() error {
 			return fmt.Errorf("tracking PostgreSQL writes to %s: %w", table, err)
 		}
 	}
-	for _, table := range []string{"abom_coordination_lease", "abom_ingest_receipt"} {
+	for _, table := range []string{"abom_coordination_lease", "abom_ingest_receipt", "abom_session"} {
 		if _, err := s.db.DB.Exec(`DROP TRIGGER IF EXISTS abom_revision ON ` + table); err != nil {
 			return fmt.Errorf("separating coordination from graph cache tracking: %w", err)
 		}

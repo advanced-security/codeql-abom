@@ -1,0 +1,18 @@
+@inject AccountService Accounts
+
+<MudText Typo="Typo.subtitle2" Class="mt-8 mb-1">How discovery runs</MudText>
+<MudText Typo="Typo.body2" Class="mb-3 mud-text-secondary">
+    Analysis starts here; what each tier is analyzed with is chosen on the
+    <MudLink Href="/codeql?tab=suites"
+             title="Open the CodeQL page where each tier's query suites are chosen.">CodeQL page</MudLink>. How far it has got
+    is read where the results are: the
+    <MudLink Href="/inventory?unit=coverage"
+             title="Open the coverage unit showing which dependencies have been analyzed, queued or unavailable.">Coverage unit</MudLink> lists what is analyzed, queued
+    and unavailable one dependency at a time, and the
+    <MudLink Href="/explore"
+             title="Open the Explorer graph colored by analysis coverage.">Explorer</MudLink> colors the graph by it.
+</MudText>
+
+<DiscoveryControls LinkToSettings="false" Changed="@(() => Accounts.ReloadScopeAsync())" />
+
+<PoolMeters />

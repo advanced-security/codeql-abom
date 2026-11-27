@@ -35,12 +35,13 @@
                    would be an affordance that cannot work. *@
                 @if (!view.Builtin)
                 {
-                    <Tip Text="Delete this saved scope. The filters on this page stay as they are.">
+                    <Guarded Operation="abom/saved-view" Context="denied"
+                             Tip="Delete this saved scope. The filters on this page stay as they are.">
                         <MudIconButton Size="Size.Small" Icon="@Icons.Material.Outlined.Close"
-                                       aria-label="@($"Forget {view.Label}")"
+                                       aria-label="@($"Forget {view.Label}")" Disabled="@(denied is not null)"
                                        OnClick="@(() => Forget(view))"
                                        data-abom-forget-view="@view.Name" />
-                    </Tip>
+                    </Guarded>
                 }
             </span>
         }
@@ -48,12 +49,12 @@
     <MudTextField T="string" @bind-Value="_name" Placeholder="Name this scope"
                   Immediate="true" Margin="Margin.Dense" Variant="Variant.Outlined"
                   Class="abom-scope-name" data-abom-scope-name="1" />
-    <Tip Text="Save the current filters under this name, to open again later.">
+    <Guarded Operation="abom/saved-view" Context="denied" Tip="Save the current filters under this name, to open again later.">
         <MudButton Size="Size.Small" DropShadow="false" Variant="Variant.Outlined"
                    StartIcon="@Icons.Material.Outlined.BookmarkAdd" OnClick="Keep"
-                   Disabled="@(_name.Trim().Length == 0 || Scope.Spec.ToQueryString().Length == 0)"
+                   Disabled="@(_name.Trim().Length == 0 || Scope.Spec.ToQueryString().Length == 0 || denied is not null)"
                    data-abom-save-scope="1">Keep</MudButton>
-    </Tip>
+    </Guarded>
     @if (_refused is { Length: > 0 } refused)
     {
         <MudText Typo="Typo.caption" Color="Color.Warning" data-abom-scope-refused>@refused</MudText>

@@ -1,0 +1,167 @@
+@using Abom.WebAssembly.Models
+@using Abom.WebAssembly.Services
+@inject RoleService Roles
+
+@* Who you are to ABOM, in one place: the account and who vouched for it, the role and what granted
+   it, what the role lets you do, and the identity ABOM reads GitHub with, which is not yours. *@
+<section id="you" class="mb-6" aria-labelledby="you-heading">
+    <MudText Typo="Typo.subtitle2" Class="mb-1" id="you-heading">Who you are to ABOM</MudText>
+    @if (!_read)
+    {
+        <MudProgressLinear Indeterminate="true" Class="my-2" />
+    }
+    else if (_me is null)
+    {
+        <MudAlert Severity="Severity.Warning" Dense="true" data-abom-you="unknown">
+            ABOM could not say who you are just now, so this page cannot either. Reload the page to ask again.
+        </MudAlert>
+    }
+    else if (_me is { Mode: "signed-in", User: { } user })
+    {
+        <div data-abom-you="signed-in">
+            <dl class="abom-you">
+                <dt>Signed in as</dt>
+                <dd>
+                    @if (!string.IsNullOrEmpty(user.Name) && user.Name != user.Username)
+                    {
+                        <span>@user.Name · <code>@user.Username</code></span>
+                    }
+                    else
+                    {
+                        <code>@user.Username</code>
+                    }
+                </dd>
+                <dt>Signed in through</dt>
+                <dd data-abom-you-provider>@(string.IsNullOrEmpty(user.Provider) ? "your identity provider" : user.Provider)</dd>
+                <dt>ABOM role</dt>
+                <dd data-abom-you-role>
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="ma-0"
+                             Color="@(string.IsNullOrEmpty(user.Role) ? Color.Warning : Color.Default)">
+                        @(string.IsNullOrEmpty(user.Role) ? "none" : user.Role)
+                    </MudChip>
+                </dd>
+                <dt>Granted by</dt>
+                <dd data-abom-you-granted>
+                    @if (user.Grants.Count == 0)
+                    {
+                        <span>@(GitHub(user) ? "no membership ABOM's role map names" : "nothing ABOM's role map names")</span>
+                    }
+                    else
+                    {
+                        <ul class="abom-you-list">
+                            @foreach (var g in user.Grants.OrderByDescending(g => Rank(g.Role)).ThenBy(g => g.By, StringComparer.Ordinal))
+                            {
+                                <li data-abom-you-grant>@(GitHub(user) ? Membership(g.By) : g.By): @g.Role</li>
+                            }
+                        </ul>
+                        @if (user.Grants.Count > 1)
+                        {
+                            <span class="mud-text-secondary">When several grant a role, the highest applies.</span>
+                        }
+                    }
+                </dd>
+                <dt>Your role lets you</dt>
+                <dd data-abom-you-may>
+                    @if (user.Role == "admin")
+                    {
+                        <span>Do every operation ABOM has.</span>
+                    }
+                    else if (_me.May.Count == 0)
+                    {
+                        <span>Nothing yet.</span>
+                    }
+                    else
+                    {
+                        <ul class="abom-you-list abom-you-may">
+                            @foreach (var op in _me.May)
+                            {
+                                <li>@RoleService.Words(op)</li>
+                            }
+                        </ul>
+                    }
+                </dd>
+                @if (user.Role != "admin" && Higher(_me) is { Count: > 0 } higher)
+                {
+                    <dt>Needs a higher role</dt>
+                    <dd data-abom-you-needs>
+                        <ul class="abom-you-list abom-you-may">
+                            @foreach (var (op, role) in higher)
+                            {
+                                <li>@RoleService.Words(op) (@role)</li>
+                            }
+                        </ul>
+                    </dd>
+                }
+                @if (user.Expires is { } ends)
+                {
+                    <dt>Session</dt>
+                    <dd data-abom-you-expires>Ends @Ends(ends); then you sign in again.</dd>
+                }
+            </dl>
+            <MudText Typo="Typo.body2" Class="mt-2 mud-text-secondary">
+                What you change here is decided under your role, and recorded and signed as done by you.
+                @ReaderSentence
+            </MudText>
+        </div>
+    }
+    else
+    {
+        <MudAlert Severity="Severity.Info" Dense="true" data-abom-you="local">
+            Sign-in is off, so ABOM listens only on this machine's loopback address and cannot tell who you are: every
+            change is recorded as made at this machine. Start the server with <code>--auth github</code> or
+            <code>--auth oidc</code> to sign in, and to have each change say who made it.
+        </MudAlert>
+    }
+</section>
+
+@code {
+    /// <summary>Who ABOM reads GitHub as, which Settings has already read; null when it has not.</summary>
+    [Parameter] public AccountIdentity? Reader { get; set; }
+
+    private Me? _me;
+    private bool _read;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _me = await Roles.MeAsync();
+        _read = true;
+    }
+
+    private string ReaderSentence => Reader switch
+    {
+        { Authenticated: true, ReadByApp: true } r =>
+            $"ABOM itself reads GitHub as its own GitHub App, {r.Login}, not as you: what it can see is what that App is installed on.",
+        { Authenticated: true } r =>
+            $"ABOM itself reads GitHub as {r.Login}, the account gh is signed in to where ABOM runs, not as you.",
+        _ => "ABOM itself reads GitHub with its own credentials, not as you.",
+    };
+
+    private static bool GitHub(SignedInUser u) => u.Provider.StartsWith("GitHub", StringComparison.Ordinal);
+
+    private static int Rank(string role) => role switch
+    {
+        "admin" => 4,
+        "operator" => 3,
+        "analyst" => 2,
+        "viewer" => 1,
+        _ => 0,
+    };
+
+    // What the role does not allow, each with the role it needs, the nearest first.
+    private static List<(string Operation, string Role)> Higher(Me me) =>
+        [.. me.Needs.Where(n => !me.May.Contains(n.Key))
+            .OrderBy(n => Rank(n.Value)).ThenBy(n => RoleService.Words(n.Key), StringComparer.Ordinal)
+            .Select(n => (n.Key, n.Value))];
+
+    // Role map entries, as the memberships GitHub confirmed: org:owners, org/team or org.
+    private static string Membership(string entry) =>
+        entry.EndsWith(":owners", StringComparison.Ordinal) ? $"owner of {entry[..^":owners".Length]}"
+        : entry.Contains('/') ? $"member of team {entry}"
+        : $"member of {entry}";
+
+    private static string Ends(DateTimeOffset at)
+    {
+        var local = at.ToLocalTime();
+        return local.Date == DateTimeOffset.Now.Date ? $"today at {local:HH:mm}" : $"{local:d MMM} at {local:HH:mm}";
+    }
+}

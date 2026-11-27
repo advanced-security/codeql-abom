@@ -433,6 +433,29 @@ public class OwnedScopeTests : AbomTestContext
             () => Assert.Contains("not reported", cut.Find("[data-abom-role='acme']").TextContent));
     }
 
+    // Settings is in tabs; a declaration being edited is not lost by looking at another one, and is
+    // still the one Save writes.
+    [Fact]
+    public void AnUnsavedDeclarationSurvivesLookingAtAnotherTab()
+    {
+        ServeEditable("[]");
+        var cut = RenderSettings("accounts");
+        cut.WaitForAssertion(() => Assert.NotNull(cut.Find("[data-abom-memberships]")));
+        cut.Find("[data-abom-new-owner] input").Change("private-org");
+        cut.Find("[data-abom-declare-typed]").Click();
+        // The field takes its value asynchronously, so the draft is shown before looking away from it.
+        cut.WaitForAssertion(() => Assert.NotNull(cut.Find("[data-abom-declared='private-org']")));
+
+        cut.Find("[data-abom-tab='discovery']").Click();
+        cut.WaitForAssertion(() => Assert.Contains("data-abom-settings-panel=\"discovery\"", cut.Markup));
+        cut.Find("[data-abom-tab='accounts']").Click();
+
+        cut.WaitForAssertion(() => Assert.NotNull(cut.Find("[data-abom-declared='private-org']")));
+        cut.Find("[data-abom-save]").Click();
+        cut.WaitForAssertion(() => Assert.Single(Writes));
+        Assert.Contains("private-org", Writes.Single().Body);
+    }
+
     // Ownership is stated, not inferred, so the editor must not restrict the statement to what a
     // token happens to see. An operator can be responsible for an account gh cannot report.
     [Fact]

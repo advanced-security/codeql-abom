@@ -1,0 +1,53 @@
+# This workflow is managed by gh actions-lock.
+
+name: Lint - Workflows
+
+on:
+  pull_request:
+    paths:
+      - '.github/actionlint.yaml'
+      - '.github/actions/**'
+      - '.github/workflows/**'
+      - 'infra/qlaas-repo-template/**'
+      - 'scripts/check-workflows.sh'
+      - 'Makefile'
+  push:
+    branches: ['main', 'next']
+    paths:
+      - '.github/actionlint.yaml'
+      - '.github/actions/**'
+      - '.github/workflows/**'
+      - 'infra/qlaas-repo-template/**'
+      - 'scripts/check-workflows.sh'
+      - 'Makefile'
+
+permissions:
+  contents: read
+
+jobs:
+  lint-workflows:
+    name: Lint - Workflows
+    runs-on: ubuntu-26.04
+
+    steps:
+      - name: Lint - Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Lint - Setup Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      # The version is the Makefile's ACTIONLINT_VERSION; `make workflows` refuses any other.
+      - name: Lint - Install actionlint and shellcheck
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          command -v shellcheck >/dev/null || { sudo apt-get update && sudo apt-get install -y shellcheck; }
+          shellcheck --version | sed -n 2p
+
+      - name: Lint - Run actionlint
+        run: make workflows
+
+      - name: Lint - Summary
+        run: echo "## Lint - workflows clean" >> "$GITHUB_STEP_SUMMARY"

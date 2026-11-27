@@ -287,17 +287,24 @@ func writeBundle(dir string, b Bundle) error {
 // Open verifies an envelope presented now, such as a grant: at least one signature must be by a key
 // the bundle trusts at the time given, over exactly the payload carried.
 func (b Bundle) Open(e Envelope, at time.Time) (Statement, error) {
-	return open(e, func(id string) (*ecdsa.PublicKey, bool) { return b.trusted(id, at) },
+	st, _, err := open(e, func(id string) (*ecdsa.PublicKey, bool) { return b.trusted(id, at) },
 		"no signature verifies with a key trusted at "+at.UTC().Format(time.RFC3339)+retiredSignNothing)
+	return st, err
 }
 
 // OpenLogged verifies an envelope as the log's entry at seq: signed by a key the bundle names that
 // had not retired before the log reached seq.
 func (b Bundle) OpenLogged(e Envelope, seq int64) (Statement, error) {
+	st, _, err := b.openLogged(e, seq)
+	return st, err
+}
+
+// openLogged is OpenLogged, also naming the key whose signature verified.
+func (b Bundle) openLogged(e Envelope, seq int64) (Statement, string, error) {
 	// A row can be inserted at a position of its own choosing, and one before the log's first would
 	// otherwise sit inside every retired key's trusted range.
 	if seq < 1 {
-		return Statement{}, fmt.Errorf("authz: entry %d is before the log begins", seq)
+		return Statement{}, "", fmt.Errorf("authz: entry %d is before the log begins", seq)
 	}
 	return open(e, func(id string) (*ecdsa.PublicKey, bool) { return b.trustedAt(id, seq) },
 		fmt.Sprintf("no signature verifies with a key not retired before entry %d", seq)+retiredSignNothing)
@@ -305,18 +312,18 @@ func (b Bundle) OpenLogged(e Envelope, seq int64) (Statement, error) {
 
 const retiredSignNothing = "; a key retired before then signs nothing"
 
-// open verifies an envelope's statement against the keys trust answers for, refusing with refusal
-// when no signature verifies.
-func open(e Envelope, trust func(id string) (*ecdsa.PublicKey, bool), refusal string) (Statement, error) {
+// open verifies an envelope's statement against the keys trust answers for, naming the key whose
+// signature verified, and refusing with refusal when none does.
+func open(e Envelope, trust func(id string) (*ecdsa.PublicKey, bool), refusal string) (Statement, string, error) {
 	if e.PayloadType != PayloadType {
-		return Statement{}, fmt.Errorf("authz: payload type %q is not an in-toto statement", e.PayloadType)
+		return Statement{}, "", fmt.Errorf("authz: payload type %q is not an in-toto statement", e.PayloadType)
 	}
 	payload, err := base64.StdEncoding.DecodeString(e.Payload)
 	if err != nil {
-		return Statement{}, fmt.Errorf("authz: the payload is not base64: %w", err)
+		return Statement{}, "", fmt.Errorf("authz: the payload is not base64: %w", err)
 	}
 	digest := sha256.Sum256(PAE(e.PayloadType, payload))
-	verified := false
+	by := ""
 	for _, sig := range e.Signatures {
 		key, ok := trust(sig.KeyID)
 		if !ok {
@@ -324,27 +331,28 @@ func open(e Envelope, trust func(id string) (*ecdsa.PublicKey, bool), refusal st
 		}
 		raw, err := base64.StdEncoding.DecodeString(sig.Sig)
 		if err == nil && ecdsa.VerifyASN1(key, digest[:], raw) {
-			verified = true
+			by = sig.KeyID
 			break
 		}
 	}
-	if !verified {
-		return Statement{}, errors.New("authz: " + refusal)
+	if by == "" {
+		return Statement{}, "", errors.New("authz: " + refusal)
 	}
 	var st Statement
 	if err := json.Unmarshal(payload, &st); err != nil {
-		return Statement{}, fmt.Errorf("authz: the payload is not a statement: %w", err)
+		return Statement{}, "", fmt.Errorf("authz: the payload is not a statement: %w", err)
 	}
 	if st.Type != StatementType {
-		return Statement{}, fmt.Errorf("authz: statement type %q is not in-toto's", st.Type)
+		return Statement{}, "", fmt.Errorf("authz: statement type %q is not in-toto's", st.Type)
 	}
-	return st, nil
+	return st, by, nil
 }
 
 // OpenWithKey verifies an envelope signed by one known ECDSA key, as a worker's result is signed with
 // the key of the identity its certificate names.
 func OpenWithKey(e Envelope, key *ecdsa.PublicKey) (Statement, error) {
-	return open(e, func(string) (*ecdsa.PublicKey, bool) { return key, true }, "no signature verifies with the signer's key")
+	st, _, err := open(e, func(string) (*ecdsa.PublicKey, bool) { return key, true }, "no signature verifies with the signer's key")
+	return st, err
 }
 
 func (b Bundle) trusted(id string, at time.Time) (*ecdsa.PublicKey, bool) {

@@ -19,7 +19,7 @@ flowchart LR
 | --- | --- |
 | `make start` | Build executable and UI, then start the background server. Refuses a recognized server already running. |
 | `make serve` | Build and serve in the foreground instead; Ctrl+C stops that process. |
-| `make status` | Show the recognized server and discovery state at the configured address. |
+| `make status` | Show the recognized server and discovery state at the configured address. With sign-in on, discovery state needs a session, so only the server is shown. |
 | `make logs` | Follow background output; Ctrl+C stops following, not serving. |
 | `make stop` | Stop recognized local ABOM servers and retain their state. |
 | `make restart` | Stop, rebuild and start. Discovery resumes only according to the explicit startup flag and stored resume setting. |
@@ -91,6 +91,14 @@ changing a working checkout, stop its server and preserve its state. Follow
 [source setup](source.md) again for changed toolchain pins or query dependencies, then rebuild.
 Startup migrations are not a promise that an older executable can read the resulting database.
 Do not delete evidence to make an update appear successful.
+
+An update can change what a script that drives the API sees. Three such changes arrive together:
+
+- A refusal is an `application/problem+json` document, its reason in `detail` and its kind in
+  `code`, where it was `{"error": …}`.
+- With sign-in on, the person signed in is recorded as who acted, and a `by`, `requestedBy` or
+  `grantedBy` the request carries is ignored.
+- Without `--auth`, `serve` refuses an `--addr` that is not loopback, and `--allow-remote-control`.
 
 `make clean` removes `bin/` and `dist/`; it does not remove `.abom/`. To retire an installation,
 stop it first, preserve any evidence or queries you need, then explicitly remove only that

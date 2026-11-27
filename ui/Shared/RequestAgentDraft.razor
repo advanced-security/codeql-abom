@@ -13,18 +13,19 @@
             <MudText Typo="Typo.caption" data-abom-draft-live>
                 An agent is drafting from what you picked, since @TimeText.DayAndTime(Live.StartedAt, "HH:mm:ss").
             </MudText>
-            <Tip Text="End the drafting agent. Nothing is filed.">
-                <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-plain-button" Disabled="@_busy"
+            <Guarded Operation="abom/authoring" Context="denied" Tip="End the drafting agent. Nothing is filed.">
+                <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-plain-button" Disabled="@(_busy || denied is not null)"
                            OnClick="Stop" data-abom-draft-stop>Stop drafting</MudButton>
-            </Tip>
+            </Guarded>
         }
         else
         {
-            <Tip Text="@(CanStart ? "Have an agent write the request from the results and code you picked." : "Sign in with gh to record who asked.")">
+            <Guarded Operation="abom/authoring" Context="denied"
+                     Tip="@(CanStart ? "Have an agent write the request from the results and code you picked." : "Sign in with gh to record who asked.")">
                 <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
-                           StartIcon="@Icons.Material.Outlined.SmartToy" Disabled="@(!CanStart || _busy)"
+                           StartIcon="@Icons.Material.Outlined.SmartToy" Disabled="@(!CanStart || _busy || denied is not null)"
                            OnClick="Start" data-abom-draft-start>Draft it with an agent</MudButton>
-            </Tip>
+            </Guarded>
         }
     </div>
     @if (_refusal is { Length: > 0 } refused)

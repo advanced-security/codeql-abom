@@ -19,7 +19,13 @@ test('a page without parts is tagged as the page alone', () => {
     assert.deepEqual(tagsOf('/'), ['@home']);
     assert.deepEqual(tagsOf('/explore?scope=exposure&flags=findings'), ['@explore']);
     assert.deepEqual(tagsOf('/node/actions%2Fcheckout'), ['@node']);
-    assert.deepEqual(tagsOf('/settings'), ['@settings']);
+});
+
+test('Settings is tagged by its tab, and a bare address by the tab it opens on', () => {
+    assert.deepEqual(tagsOf('/settings'), ['@settings', '@settings:discovery']);
+    assert.deepEqual(tagsOf('/settings?tab=accounts'), ['@settings', '@settings:accounts']);
+    assert.match(titled('/settings?tab=accounts'), grepFor(['settings:accounts']));
+    assert.doesNotMatch(titled('/settings?tab=data'), grepFor(['settings:accounts']));
 });
 
 // Playwright matches grep against the title with each tag appended after a space.

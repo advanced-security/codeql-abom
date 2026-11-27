@@ -160,6 +160,7 @@ var createTables = []struct {
 	{"the code scanning setup tables", setupDDL},
 	{"the default setup write tables", setupWriteDDL},
 	{"the coordinator lease and receipt tables", coordinationDDL},
+	{"the signed-in session table", sessionDDL},
 	{"the demo dataset marker", demoDatasetDDL},
 }
 

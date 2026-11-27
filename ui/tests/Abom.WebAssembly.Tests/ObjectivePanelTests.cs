@@ -183,7 +183,9 @@ public class ObjectivePanelTests : AbomTestContext
         cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("[data-abom-objective-unreached]")));
         var unreached = cut.Find("[data-abom-objective-unreached]").TextContent;
         Assert.Contains("15 queued", unreached);
-        Assert.Contains("nothing you own reaches are not claimed", unreached);
+        Assert.Contains("nothing you own reaches are set aside: the crawl does not analyze them", unreached);
+        Assert.DoesNotContain("claimed", unreached);
+        Assert.DoesNotContain("depth", unreached);
         Assert.Contains("Pruning", unreached);
     }
 

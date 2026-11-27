@@ -42,6 +42,7 @@ spec:
           command: ["sh", "-c", "cp -L /etc/abom/{{ $app.dir }}-secret/* /run/abom/{{ $app.dir }}/ && chmod 600 /run/abom/{{ $app.dir }}/*"]
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities: {drop: ["ALL"]}
           volumeMounts:
             - {name: {{ $app.dir }}-secret, mountPath: /etc/abom/{{ $app.dir }}-secret, readOnly: true}
@@ -123,6 +124,8 @@ spec:
             - name: ABOM_DB
               valueFrom: {secretKeyRef: {name: {{ .Values.database.secretName }}, key: DATABASE_URL}}
             - {name: ABOM_AUTHZ_DIR, value: /var/lib/abom/authz}
+            # The lock every CodeQL invocation takes is made in the user's cache directory.
+            - {name: XDG_CACHE_HOME, value: /tmp/cache}
             {{- if .Values.githubApp.secretName }}
             - {name: ABOM_APP_DIR, value: /run/abom/github-app}
             {{- end }}

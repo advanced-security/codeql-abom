@@ -132,11 +132,14 @@ else
                                 }
                             </td>
                             <td>
-                                <MudButton Size="Size.Small" Variant="Variant.Outlined" Class="abom-requeue"
-                                           Disabled="_busy" OnClick="@(() => Save(p))"
-                                           title="Save this rate and burst; an empty rate removes the limit and leaves the work to GitHub's own allowance.">
-                                    Save
-                                </MudButton>
+                                <Guarded Operation="abom/configure" Context="denied"
+                                         Tip="Save this rate and burst; an empty rate removes the limit and leaves the work to GitHub's own allowance.">
+                                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Class="abom-requeue"
+                                               Disabled="@(_busy || denied is not null)" OnClick="@(() => Save(p))"
+                                               data-abom-pool-save="@p.Pool">
+                                        Save
+                                    </MudButton>
+                                </Guarded>
                             </td>
                         }
                     </tr>

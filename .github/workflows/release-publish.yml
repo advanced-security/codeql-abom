@@ -185,7 +185,7 @@ jobs:
           (cd "$draft" && sha256sum --check --strict "$recorded")
           # Nothing added beside them either: the checksums, their subjects and the bundle only.
           expected=$( { awk '{print $2}' "$recorded"; echo SHA256SUMS; echo "codeql-abom_${VERSION#v}.sigstore.json"; } | sort)
-          actual=$(ls "$draft" | sort)
+          actual=$(find "$draft" -mindepth 1 -maxdepth 1 -exec basename {} \; | sort)
           if [ "$expected" != "$actual" ]; then
             echo "::error::the draft's assets differ from the ones staged"
             diff <(echo "$expected") <(echo "$actual") || true

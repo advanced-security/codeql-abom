@@ -70,6 +70,7 @@ func (s *Server) saveQueryRequest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "the request body is not the expected JSON")
 		return
 	}
+	body.RequestedBy = s.actor(r, body.RequestedBy)
 	body.RowID = 0
 	s.keepQueryRequest(w, r, body)
 }

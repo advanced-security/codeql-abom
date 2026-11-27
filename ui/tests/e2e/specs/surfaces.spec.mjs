@@ -3,7 +3,7 @@ import { test, expect, ready, corpusSize, on, SURFACES, UNITS } from '../harness
 const EVERY_UNIT = UNITS.map((u) => `/inventory?unit=${u}`);
 
 for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
-    test(`Settings reports repository listing freshness at ${viewport.width}px`, on('/settings'), async ({
+    test(`Settings reports repository listing freshness at ${viewport.width}px`, on('/settings?tab=accounts'), async ({
         page, request, baseURL,
     }) => {
         const response = await request.get(`${baseURL}/api/owned-scope`);
@@ -16,7 +16,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
             page.getByRole('button', { name: 'Not now', exact: true }),
             async (button) => { await button.click(); },
         );
-        await page.goto('/settings');
+        await page.goto('/settings?tab=accounts');
         await ready(page);
         await expect(page.locator('[data-abom-listing]')).toHaveCount(declared.length);
 

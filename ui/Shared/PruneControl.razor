@@ -25,7 +25,8 @@ else if (_declared.Count == 0)
     @* Pruning is defined against a declared closure, so with none the server refuses. That is a
        state this can explain, and it is not read at all rather than reported as a fault. *@
     <MudText Typo="Typo.body2" Class="mud-text-secondary mb-8" data-abom-prune-undeclared>
-        Nothing is declared, so there is no closure to be outside of. Declare an account above
+        Nothing is declared, so nothing can be found outside what you own. Declare an account in
+        <MudLink Href="/settings?tab=accounts" title="Open the Accounts tab, where you declare what is yours.">Accounts</MudLink>
         before removing anything.
     </MudText>
 }

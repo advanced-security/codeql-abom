@@ -11,6 +11,7 @@ M = "github.com/advanced-security/codeql-abom"
 PACKAGES = {
     M + "/internal/failure": set(),
     M + "/internal/authz": set(),
+    M + "/internal/access": set(),
     M + "/internal/store": {M + "/internal/authz"},
     M + "/internal/expand": {M + "/internal/failure"},
     M + "/internal/serve": {M + "/internal/expand", M + "/internal/failure", M + "/internal/store", M + "/internal/authz"},
@@ -47,11 +48,21 @@ class CheckChangedTest(unittest.TestCase):
             "ql/actions/lib/abom/actions/LockCoverage.qll": "ql:ql",
             "infra/k8s/helm/codeql-abom/values.yaml": "checks:check-versions,chart",
             "infra/tests/kind/values.yaml": "checks:check-versions,chart",
-            ".github/workflows/self-audit.yml": "checks:check-versions,pins",
+            ".github/workflows/self-audit.yml": "checks:check-versions,pins,workflows",
+            ".github/actions/setup-codeql/action.yml": "checks:check-versions,pins,workflows",
+            ".github/actionlint.yaml": "checks:check-versions,workflows",
+            "infra/qlaas-repo-template/workflows/test.yml": "checks:check-versions,workflows",
+            "scripts/check-workflows.sh": "checks:check-versions,workflows",
             "scripts/with-postgres.py": "checks:check-versions,script-test",
             "infra/docker/Dockerfile": "checks:check-versions",
         }.items():
             self.assertIn(spec, chosen(path).specs(), path)
+
+    def test_signing_in_runs_the_browser_suite_with_sign_in_on(self):
+        for path in ("ui/tests/e2e/signin/signin.spec.mjs", "ui/tests/e2e/playwright.signin.config.mjs",
+                     "internal/access/access.go"):
+            self.assertIn("e2e-signin", chosen(path).groups.get("interface", []), path)
+        self.assertNotIn("interface", chosen("ui/tests/e2e/specs/tips.spec.mjs").groups)
 
     def test_what_only_people_read_runs_nothing(self):
         p = chosen("docs/architecture.md", "plans/next.md", ".github/skills/x/SKILL.md", "infra/tests/kind/up.sh")

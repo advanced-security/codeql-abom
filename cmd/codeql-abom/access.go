@@ -32,7 +32,7 @@ type accessFlags struct {
 func addAccessFlags(fs *flag.FlagSet) *accessFlags {
 	c := &accessFlags{}
 	fs.StringVar(&c.mode, "auth", "none", "who may use ABOM: none, only you at this machine; oidc, people signed in through an identity provider such as Entra ID; or github, people signed in with GitHub through the reading App")
-	fs.StringVar(&c.githubRedirect, "github-redirect-url", "", "this deployment's /auth/callback, registered as a callback URL of the reading App")
+	fs.StringVar(&c.githubRedirect, "github-redirect-url", "", "this deployment's /auth/callback, registered as a redirect URI of the reading App")
 	fs.StringVar(&c.githubRoleMap, "github-role-map", "", "memberships as ABOM roles: org/team, org or org:owners, such as acme/abom-operators=operator,acme=viewer")
 	fs.StringVar(&c.githubSecretFile, "github-client-secret-file", "", "file holding the reading App's client secret (default: $"+githubSecretEnv+")")
 	fs.DurationVar(&c.githubRefresh, "github-role-refresh", 5*time.Minute, "how old a role read from GitHub may be before a change reads it again")
@@ -125,8 +125,9 @@ func (g githubSignIn) SignIn(ctx context.Context, code, verifier, redirect strin
 	return access.GitHubUser(u), err
 }
 
-// wireAccess turns sign-in on: every API request then needs a session, and the deployment answers
-// on its registered host. It says who vouches for the people signing in.
+// wireAccess turns sign-in on: every API request then needs a session, kept in the store so a restart
+// signs nobody out, and the deployment answers on its registered host. It says who vouches for the
+// people signing in.
 func wireAccess(ctx context.Context, c accessFlags, app *ghapp.App, srv *serve.Server) (string, error) {
 	var a *access.Authenticator
 	var through string
@@ -136,7 +137,7 @@ func wireAccess(ctx context.Context, c accessFlags, app *ghapp.App, srv *serve.S
 		if err != nil {
 			return "", err
 		}
-		cfg.Log = srv.Log
+		cfg.Log, cfg.Sessions = srv.Log, srv.Store
 		if a, err = access.NewGitHub(cfg); err != nil {
 			return "", err
 		}
@@ -146,7 +147,7 @@ func wireAccess(ctx context.Context, c accessFlags, app *ghapp.App, srv *serve.S
 		if err != nil || cfg.Issuer == "" {
 			return "", err
 		}
-		cfg.Log = srv.Log
+		cfg.Log, cfg.Sessions = srv.Log, srv.Store
 		if a, err = access.New(ctx, cfg); err != nil {
 			return "", err
 		}

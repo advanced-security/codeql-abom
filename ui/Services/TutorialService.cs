@@ -267,12 +267,22 @@ public sealed class TutorialService(IJSRuntime js, NavigationManager nav, ScopeS
 
     private async void LocationChanged(object? sender, LocationChangedEventArgs args)
     {
-        if (Active is not null && args.Location != _guidedAddress)
-            await ExitAsync(restore: false);
+        try
+        {
+            if (Active is not null && args.Location != _guidedAddress)
+                await ExitAsync(restore: false);
+        }
+        catch (ObjectDisposedException) when (_gone)
+        {
+            // The circuit ended while the walkthrough was being left; there is nothing to leave.
+        }
     }
+
+    private bool _gone;
 
     public void Dispose()
     {
+        _gone = true;
         nav.LocationChanged -= LocationChanged;
         runs.Changed -= DraftChanged;
         _lifetime.Cancel();

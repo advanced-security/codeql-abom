@@ -315,10 +315,10 @@
     @if (!ReadOnly)
     {
     <div class="d-flex gap-2 mt-3">
-        <Tip Text="File this request so an agent or a person can work it.">
+        <Guarded Operation="abom/query-request" Context="denied" Tip="File this request, for an agent or your team to work.">
             <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" DropShadow="false"
-                       Disabled="@(!Complete || _saving)" OnClick="Save" data-abom-request-save>Save</MudButton>
-        </Tip>
+                       Disabled="@(!Complete || _saving || denied is not null)" OnClick="Save" data-abom-request-save>Save</MudButton>
+        </Guarded>
         <Tip Text="Close the form without saving.">
             <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
                        OnClick="OnDiscard" data-abom-request-discard>Discard</MudButton>

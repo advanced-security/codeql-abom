@@ -5,6 +5,7 @@
 @inject AccountService Accounts
 @inject NavigationManager Nav
 @inject RunDraft Draft
+@inject RoleService Roles
 
 @* One draft for every page that offers Run: the versions, whether their results are findings, the
    size of what the host's scope resolves to, and Run. The host says what the run is over; the
@@ -131,11 +132,15 @@
     private string? _sizeRefusal;
     private string _sized = string.Empty;
 
+    // What the signed-in role does not allow, offered disabled with the role it needs.
+    private string? _mayNotRun;
+
     private bool CanStartRun =>
-        !_starting && Draft.Queries.Count > 0 && Predicate.Length > 0 && Accounts.Identity.Login.Length > 0;
+        !_starting && Draft.Queries.Count > 0 && Predicate.Length > 0 && Accounts.Identity.Login.Length > 0 && _mayNotRun is null;
 
     private string RunReason =>
-        Draft.Queries.Count == 0 ? "Choose a query to run first."
+        _mayNotRun is { } refused ? refused
+        : Draft.Queries.Count == 0 ? "Choose a query to run first."
         : Predicate.Length == 0 ? "Choose what to run it on first."
         : Accounts.Identity.Login.Length == 0 ? "Sign in with GitHub to start a run."
         : "Start this run over the scope and open its results.";
@@ -149,10 +154,11 @@
     protected override async Task OnInitializedAsync()
     {
         Draft.Changed += OnDraftChanged;
+        _mayNotRun = await Roles.RefusalAsync("abom/requested-run");
         await Accounts.EnsureLoadedAsync();
         // The crawl's own queries build the graph and report nothing, so they are not on offer.
         var catalog = await Api.GetQueryCatalogAsync();
-        _runnable = [.. catalog.Queries.Where(q => !q.Discovery && !q.Lane && q.QueryVersion.Length > 0)];
+        _runnable = [.. (catalog?.Queries ?? []).Where(q => !q.Discovery && !q.Lane && q.QueryVersion.Length > 0)];
         await Suggest();
     }
 

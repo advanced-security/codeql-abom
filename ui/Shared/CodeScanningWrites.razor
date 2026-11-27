@@ -3,6 +3,7 @@
 @implements IDisposable
 @inject AbomApi Api
 @inject FollowService Follow
+@inject DeclarationService Declaration
 
 @* Beside the pools, because each write spends the default setup pool. What was read comes first, so
    "nothing to add" is never mistaken for "nothing read". A preview asks GitHub nothing and is offered
@@ -10,7 +11,7 @@
 <MudText Typo="Typo.subtitle2" Class="mt-8 mb-1">Actions code scanning</MudText>
 <MudText Typo="Typo.body2" Class="mb-3 mud-text-secondary">
     GitHub has no organization-wide way to choose default setup's languages, so ABOM reads each
-    declared repository's setup and adds <code>actions</code> only where a preview somebody approved
+    declared repository's setup and adds <code>actions</code> only where an approved preview
     listed it. It never writes where advanced setup runs, never removes a language, never changes any
     other setting, and reads every write back before counting it.
 </MudText>
@@ -30,9 +31,11 @@
     <MudTextField T="string" Label="Leave out (owner/name, comma-separated)" Margin="Margin.Dense"
                   Value="@_exclude" ValueChanged="@(v => _exclude = v)"
                   title="Repositories the preview leaves out by name; it never writes them." />
-    <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="_busy" OnClick="PreviewAsync"
-               title="Show what a batch would write to these repositories, from what was last read. Asks GitHub nothing and changes nothing."
-               data-abom-setup-preview-button>Preview</MudButton>
+    <Guarded Operation="abom/enable-code-scanning" Context="denied"
+             Tip="Show what a batch would write to these repositories, from what was last read. Asks GitHub nothing and changes nothing.">
+        <MudButton Variant="Variant.Outlined" Size="Size.Small" Disabled="@(_busy || denied is not null)" OnClick="PreviewAsync"
+                   data-abom-setup-preview-button>Preview</MudButton>
+    </Guarded>
 </div>
 @if (_refusal is { Length: > 0 })
 {
@@ -76,17 +79,21 @@
         <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-1" data-abom-setup-preview-said>@RowsSaid()</MudText>
         @if (_mode?.Writes == true && p.ApprovedBy.Length == 0 && Writable(p) > 0)
         {
-            <MudButton Class="mt-2" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" Disabled="_busy"
-                       OnClick="@(() => ApproveAsync(p.Id))"
-                       title="Record your write token's owner as approving exactly the writes this preview lists."
-                       data-abom-setup-approve>Approve @Writable(p) @(Writable(p) == 1 ? "write" : "writes")</MudButton>
+            <Guarded Operation="abom/enable-code-scanning" Context="denied" Class="mt-2"
+                     Tip="Record your write token's owner as approving exactly the writes this preview lists.">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" Disabled="@(_busy || denied is not null)"
+                           OnClick="@(() => ApproveAsync(p.Id))"
+                           data-abom-setup-approve>Approve @Writable(p) @(Writable(p) == 1 ? "write" : "writes")</MudButton>
+            </Guarded>
         }
         else if (_mode?.Writes == true && p.ApprovedBy.Length > 0 && p.BatchId == 0)
         {
-            <MudButton Class="mt-2" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" Disabled="_busy"
-                       OnClick="@(() => StartAsync(p.Id))"
-                       title="Write each approved repository in turn, reading each one again first and back afterwards."
-                       data-abom-setup-start>Start the batch</MudButton>
+            <Guarded Operation="abom/enable-code-scanning" Context="denied" Class="mt-2"
+                     Tip="Write each approved repository in turn, reading each one again first and back afterwards.">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" Disabled="@(_busy || denied is not null)"
+                           OnClick="@(() => StartAsync(p.Id))"
+                           data-abom-setup-start>Start the batch</MudButton>
+            </Guarded>
         }
     </div>
 }
@@ -103,9 +110,11 @@
             </MudText>
             @foreach (var action in Actions(b.State))
             {
-                <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="_busy"
-                           OnClick="@(() => ActAsync(b.Id, action))"
-                           title="@ActionTitle(action)" data-abom-setup-act="@action">@action</MudButton>
+                <Guarded Operation="abom/enable-code-scanning" Context="denied" Tip="@ActionTitle(action)">
+                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="@(_busy || denied is not null)"
+                               OnClick="@(() => ActAsync(b.Id, action))"
+                               data-abom-setup-act="@action">@action</MudButton>
+                </Guarded>
             }
         </div>
     }
@@ -176,6 +185,7 @@
     private async Task Load()
     {
         _readings = await Api.GetCodeScanningReadingsAsync() ?? _readings;
+        _unconfirmed = DeclarationService.Unconfirmed(await Declaration.ReadAsync());
         _mode = await Api.GetCodeScanningWriteModeAsync() ?? _mode;
         _views = await Api.GetViewsAsync();
         _batches = await Api.GetSetupBatchesAsync() ?? _batches;
@@ -183,11 +193,21 @@
         ApplyFollow();
     }
 
+    private bool _unconfirmed;
+
     private string ReadingsText()
     {
         if (_readings is not { } r)
         {
             return "Reading what was recorded\u2026";
+        }
+        // Readings outlive the decision behind the declaration; counted against none, they read as
+        // more read than there is to read.
+        if (_unconfirmed)
+        {
+            return r.Read > 0
+                ? $"Your declaration is {DeclarationWords.NotConfirmed}, so none of the {r.Read:N0} readings of default setup kept from before counts as a declared repository's."
+                : $"Your declaration is {DeclarationWords.NotConfirmed}, so no repository counts as declared yet.";
         }
         if (r.Read == 0)
         {

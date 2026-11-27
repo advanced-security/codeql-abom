@@ -38,12 +38,12 @@ test('what you own and what it runs are both offered, each describing itself', o
 // A property scope is its own line, saying what it covers as the API counts it, why a held one
 // counts nothing, and when it takes in every repository nobody set. Each line stays inside the
 // table it belongs to, however long a value is.
-test('a property scope says what it covers, why it is held, and what it takes in unasked', on('/settings'), async ({ page, request }) => {
+test('a property scope says what it covers, why it is held, and what it takes in unasked', on('/settings?tab=accounts'), async ({ page, request }) => {
     const declared = await (await request.get('/api/owned-scope')).json();
     const account = declared.find((a) => (a.properties ?? []).length > 0);
     test.skip(!account, 'no account in this corpus is declared by property');
 
-    await page.goto('/settings');
+    await page.goto('/settings?tab=accounts');
     await ready(page);
     const lines = page.locator(`[data-abom-property-scopes='${account.owner}'] [data-abom-property-scope]`);
     await expect(lines).toHaveCount(account.properties.length);

@@ -42,6 +42,7 @@ public abstract class AbomTestContext : BunitContext
         Services.AddSingleton<ThemeService>();
         Services.AddSingleton<AccountService>();
         Services.AddSingleton<RoleService>();
+        Services.AddSingleton<DeclarationService>();
         Services.AddSingleton<ScopeService>();
         Services.AddSingleton<FollowService>();
         Services.AddSingleton<RunDraft>();
@@ -97,6 +98,16 @@ public abstract class AbomTestContext : BunitContext
     /// one endpoint lists on GET and creates on POST, and the two answers have different shapes.
     /// </summary>
     protected void AnswerWrite(string path, string json) => _handler.AnswerWrite(path, json);
+
+    /// <summary>
+    /// Opens Settings at one of its tabs, as a link with <c>?tab=</c> does. Only the tab in view is
+    /// drawn, so a test about one tab's content that rendered another would pass on its absence.
+    /// </summary>
+    protected IRenderedComponent<Pages.Settings> RenderSettings(string tab)
+    {
+        Services.GetRequiredService<Microsoft.AspNetCore.Components.NavigationManager>().NavigateTo("/settings?tab=" + tab);
+        return Render<Pages.Settings>();
+    }
 
     /// <summary>
     /// Puts a scope in the address, which the Explorer requires before it draws anything. A test
@@ -203,7 +214,16 @@ public abstract class AbomTestContext : BunitContext
         public List<string> Timeouts { get; } = [];
         public List<(string Path, HttpStatusCode Status, string Message)> WriteFailures { get; } = [];
         public List<(string Path, HttpStatusCode Status, string Json)> WriteResponses { get; } = [];
-        public List<SentRequest> Sent { get; } = [];
+        // Appended from the handler while a test reads it, so it is handed out as a copy.
+        private readonly List<SentRequest> _sent = [];
+
+        public IReadOnlyList<SentRequest> Sent
+        {
+            get
+            {
+                lock (_sent) return [.. _sent];
+            }
+        }
 
         public void Fail(string path, HttpStatusCode status, string? message = null) =>
             _failures.Add((path, status, message));
@@ -246,7 +266,7 @@ public abstract class AbomTestContext : BunitContext
             var body = request.Content is null
                 ? string.Empty
                 : await request.Content.ReadAsStringAsync(cancellationToken);
-            Sent.Add(new SentRequest(request.Method.Method, url, body));
+            lock (_sent) _sent.Add(new SentRequest(request.Method.Method, url, body));
 
             foreach (var (path, gate) in Gates)
             {

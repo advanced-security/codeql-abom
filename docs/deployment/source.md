@@ -23,8 +23,8 @@ flowchart LR
 | CodeQL | The version in [.codeql-version](../../.codeql-version), on `PATH`. See [install CodeQL](#install-codeql). |
 | Graphviz | [Graphviz](https://graphviz.org/download/), with `dot` on `PATH`: `brew install graphviz` or `apt-get install graphviz`. Every details page draws its figure with it, and the Explorer's stable layout uses it. `serve` refuses to start without it and names the version it found. On Ubuntu 26.04 and later, `make test` also needs the separately packaged neato layout plugin; run [setup-graphviz.sh](../../scripts/setup-graphviz.sh) as CI does, or install the available `libgvplugin-neato-layout*` package for your release. |
 
-These are the only requirements for serving and analyzing. Node, Playwright and golangci-lint are
-development tools. AI authoring and explicit lock verification have
+These are the only requirements for serving and analyzing. Node, Playwright, golangci-lint,
+actionlint and shellcheck are development tools. AI authoring and explicit lock verification have
 [optional dependencies](configuration.md#optional-features). Native platform qualification is still
 pending, so this is not a promise that every Linux distribution or macOS version works.
 
@@ -144,7 +144,7 @@ make start
 and returns once it answers. The first run may need to download the pinned Go toolchain and the
 UI's .NET packages, so it can be slower. Discovery does not start on its own.
 
-Open <http://127.0.0.1:8099/settings>:
+Open <http://127.0.0.1:8099/settings?tab=accounts>, Settings → **Accounts**:
 
 1. The page asks gh which accounts you belong to as soon as it opens, and should report the
    account you authenticated as. If gh is not set up, it says what to run; **Check with gh** asks
@@ -163,7 +163,7 @@ If the listing is not what you expected, change the declaration and save again.
 
 ## Start analysis
 
-Under **How discovery runs** in Settings, press **Start analysis**. The control on the top bar
+In Settings → **Discovery**, the tab Settings opens on, press **Start analysis**. The control on the top bar
 starts and pauses it from any page. Analysis clones each queued repository, builds a CodeQL database
 and follows what it depends on, so it uses every core it is allowed.
 
@@ -178,8 +178,8 @@ Press Ctrl+C to stop following the log. `make stop` stops the server and keeps i
 [operations](operations.md) for restart, persistence and troubleshooting.
 
 For foreground operation, use `make serve` instead of `make start` and stop it with Ctrl+C. Do not
-run both at once. Keep this deployment on loopback: ABOM does not provide browser-user
-authentication or TLS, and `--allow-remote-control` is not an authentication mechanism.
+run both at once. This deployment stays on loopback: without sign-in, `serve` refuses an address any network
+reaches, and provides no TLS. To let other people use it, have them sign in with `--auth`.
 
 If port 8099 is taken, choose another address with `ABOM_ADDR`, and repeat the same override on
 every later `make` command. [Configuration](configuration.md) covers paths, a command-line

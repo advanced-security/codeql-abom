@@ -3,6 +3,7 @@ package execution
 import (
 	"context"
 	"errors"
+	"maps"
 	"os"
 	"regexp"
 	"slices"
@@ -85,6 +86,50 @@ func TestAnAttemptIsAJobOfThePoolsIdentityThatOwnsItsSecret(t *testing.T) {
 	}
 	if err := k.Wait(ctx, attempt); err == nil || !strings.Contains(err.Error(), "the grant has expired") {
 		t.Errorf("a failed job: %v", err)
+	}
+}
+
+// A worker writes only where a volume is mounted: its scratch directory, and /tmp, where CodeQL's JVM
+// keeps its own files. Everything else, HOME and the packs the image installed beneath it included,
+// is read-only as the coordinator's is, so no attempt changes what the next one in its pod runs.
+func TestAWorkerWritesOnlyToItsVolumes(t *testing.T) {
+	k := &Kubernetes{Client: fake.NewSimpleClientset(), Namespace: "abom", Image: "abom:dev", Pool: "discovery",
+		Deadline: time.Hour}
+	pod := k.job("abom-discovery-0123", map[string]string{}, nil).Spec.Template.Spec
+	c := pod.Containers[0]
+	if c.SecurityContext.ReadOnlyRootFilesystem == nil || !*c.SecurityContext.ReadOnlyRootFilesystem {
+		t.Error("a worker's root filesystem is writable")
+	}
+	volumes := map[string]corev1.Volume{}
+	for _, v := range pod.Volumes {
+		volumes[v.Name] = v
+	}
+	writable := map[string]bool{}
+	for _, m := range c.VolumeMounts {
+		if v, ok := volumes[m.Name]; ok && v.EmptyDir != nil && !m.ReadOnly {
+			writable[m.MountPath] = true
+		}
+	}
+	for _, path := range []string{podWork, "/tmp"} {
+		if !writable[path] {
+			t.Errorf("%s is not a writable volume of the attempt's own", path)
+		}
+	}
+	if !slices.Contains(c.Args, podWork) {
+		t.Errorf("the worker is not told to work in %s: %v", podWork, c.Args)
+	}
+	// The lock every CodeQL invocation takes is made in the user's cache directory, which would
+	// otherwise be beneath the read-only HOME; every analysis failed on kind before it began.
+	var cache string
+	for _, e := range c.Env {
+		if e.Name == "XDG_CACHE_HOME" {
+			cache = e.Value
+		}
+	}
+	if !slices.ContainsFunc(slices.Collect(maps.Keys(writable)), func(m string) bool {
+		return cache != "" && (cache == m || strings.HasPrefix(cache, m+"/"))
+	}) {
+		t.Errorf("the worker's cache directory %q is not on a writable volume", cache)
 	}
 }
 

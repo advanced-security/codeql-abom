@@ -24,6 +24,7 @@ type Backend interface {
 	CheckStore
 	TraversalStore
 	CoordinationStore
+	SessionStore
 }
 
 // OpenBackend opens the supported SQLite backend without exposing its connection.

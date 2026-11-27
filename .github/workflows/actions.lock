@@ -25,6 +25,9 @@ workflows:
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
         - 'golangci/golangci-lint-action@v9.3.0'
+    '.github/workflows/lint-workflows.yml':
+        - 'actions/checkout@v7.0.1'
+        - 'actions/setup-go@v7.0.0'
     '.github/workflows/query-unit-tests.yml':
         - 'actions/cache@v6.1.0'
         - 'actions/checkout@v7.0.1'

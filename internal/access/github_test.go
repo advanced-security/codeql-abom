@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -162,5 +164,45 @@ func TestARoleMapThatCannotBeReadIsRefused(t *testing.T) {
 			RedirectURL: "https://abom.example/auth/callback", RoleMap: bad}); err == nil {
 			t.Errorf("NewGitHub accepted the role map %v", bad)
 		}
+	}
+}
+
+// GitHub signs people in as GitHub, and as the server's host when it is not github.com, and the
+// page offers to sign in with it by that name.
+func TestSigningInWithGitHubSaysSo(t *testing.T) {
+	g := &gitHub{person: octocat, roles: map[string]string{"acme|octocat": "member"}}
+	a, _ := newGitHubSignIn(t, g, map[string]string{"acme": authz.RoleViewer})
+	if u, _ := a.User(asked(signInWithGitHub(t, a))); u.Provider != "GitHub" {
+		t.Errorf("Provider = %q; want GitHub", u.Provider)
+	}
+	w := httptest.NewRecorder()
+	a.Page(w, httptest.NewRequest(http.MethodGet, "/auth/", nil))
+	if !strings.Contains(w.Body.String(), "Sign in with GitHub") {
+		t.Errorf("the sign-in page says %q; want it to offer GitHub", w.Body.String())
+	}
+
+	enterprise, err := NewGitHub(GitHubConfig{App: g, Web: "https://ghe.example.com", RedirectURL: "https://abom.example/auth/callback",
+		RoleMap: map[string]string{"acme": authz.RoleViewer}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u, _ := enterprise.User(asked(signInWithGitHub(t, enterprise))); u.Provider != "GitHub at ghe.example.com" {
+		t.Errorf("Provider = %q; want GitHub at ghe.example.com", u.Provider)
+	}
+}
+
+// Each membership that granted a role is said with the role it granted, so somebody can see which
+// one they hold their role by; the highest is the one that applies.
+func TestEachGitHubMembershipSaysWhichRoleItGranted(t *testing.T) {
+	g := &gitHub{person: octocat, roles: map[string]string{"acme|octocat": "admin", "acme/abom-operators|octocat": "member"}}
+	a, _ := newGitHubSignIn(t, g, map[string]string{"acme": authz.RoleViewer, "acme:owners": authz.RoleAdmin,
+		"acme/abom-operators": authz.RoleOperator, "acme/other": authz.RoleAnalyst})
+
+	u, _ := a.User(asked(signInWithGitHub(t, a)))
+
+	want := []Grant{{By: "acme", Role: authz.RoleViewer}, {By: "acme/abom-operators", Role: authz.RoleOperator},
+		{By: "acme:owners", Role: authz.RoleAdmin}}
+	if !slices.Equal(u.Grants, want) || u.Role != authz.RoleAdmin {
+		t.Errorf("Grants = %+v, Role = %q; want %+v and admin", u.Grants, u.Role, want)
 	}
 }

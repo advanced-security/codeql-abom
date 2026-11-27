@@ -83,7 +83,7 @@ public class DiscoveryFirstRunTests : AbomTestContext
             """);
 
         var dialogs = Render<MudBlazor.MudDialogProvider>();
-        var cut = Render<Pages.Settings>();
+        var cut = RenderSettings("data");
 
         cut.WaitForElement("[data-abom-prune-summary]");
         Assert.Empty(dialogs.FindAll("[data-abom-stale-summary]"));
@@ -102,7 +102,7 @@ public class DiscoveryFirstRunTests : AbomTestContext
              "majority":false,"proof":"P1","checkouts":[]}
             """);
 
-        var cut = Render<Pages.Settings>();
+        var cut = RenderSettings("data");
 
         var summary = cut.WaitForElement("[data-abom-prune-summary]").TextContent;
         Assert.Contains("4 queued dependencies", summary);
@@ -118,7 +118,7 @@ public class DiscoveryFirstRunTests : AbomTestContext
              "tombstoned":0,"applied":false,"unavailable":""}
             """);
 
-        var cut = Render<Pages.Settings>();
+        var cut = RenderSettings("data");
 
         var summary = cut.WaitForElement("[data-abom-prune-summary]").TextContent;
         var text = string.Join(" ", summary.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
@@ -137,9 +137,9 @@ public class DiscoveryFirstRunTests : AbomTestContext
         Serve(NothingEnumerated, "[]");
         Fail("api/prune", System.Net.HttpStatusCode.InternalServerError);
 
-        var cut = Render<Pages.Settings>();
+        var cut = RenderSettings("data");
 
-        cut.WaitForAssertion(() => Assert.Contains("What the crawl is working on", cut.Markup));
+        cut.WaitForAssertion(() => Assert.Contains("Removing what you no longer own", cut.Markup));
         Assert.DoesNotContain("could not reach the server", cut.Markup);
     }
 
@@ -152,9 +152,9 @@ public class DiscoveryFirstRunTests : AbomTestContext
         Serve(NothingEnumerated, "[]");
         Fail("api/prune", System.Net.HttpStatusCode.InternalServerError);
 
-        var cut = Render<Pages.Settings>();
+        var cut = RenderSettings("data");
 
-        cut.WaitForAssertion(() => Assert.Contains("What the crawl is working on", cut.Markup));
+        cut.WaitForAssertion(() => Assert.Contains("Removing what you no longer own", cut.Markup));
         Assert.DoesNotContain("Reading what is outside your scope", cut.Markup);
     }
 
@@ -188,12 +188,12 @@ public class DiscoveryFirstRunTests : AbomTestContext
             {"declared":0,"reachable":0,
              "removed":{"repositories":0,"nodes":0,"edges":0,"queued":0},
              "tombstoned":0,"applied":false,
-             "unavailable":"Nothing has been enumerated yet, so there is no closure to be outside of."}
+             "unavailable":"Nothing has been enumerated yet, so nothing can be found outside what you own."}
             """);
 
-        var cut = Render<Pages.Settings>();
+        var cut = RenderSettings("data");
 
-        cut.WaitForAssertion(() => Assert.Contains("What the crawl is working on", cut.Markup));
+        cut.WaitForAssertion(() => Assert.Contains("Removing what you no longer own", cut.Markup));
         Assert.DoesNotContain("could not reach the server", cut.Markup);
         Assert.Contains("Nothing has been enumerated yet", cut.Markup);
         // The trap a zero report sets: it renders as "nothing to remove", which on a corpus
@@ -211,7 +211,7 @@ public class DiscoveryFirstRunTests : AbomTestContext
         Serve(NothingEnumerated, """[{"owner":"octo-org"}]""");
         Fail("api/prune", System.Net.HttpStatusCode.InternalServerError);
 
-        var cut = Render<Pages.Settings>();
+        var cut = RenderSettings("data");
 
         cut.WaitForAssertion(() => Assert.Contains("could not reach the server", cut.Markup));
     }

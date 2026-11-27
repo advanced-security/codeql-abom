@@ -1,12 +1,14 @@
 package access
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -44,7 +46,9 @@ type GitHubConfig struct {
 	// Refresh is how old a role may be before a request that changes something reads it again.
 	Refresh    time.Duration
 	SessionTTL time.Duration
-	Log        io.Writer
+	// Sessions keeps who is signed in across restarts; nil holds them in memory alone.
+	Sessions SessionStore
+	Log      io.Writer
 }
 
 // membershipGrant is one role map entry: whose membership grants role.
@@ -84,7 +88,9 @@ func NewGitHub(cfg GitHubConfig) (*Authenticator, error) {
 		g.owners = owners
 		p.grants = append(p.grants, g)
 	}
-	return authenticate(p, cfg.RedirectURL, cfg.SessionTTL, cfg.Refresh, cfg.Log)
+	// In a stable order, so what granted a role reads the same at every sign-in.
+	slices.SortFunc(p.grants, func(a, b membershipGrant) int { return strings.Compare(a.key, b.key) })
+	return authenticate(p, cfg.RedirectURL, cmp.Or(cfg.SessionTTL, githubSessionTTL), cfg.Refresh, cfg.Sessions, cfg.Log)
 }
 
 func (g *gitHubProvider) authorizeURL(p pending) string {
@@ -97,11 +103,23 @@ func (g *gitHubProvider) identify(ctx context.Context, code string, p pending) (
 	if err != nil {
 		return User{}, fmt.Errorf("GitHub did not sign them in: %w", err)
 	}
-	u := User{ID: g.web + "#" + strconv.FormatInt(who.ID, 10), Name: who.Name, Username: who.Login, Claimed: []string{}}
-	if u.Role, u.Claimed, err = g.roleOf(ctx, who.Login); err != nil {
+	u := User{ID: g.web + "#" + strconv.FormatInt(who.ID, 10), Name: who.Name, Username: who.Login}
+	if u.Role, u.Grants, err = g.roleOf(ctx, who.Login); err != nil {
 		return User{}, fmt.Errorf("%s's memberships could not be read: %w", who.Login, err)
 	}
+	u.Claimed = make([]string, 0, len(u.Grants))
+	for _, gr := range u.Grants {
+		u.Claimed = append(u.Claimed, gr.By)
+	}
 	return u, nil
+}
+
+// name is GitHub, saying which server when it is not github.com.
+func (g *gitHubProvider) name() string {
+	if host := strings.TrimPrefix(strings.TrimPrefix(g.web, "https://"), "http://"); host != "github.com" {
+		return "GitHub at " + host
+	}
+	return "GitHub"
 }
 
 func (g *gitHubProvider) reread(ctx context.Context, u User) (string, bool, error) {
@@ -110,7 +128,7 @@ func (g *gitHubProvider) reread(ctx context.Context, u User) (string, bool, erro
 }
 
 // roleOf is the highest role any membership grants, and the entries that granted one.
-func (g *gitHubProvider) roleOf(ctx context.Context, login string) (string, []string, error) {
+func (g *gitHubProvider) roleOf(ctx context.Context, login string) (string, []Grant, error) {
 	read := map[string]string{}
 	membership := func(org, team string) (string, error) {
 		key := org + "/" + team
@@ -121,7 +139,7 @@ func (g *gitHubProvider) roleOf(ctx context.Context, login string) (string, []st
 		read[key] = role
 		return role, err
 	}
-	best, claimed := "", []string{}
+	best, granted := "", []Grant{}
 	for _, gr := range g.grants {
 		role, err := membership(gr.org, gr.team)
 		if err != nil {
@@ -130,10 +148,10 @@ func (g *gitHubProvider) roleOf(ctx context.Context, login string) (string, []st
 		if role == "" || (gr.owners && role != "admin") {
 			continue
 		}
-		claimed = append(claimed, gr.key)
+		granted = append(granted, Grant{By: gr.key, Role: gr.role})
 		if authz.Rank(gr.role) > authz.Rank(best) {
 			best = gr.role
 		}
 	}
-	return best, claimed, nil
+	return best, granted, nil
 }

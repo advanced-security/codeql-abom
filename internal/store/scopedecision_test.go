@@ -33,7 +33,7 @@ func declarationEntry(t *testing.T, s *Store, digest string) authz.Decision {
 		if e.Digest != digest {
 			continue
 		}
-		d, err := bundle.DecisionOf(e)
+		d, err := bundle.DecisionOf(e, s, nil)
 		if err != nil {
 			t.Fatalf("the logged decision does not verify: %v", err)
 		}
@@ -451,6 +451,92 @@ func TestADeclarationSignedByARetiredKeyAfterItRetiredDoesNotVerify(t *testing.T
 	}
 	if verdict.State != ScopeUnverified || !strings.Contains(verdict.Reason, "not retired before entry") {
 		t.Errorf("a declaration a retired key signed after retiring reads %+v", verdict)
+	}
+}
+
+// unlogged signs as a decision point does and keeps the assertion rather than logging it, as one
+// forging a row to write in place of another would.
+type unlogged struct{ authz.Entry }
+
+func (l *unlogged) AppendAssertion(predicateType, digest string, envelope []byte, _ time.Time) (authz.Entry, error) {
+	l.Entry = authz.Entry{Seq: 1, PredicateType: predicateType, Digest: digest, Envelope: envelope}
+	return l.Entry, nil
+}
+func (l *unlogged) Assertions(int64, int) ([]authz.Entry, error) { return nil, nil }
+func (l *unlogged) Head() (authz.Entry, bool, error)             { return l.Entry, l.Digest != "", nil }
+
+// rewriteLogged replaces what the log holds at seq, as whoever owns the database can once the
+// append-only triggers are out of the way.
+func rewriteLogged(t *testing.T, s *Store, seq int64, digest string, envelope []byte) {
+	t.Helper()
+	unguard := `DROP TRIGGER abom_authz_log_no_update`
+	if s.db.postgres {
+		unguard = `ALTER TABLE abom_authz_log DISABLE TRIGGER abom_authz_log_append_only`
+	}
+	if _, err := s.db.Exec(unguard); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE abom_authz_log SET digest = ?, envelope = ? WHERE seq = ?`, digest, string(envelope), seq); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A copy of a retired key, and a database write that removes the append-only triggers, could put a
+// widened declaration's decision in place of the one the key really signed, where the key's
+// signature still verifies. The scope gate reads the chain from it to the checkpoint the replacing
+// key signed, so the widened declaration holds on no read, and not only under `audit verify`.
+func TestADeclarationRewrittenWhereARetiredKeyWasTrustedDoesNotHold(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.SetOwnedScope([]DeclaredAccount{{Owner: "acme", Kind: AccountOrganization, Enabled: true}},
+		DeclaredByCLI); err != nil {
+		t.Fatal(err)
+	}
+	decided, err := s.OwnedScope()
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, ok, err := s.assertionByDigest(decided[0].DecisionDigest)
+	if err != nil || !ok {
+		t.Fatalf("the declaration's decision is not in the log: %v", err)
+	}
+	stolen := stolenKey(t, s.decisions.dir)
+	if _, err := authz.RotateLocal(s.decisions.dir, s, 7*24*time.Hour, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if verdict, err := s.ScopeVerdict(); err != nil || verdict.State != ScopeSigned {
+		t.Fatalf("the declaration, decided before the rotation, reads %+v, %v", verdict, err)
+	}
+
+	if _, err := s.db.Exec(`INSERT INTO abom_owned_scope (owner, kind, enabled, declared_by, declared_at, decision_digest)
+		SELECT 'evil', kind, enabled, declared_by, declared_at, decision_digest FROM abom_owned_scope WHERE owner = 'acme'`); err != nil {
+		t.Fatal(err)
+	}
+	widened, err := s.OwnedScope()
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept := &unlogged{}
+	forger := &authz.Point{Signer: stolen, Ledger: kept, Now: func() time.Time { return time.Now().Add(-time.Minute) }}
+	forged, err := forger.Decide(context.Background(), authz.Request{Operation: authz.OpDeclareScope,
+		Principal: authz.Principal{Kind: authz.PrincipalOperator, ID: "octocat"},
+		Subject:   scopeSubject(widened), Allow: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rewriteLogged(t, s, original.Seq, forged.Digest(), kept.Envelope)
+	if _, err := s.db.Exec(`INSERT INTO abom_authz_decision (digest, operation, verdict) VALUES (?, ?, ?)`,
+		forged.Digest(), authz.OpDeclareScope, authz.VerdictAllow); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE abom_owned_scope SET decision_digest = ?`, forged.Digest()); err != nil {
+		t.Fatal(err)
+	}
+	verdict, err := s.ScopeVerdict()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verdict.State != ScopeUnverified || !strings.Contains(verdict.Reason, "chain") {
+		t.Errorf("a widened declaration rewritten where a retired key was trusted reads %+v", verdict)
 	}
 }
 

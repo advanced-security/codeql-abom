@@ -14,10 +14,10 @@ async function settled(page) {
     await expect(page.locator('[data-abom-tutorial-coach]')).not.toHaveAttribute('data-abom-tutorial-ready', 'loading');
 }
 
-test('the overview follows Settings, coverage, CodeQL, then Inventory', on('/', '/settings', '/inventory', '/codeql'), async ({ page }) => {
+test('the overview follows Settings, coverage, CodeQL, then Inventory', on('/', '/settings?tab=accounts', '/inventory', '/codeql'), async ({ page }) => {
     await start(page, 'orientation');
     const expected = [
-        '/settings', '/inventory?unit=coverage', '/codeql?tab=requests', '/codeql?tab=catalog',
+        '/settings?tab=accounts', '/inventory?unit=coverage', '/codeql?tab=requests', '/codeql?tab=catalog',
         '/codeql?tab=runs', '/codeql?tab=suites', '/inventory', '/inventory?unit=dependencies',
         '/node/', '/inventory?unit=workflows',
     ];
@@ -52,7 +52,7 @@ for (const [lesson, branch] of [
     ['blast-radius', 'advisories'], ['blast-radius', 'findings'], ['action-dependents', ''],
 ]) {
     test(`guided ${lesson} ${branch} keeps its advertised count and changes no data`,
-        on('/', '/settings', '/codeql', '/inventory'), async ({ page }) => {
+        on('/', '/settings?tab=accounts', '/codeql', '/inventory'), async ({ page }) => {
             test.setTimeout(120_000);
             await start(page, lesson);
             const writes = [];

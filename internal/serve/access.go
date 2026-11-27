@@ -11,6 +11,8 @@ import (
 // Access is how people sign in: *access.Authenticator in production.
 type Access interface {
 	User(*http.Request) (access.User, bool)
+	// Page says where signing in stands for a browser with no session, and offers to sign in.
+	Page(http.ResponseWriter, *http.Request)
 	Login(http.ResponseWriter, *http.Request)
 	Callback(http.ResponseWriter, *http.Request)
 	Logout(http.ResponseWriter, *http.Request)
@@ -20,6 +22,16 @@ type userKey struct{}
 
 func withUser(ctx context.Context, u access.User) context.Context {
 	return context.WithValue(ctx, userKey{}, u)
+}
+
+// actor is who did what a request asks. With sign-in on it is the person signed in, whatever name
+// the body carries, which anyone signed in could set; without it, nobody signed in to say otherwise,
+// so the name the interface sent stands.
+func (s *Server) actor(r *http.Request, claimed string) string {
+	if u, ok := userOf(r.Context()); ok {
+		return u.Called()
+	}
+	return claimed
 }
 
 func userOf(ctx context.Context) (access.User, bool) {

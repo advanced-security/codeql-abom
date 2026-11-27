@@ -86,7 +86,7 @@ Usage of serve:
   -github-client-secret-file string
     	file holding the reading App's client secret (default: $ABOM_GITHUB_CLIENT_SECRET)
   -github-redirect-url string
-    	this deployment's /auth/callback, registered as a callback URL of the reading App
+    	this deployment's /auth/callback, registered as a redirect URI of the reading App
   -github-role-map string
     	memberships as ABOM roles: org/team, org or org:owners, such as acme/abom-operators=operator,acme=viewer
   -github-role-refresh duration

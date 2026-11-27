@@ -547,7 +547,7 @@ public class QueryRequestsTests : AbomTestContext
             Assert.Contains("copilot is not on PATH", problem.TextContent);
             Assert.Contains("--copilot-cli", problem.TextContent);
         });
-        Assert.Equal("/settings#agent-tools", cut.Find("[data-abom-readiness-settings]").GetAttribute("href"));
+        Assert.Equal("/settings?tab=agent-sessions", cut.Find("[data-abom-readiness-settings]").GetAttribute("href"));
     }
 
     /// <summary>
@@ -698,5 +698,31 @@ public class QueryRequestsTests : AbomTestContext
         var cut = Render(One);
 
         Assert.Contains(cut.FindComponents<Shared.Tip>(), t => t.Instance.Text.StartsWith("Resubmit as new"));
+    }
+
+    // A list that could not be read is not an empty one: "no query request yet" over a refused
+    // read tells somebody to file what may already be filed, and loading for ever says nothing.
+    [Fact]
+    public void ARequestListThatCouldNotBeReadSaysSo()
+    {
+        Refuse("api/query-requests", System.Net.HttpStatusCode.InternalServerError, "the store is unavailable");
+        Answer("api/queries", """{"queries":[],"stages":[]}""");
+
+        var cut = Render<Shared.QueryRequests>();
+
+        cut.WaitForElement("[data-abom-requests-unread]");
+        Assert.Empty(cut.FindAll("[data-abom-requests-empty]"));
+    }
+
+    [Fact]
+    public void ACatalogThatCouldNotBeReadSaysSo()
+    {
+        Refuse("api/queries", System.Net.HttpStatusCode.InternalServerError, "the store is unavailable");
+
+        var cut = Render<Shared.QueryCatalogView>();
+
+        cut.WaitForElement("[data-abom-queries-unread]");
+        Assert.Empty(cut.FindAll("[data-abom-queries-empty]"));
+        Assert.Empty(cut.FindAll("[data-abom-queries-loading]"));
     }
 }

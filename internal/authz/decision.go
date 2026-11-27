@@ -243,15 +243,25 @@ func (b Bundle) Decision(e Envelope, at time.Time) (Decision, error) {
 }
 
 // DecisionOf verifies a log entry as the decision it holds, by its place in the log rather than the
-// time its row records, which whatever wrote the row chose.
-func (b Bundle) DecisionOf(e Entry) (Decision, error) {
+// time its row records, which whatever wrote the row chose. One a retired key signed is honored only
+// once the chain from it, read from log, reaches a checkpoint by a key still deciding; pins remembers
+// the entries that has been shown for, and may be nil.
+func (b Bundle) DecisionOf(e Entry, log LogReader, pins *Pins) (Decision, error) {
 	var env Envelope
 	if err := json.Unmarshal(e.Envelope, &env); err != nil {
 		return Decision{}, fmt.Errorf("authz: entry %d holds no envelope: %w", e.Seq, err)
 	}
-	st, err := b.OpenLogged(env, e.Seq)
+	if digest, err := env.Digest(); err != nil || digest != e.Digest {
+		return Decision{}, fmt.Errorf("authz: entry %d holds an envelope that is not the assertion it names", e.Seq)
+	}
+	st, by, err := b.openLogged(env, e.Seq)
 	if err != nil {
 		return Decision{}, err
+	}
+	if b.retired(by) {
+		if err := pins.vouch(b, e, log); err != nil {
+			return Decision{}, err
+		}
 	}
 	return decisionOf(env, st)
 }

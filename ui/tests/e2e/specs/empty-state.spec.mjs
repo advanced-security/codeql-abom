@@ -54,10 +54,10 @@ test.describe('nothing declared yet', () => {
 
     // A fresh install opened on a name field; it now asks gh first. The suite's gh is logged in to
     // nothing, so what arrives is the remedy, through the real control path a browser takes.
-    test('Settings asks gh before asking the reader', on('/settings'), async ({ page }) => {
+    test('Settings asks gh before asking the reader', on('/settings?tab=accounts'), async ({ page }) => {
         const checked = page.waitForResponse(
             r => r.url().endsWith('/api/accounts/refresh') && r.request().method() === 'POST');
-        await page.goto('/settings');
+        await page.goto('/settings?tab=accounts');
         await ready(page);
 
         expect((await checked).status(), 'the check is answered, not refused').toBe(200);

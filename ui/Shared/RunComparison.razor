@@ -3,6 +3,7 @@
 @implements IDisposable
 @inject AbomApi Api
 @inject AccountService Accounts
+@inject RoleService Roles
 
 @* A run's results against the alerts developers already see: what adopting its queries would add. *@
 @if (Offered)
@@ -59,7 +60,14 @@
     /// <summary>Offered once a run has stopped with something counted: results still moving compare to nothing.</summary>
     private bool Offered => Run is { State: not ("pending" or "running") } && Run.Members.Any(m => m.Counted);
 
-    protected override async Task OnInitializedAsync() => await Accounts.EnsureLoadedAsync();
+    // What the signed-in role does not allow, offered disabled with the role it needs.
+    private string? _mayNotRun;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _mayNotRun = await Roles.RefusalAsync("abom/requested-run");
+        await Accounts.EnsureLoadedAsync();
+    }
 
     // Read once per run that has stopped: the run page re-renders this on its own beat.
     protected override async Task OnParametersSetAsync()
@@ -101,13 +109,13 @@
         }
     }
 
-    private bool CanCompare => !_starting && Accounts.Identity.Login.Length > 0 && _comparison?.State != "running";
+    private bool CanCompare => !_starting && Accounts.Identity.Login.Length > 0 && _comparison?.State != "running" && _mayNotRun is null;
 
-    private string StartReason => Accounts.Identity.Login.Length == 0
+    private string StartReason => _mayNotRun ?? (Accounts.Identity.Login.Length == 0
         ? "Sign in with gh: a comparison records who asked for it."
         : _comparison?.State == "running"
             ? "This comparison is still reading code scanning alerts."
-            : "Read the code scanning alerts GitHub holds now for these repositories and set this run's results against them. Nothing is written to GitHub.";
+            : "Read the code scanning alerts GitHub holds now for these repositories and set this run's results against them. Nothing is written to GitHub.");
 
     private async Task Start()
     {

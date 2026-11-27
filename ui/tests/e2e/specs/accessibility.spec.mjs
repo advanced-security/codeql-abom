@@ -24,8 +24,16 @@ const ANCHOR = {
     '/explore': '.abom-keypanel',
     '/inventory': '.mud-table-body .mud-table-row',
     '/codeql': '[data-abom-queries-table] [data-abom-query-id]',
-    '/settings': '[data-abom-declared]',
+    '/settings': '[data-abom-run]',
+    '/settings?tab=accounts': '[data-abom-declared]',
+    '/settings?tab=code-scanning': '[data-abom-setup-preview-button]',
+    '/settings?tab=agent-sessions': '[data-abom-readiness]',
+    '/settings?tab=data': '[data-abom-prune-summary], [data-abom-prune-clean], [data-abom-prune-error]',
+    '/settings?tab=you': '[data-abom-you]',
 };
+
+// Settings shows one tab at a time; each is measured as drawn.
+const SETTINGS_TABS = ['accounts', 'code-scanning', 'agent-sessions', 'data', 'you'].map((t) => `/settings?tab=${t}`);
 
 // The Explorer's legend and presentation controls exist only once something is drawn, so this
 // measures the drawn page rather than the chooser — the chooser has three controls and the drawing
@@ -123,7 +131,7 @@ const UNNAMED = (notOurs) => {
 };
 
 test.describe('every control says what it is', () => {
-    for (const route of ROUTES) {
+    for (const route of [...ROUTES, ...SETTINGS_TABS]) {
         test(`${route} offers no control the browser would announce as nothing`, on(VISIT[route] ?? route), async ({
             page,
             request,

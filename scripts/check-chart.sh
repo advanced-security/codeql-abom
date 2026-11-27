@@ -60,6 +60,9 @@ oidc=(--set signIn.mode=oidc --set signIn.issuer=https://issuer.example --set si
 
 render default
 ! grep -qE -- '-cpu-limit=$' "$out" || note "a pool with no CPU limit set renders an empty one"
+# The lock every CodeQL invocation takes is made in the user's cache directory, beneath the
+# read-only HOME unless it is moved onto the coordinator's scratch.
+grep -qF '{name: XDG_CACHE_HOME, value: /tmp/cache}' "$out" || note "the coordinator's cache directory is on its read-only root"
 render eks "${filled[@]}"
 # The key's own region signs, which need not be the bucket's.
 grep -qF 'name: AWS_REGION, value: "eu-west-1"' "$out" || note "decisions are not signed in the KMS key's own region"
@@ -80,6 +83,9 @@ for want in --auth=github --github-role-map=acme/abom-operators=operator,acme:ow
 	--addr=0.0.0.0:8080; do
 	grep -qF -- "$want" "$out" || note "the github profile does not render $want"
 done
+# Every container ABOM runs, the App's init containers too, writes only to the volumes it mounts.
+[ "$(grep -c 'readOnlyRootFilesystem: true' "$out")" = "$(grep -c 'allowPrivilegeEscalation: false' "$out")" ] ||
+	note "a container of the github profile has a writable root filesystem"
 render oidc "${oidc[@]}" --set ingress.enabled=true --set ingress.host=abom.example \
 	--set 'networkPolicy.webFrom[0].ipBlock.cidr=10.0.0.0/16' \
 	--set publisherApp.secretName=abom-publisher --set decisions.kmsKey=arn:aws:kms:us-east-1:111111111111:key/k

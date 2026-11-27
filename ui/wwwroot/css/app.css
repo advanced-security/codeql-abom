@@ -2461,4 +2461,37 @@ code {
 
 /* The account menu: who you are, your role, and what it lets you do, in a column a menu can hold. */
 .abom-account { padding: 8px 16px; max-width: 320px; }
+.abom-account-bar {
+    display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+    padding: 2px 10px 2px 2px; border-radius: 16px;
+}
+.abom-account-bar:hover { background: var(--mud-palette-action-default-hover); }
+.abom-account-login { font-size: var(--abom-text-sm); font-weight: 500; white-space: nowrap; }
+.abom-account-bar-role {
+    font-size: var(--abom-text-xs); line-height: 1.5; padding: 0 6px; white-space: nowrap;
+    border: 1px solid currentColor; border-radius: 8px; opacity: 0.85;
+}
+@media (max-width: 900px) {
+    .abom-account-login, .abom-account-bar-role { display: none; }
+}
+
+/* A word on a Settings tab that needs you: outlined in the text's own colour, so it reads without hue. */
+.abom-tab-badge {
+    margin-left: 6px; padding: 0 6px; border: 1px solid currentColor; border-radius: 8px;
+    font-size: var(--abom-text-xs); line-height: 1.5; text-transform: none; font-weight: 500;
+}
+
+/* A Settings tab opens on its first section, not on the gap that separated it from the one above. */
+.abom-settings-panel > .mt-8:first-child { margin-top: 0 !important; }
+
+/* Who you are to ABOM, on Settings: labels in one column, as wide as the longest. */
+.abom-you {
+    display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 24px;
+    max-width: 720px; margin: 0; font-size: var(--mud-typography-body2-size);
+}
+.abom-you dt { font-weight: 500; color: var(--mud-palette-text-secondary); }
+.abom-you dd { margin: 0; }
+.abom-you-list { margin: 0; padding-left: 18px; }
+.abom-you-may { columns: 2; column-gap: 24px; }
+@media (max-width: 900px) { .abom-you-may { columns: 1; } }
 .abom-account-may { margin: 4px 0 0; padding-left: 18px; font-size: var(--abom-text-sm); }

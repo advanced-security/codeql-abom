@@ -62,7 +62,7 @@ func TestARetiredKeyVerifiesOnlyTheEntriesTheLogHeldWhenItRetired(t *testing.T) 
 	if r.Failure == nil || r.Failure.Seq != 4 || !strings.Contains(r.Failure.Why, "retired") {
 		t.Errorf("an entry the retired key signed after retiring verifies as %+v", r)
 	}
-	if _, err := b.DecisionOf(ledger.entries[3]); err == nil {
+	if _, err := b.DecisionOf(ledger.entries[3], ledger, nil); err == nil {
 		t.Error("the forged decision opens as a logged one")
 	}
 	// A row can be inserted at a position of its own choosing, before the log's first; the
@@ -70,11 +70,11 @@ func TestARetiredKeyVerifiesOnlyTheEntriesTheLogHeldWhenItRetired(t *testing.T) 
 	early := ledger.entries[3]
 	for _, seq := range []int64{0, -1} {
 		early.Seq = seq
-		if _, err := b.DecisionOf(early); err == nil {
+		if _, err := b.DecisionOf(early, ledger, nil); err == nil {
 			t.Errorf("the forged decision opens as a logged one placed at %d, before the log begins", seq)
 		}
 	}
-	if _, err := b.DecisionOf(ledger.entries[0]); err != nil {
+	if _, err := b.DecisionOf(ledger.entries[0], ledger, nil); err != nil {
 		t.Errorf("what the local key decided before retiring no longer verifies: %v", err)
 	}
 }
@@ -180,5 +180,154 @@ func TestNoKeyIsMadeBesideALogAnotherKeySigned(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(elsewhere, keyFile)); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("the refused directory holds a key anyway: %v", err)
+	}
+}
+
+// countingLog counts the reads that verifying an entry's place in the log makes.
+type countingLog struct {
+	*memLedger
+	reads int
+}
+
+func (c *countingLog) Assertions(after int64, limit int) ([]Entry, error) {
+	c.reads++
+	return c.memLedger.Assertions(after, limit)
+}
+
+// rotatedLog is three decisions the first key signed, the rotation's checkpoint the key replacing it
+// signed, and a decision of the new key's; with the first key, as a copy of it would sign.
+func rotatedLog(t *testing.T) (*memLedger, Bundle, Signer) {
+	t.Helper()
+	old, dir := signer(t)
+	ledger := &memLedger{}
+	for i := 1; i <= 3; i++ {
+		decideOn(t, old, ledger, t0.Add(time.Duration(i)*time.Minute))
+	}
+	fresh, err := RotateLocal(dir, ledger, 7*24*time.Hour, t0.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decideOn(t, fresh, ledger, t0.Add(2*time.Hour))
+	return ledger, bundle(t, dir), old
+}
+
+// A copy of a retired key cannot rewrite what the key signed while it decided. Its signature
+// verifies at every position the key was trusted for, so only the chain the replacing key
+// checkpointed tells a rewritten row from the original, and a gate acting on the row checks it
+// there rather than leaving it to `audit verify`.
+func TestARowRewrittenWhereARetiredKeyWasTrustedIsRefusedByTheChain(t *testing.T) {
+	ledger, b, stolen := rotatedLog(t)
+	for _, e := range ledger.entries[:3] {
+		if _, err := b.DecisionOf(e, ledger, nil); err != nil {
+			t.Fatalf("entry %d, which the retired key signed while it decided, does not verify: %v", e.Seq, err)
+		}
+	}
+	scratch := &memLedger{}
+	forger := &Point{Signer: stolen, Ledger: scratch, Now: func() time.Time { return t0.Add(2 * time.Minute) }}
+	widened := declare
+	widened.Subject = "octo,evil"
+	if _, err := forger.Decide(context.Background(), widened); err != nil {
+		t.Fatal(err)
+	}
+
+	// The row alone, with the append-only triggers out of the way: the chain after it is what the
+	// checkpoint pins.
+	ledger.entries[1].Digest, ledger.entries[1].Envelope = scratch.entries[0].Digest, scratch.entries[0].Envelope
+	if _, err := b.DecisionOf(ledger.entries[1], ledger, nil); err == nil || !strings.Contains(err.Error(), "chain") {
+		t.Errorf("a decision rewritten where the retired key was trusted opens: %v", err)
+	}
+
+	// Recomputing the chain from the row moves every value after it off the one the checkpoint names.
+	prev := ledger.entries[0].Chain
+	for i := 1; i < 3; i++ {
+		ledger.entries[i].Chain = NextChain(prev, ledger.entries[i].Digest)
+		prev = ledger.entries[i].Chain
+	}
+	if _, err := b.DecisionOf(ledger.entries[1], ledger, nil); err == nil {
+		t.Error("a decision rewritten where the retired key was trusted, the chain recomputed after it, opens")
+	}
+}
+
+// A retired key's entry no checkpoint by a key still deciding covers is not honored: until one
+// names a head at or after it, nothing still trusted vouches for the chain through it.
+func TestARetiredKeysEntryNoCheckpointCoversIsRefused(t *testing.T) {
+	old, dir := signer(t)
+	ledger := &memLedger{}
+	decideOn(t, old, ledger, t0.Add(time.Minute))
+	b := bundle(t, dir)
+	b.Keys[0].NotAfter, b.Keys[0].LastSeq = t0.Add(time.Hour).Format(time.RFC3339Nano), 1
+	if _, err := b.DecisionOf(ledger.entries[0], ledger, nil); err == nil || !strings.Contains(err.Error(), "checkpoint") {
+		t.Errorf("a retired key's entry no checkpoint covers opens: %v", err)
+	}
+	if _, err := b.DecisionOf(ledger.entries[0], nil, nil); err == nil {
+		t.Error("a retired key's entry opens with no log to read the chain from")
+	}
+}
+
+// The scope gate verifies the declaration on every ownership read, so the chain from an entry a
+// retired key signed is walked once, and what the key still deciding signed reads nothing more.
+func TestTheChainFromARetiredKeysEntryIsWalkedOnce(t *testing.T) {
+	ledger, b, _ := rotatedLog(t)
+	log := &countingLog{memLedger: ledger}
+	var pins Pins
+	if _, err := b.DecisionOf(ledger.entries[4], log, &pins); err != nil || log.reads != 0 {
+		t.Errorf("a decision of the key still deciding read the log %d times: %v", log.reads, err)
+	}
+	if _, err := b.DecisionOf(ledger.entries[1], log, &pins); err != nil {
+		t.Fatal(err)
+	}
+	walked := log.reads
+	if walked == 0 {
+		t.Fatal("a decision the retired key signed opened without its chain being read")
+	}
+	for range 3 {
+		if _, err := b.DecisionOf(ledger.entries[1], log, &pins); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if log.reads != walked {
+		t.Errorf("opening the same decision three more times read the log %d more times, want none", log.reads-walked)
+	}
+}
+
+// A checkpoint vouches for the chain only when a key still deciding signed it. Copies of two
+// retired keys could otherwise rewrite a decision the first signed and checkpoint the result with
+// the second, which was trusted at that position too.
+func TestOnlyACheckpointByAKeyStillDecidingVouchesForTheChain(t *testing.T) {
+	first, dir := signer(t)
+	ledger := &memLedger{}
+	decideOn(t, first, ledger, t0.Add(time.Minute))
+	decideOn(t, first, ledger, t0.Add(2*time.Minute))
+	second, err := RotateLocal(dir, ledger, 7*24*time.Hour, t0.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decideOn(t, second, ledger, t0.Add(2*time.Hour))
+	if _, err := RotateLocal(dir, ledger, 7*24*time.Hour, t0.Add(3*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	b := bundle(t, dir)
+	if _, err := b.DecisionOf(ledger.entries[1], ledger, nil); err != nil {
+		t.Fatalf("the first key's decision, under two rotations, does not verify: %v", err)
+	}
+
+	scratch := &memLedger{}
+	widened := declare
+	widened.Subject = "octo,evil"
+	forger := &Point{Signer: first, Ledger: scratch, Now: func() time.Time { return t0.Add(2 * time.Minute) }}
+	if _, err := forger.Decide(context.Background(), widened); err != nil {
+		t.Fatal(err)
+	}
+	ledger.entries[1].Digest, ledger.entries[1].Envelope = scratch.entries[0].Digest, scratch.entries[0].Envelope
+	ledger.entries[1].Chain = NextChain(ledger.entries[0].Chain, ledger.entries[1].Digest)
+	vouching := &Point{Signer: second, Ledger: scratch, Now: func() time.Time { return t0.Add(time.Hour) }}
+	if err := vouching.checkpoint(context.Background(), ledger.entries[1], t0.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	forged := scratch.entries[len(scratch.entries)-1]
+	ledger.entries[2].Digest, ledger.entries[2].Envelope = forged.Digest, forged.Envelope
+	ledger.entries[2].Chain = NextChain(ledger.entries[1].Chain, forged.Digest)
+	if _, err := b.DecisionOf(ledger.entries[1], ledger, nil); err == nil {
+		t.Error("a decision rewritten with one retired key and checkpointed with another opens")
 	}
 }

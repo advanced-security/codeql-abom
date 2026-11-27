@@ -72,19 +72,21 @@ else if (_readiness is { Known: true } r && Editable)
                                                   Immediate="true" Variant="Variant.Outlined" Margin="Margin.Dense"
                                                   Label="@($"Path to the {c.Name}")" Placeholder="@($"/absolute/path/to/{c.Key}")"
                                                   Disabled="_saving" />
-                                    <Tip Text="@($"Check this executable on the server and, if it runs, use it for the {c.Name} ahead of any flag or variable.")">
+                                    <Guarded Operation="abom/configure" Context="denied"
+                                             Tip="@($"Check this executable on the server and, if it runs, use it for the {c.Name} ahead of any flag or variable.")">
                                         <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
-                                                   Disabled="@(_saving || EditOf(c).Trim().Length == 0)"
+                                                   Disabled="@(_saving || EditOf(c).Trim().Length == 0 || denied is not null)"
                                                    OnClick="@(() => Save(c.Key, EditOf(c).Trim()))"
                                                    data-abom-tool-save="@c.Key">Save</MudButton>
-                                    </Tip>
+                                    </Guarded>
                                     @if (c.Source == "Settings" || c.Saved.Length > 0)
                                     {
-                                        <Tip Text="Forget the path kept in Settings and go back to what the server's flags, environment or PATH name.">
-                                            <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="_saving"
+                                        <Guarded Operation="abom/configure" Context="denied"
+                                                 Tip="Forget the path kept in Settings and go back to what the server's flags, environment or PATH name.">
+                                            <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="@(_saving || denied is not null)"
                                                        OnClick="@(() => Save(c.Key, string.Empty))"
                                                        data-abom-tool-default="@c.Key">Use default</MudButton>
-                                        </Tip>
+                                        </Guarded>
                                     }
                                 </div>
                             }
@@ -124,7 +126,7 @@ else if (_readiness is { Known: true, Ready: false } blocked)
             @if (blocked.Checks.Any(c => c.Settable))
             {
                 <Tip Text="Open Settings, where the CodeQL and Copilot CLI paths are set and every check is listed.">
-                    <MudLink Href="/settings#agent-tools" Typo="Typo.body2" data-abom-readiness-settings>Set CLI paths in Settings</MudLink>
+                    <MudLink Href="/settings?tab=agent-sessions" Typo="Typo.body2" data-abom-readiness-settings>Set CLI paths in Settings</MudLink>
                 </Tip>
             }
             <Tip Text="Ask the server to run each CLI again now, rather than repeating what it last read.">

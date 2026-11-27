@@ -105,13 +105,13 @@
                         @foreach (var tier in Tiers)
                         {
                             <td>
-                                <Tip Text="@BindHint(tier, suite)">
+                                <Guarded Operation="abom/configure" Context="denied" Tip="@BindHint(tier, suite)">
                                     <MudCheckBox T="bool" Dense="true" Size="Size.Small"
-                                                 Color="Color.Primary" Disabled="@_busy"
+                                                 Color="Color.Primary" Disabled="@(_busy || denied is not null)"
                                                  Value="@IsBound(tier, suite)"
                                                  aria-label="@($"{SuiteBindingText.Label(suite)} on the {tier} tier")"
                                                  ValueChanged="@(_ => ToggleSuite(tier, suite))" />
-                                </Tip>
+                                </Guarded>
                             </td>
                         }
                     </tr>

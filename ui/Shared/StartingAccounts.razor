@@ -1,0 +1,104 @@
+@using Abom.WebAssembly.Models
+@using Abom.WebAssembly.Services
+@inject AbomApi Api
+@inject AccountService Accounts
+@implements IDisposable
+
+<MudText Typo="Typo.subtitle2" Class="mt-8 mb-1">Accounts holding repositories discovery started from</MudText>
+<MudText Typo="Typo.body2" Class="mb-3 mud-text-secondary">
+    These accounts hold repositories known to ABOM. This does not mean you own them or that they
+    have been analyzed.
+</MudText>
+
+@if (_candidates is null)
+{
+    <MudProgressLinear Indeterminate="true" Class="my-8" />
+}
+else
+{
+    <SearchField Value="@_search" ValueChanged="@(v => _search = v)"
+                 Placeholder="Filter accounts" Class="mb-3" />
+
+    <MudDataGrid T="OwnerCandidate" Items="Filtered" Dense="true" Hover="true" Bordered="false"
+                 SortMode="SortMode.Multiple" Filterable="false" FixedHeader="true"
+                 Class="abom-grid abom-grid-windowed" RowsPerPage="25">
+        <Columns>
+            <TemplateColumn Title="Yours" Sortable="false">
+                <HeaderTemplate><HeaderTip Tip="Whether you have declared this account as yours, whole or only some of its repositories.">Yours</HeaderTip></HeaderTemplate>
+                <CellTemplate>
+                    @if (Accounts.IsDeclared(context.Item.Owner) && Accounts.IsDeclaredInPart(context.Item.Owner))
+                    {
+                        <MudTooltip Text="Declared in part: only the repositories you named, or that carry a property scope's values, are yours.">
+                            <span data-abom-candidate-declared="@context.Item.Owner" data-abom-extent="part">
+                                <MudIcon Icon="@Icons.Material.Outlined.Person" Size="Size.Small"
+                                         Color="Color.Primary" Class="abom-owned-mark" />
+                            </span>
+                        </MudTooltip>
+                    }
+                    else if (Accounts.IsDeclared(context.Item.Owner))
+                    {
+                        <MudTooltip Text="Declared: you have stated this account is yours.">
+                            <span data-abom-candidate-declared="@context.Item.Owner" data-abom-extent="whole">
+                                <MudIcon Icon="@Icons.Material.Filled.Person" Size="Size.Small"
+                                         Color="Color.Primary" Class="abom-owned-mark" />
+                            </span>
+                        </MudTooltip>
+                    }
+                </CellTemplate>
+            </TemplateColumn>
+            <PropertyColumn Property="x => x.Owner" Title="Account">
+                <HeaderTemplate><HeaderTip Tip="An account that holds at least one starting point.">Account</HeaderTip></HeaderTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.Repositories" Title="Seeded">
+                <HeaderTemplate><HeaderTip Tip="How many starting points discovery has found under this account.">Seeded</HeaderTip></HeaderTemplate>
+            </PropertyColumn>
+            <PropertyColumn Property="x => x.Findings" Title="Findings">
+                <HeaderTemplate><HeaderTip Tip="How many findings CodeQL rules reported in this account's starting points.">Findings</HeaderTip></HeaderTemplate>
+            </PropertyColumn>
+        </Columns>
+        <PagerContent>
+            <MudDataGridPager T="OwnerCandidate" />
+        </PagerContent>
+    </MudDataGrid>
+}
+
+@code {
+    private IReadOnlyList<OwnerCandidate>? _candidates;
+    private string _search = string.Empty;
+    private AccountIdentity? _readFor;
+
+    private IEnumerable<OwnerCandidate> Filtered =>
+        (_candidates ?? []).Where(c =>
+            string.IsNullOrWhiteSpace(_search) ||
+            c.Owner.Contains(_search, StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync()
+    {
+        Accounts.Changed += Reread;
+        await Accounts.EnsureLoadedAsync();
+        await Read();
+    }
+
+    // Membership decides the marks, so the list is read again whenever the accounts are checked again,
+    // including while the first read is in flight.
+    private async Task Read()
+    {
+        var identity = Accounts.Identity;
+        _candidates = await Api.GetOwnerCandidatesAsync();
+        _readFor = identity;
+        if (!ReferenceEquals(identity, Accounts.Identity)) await Read();
+    }
+
+    private void Reread()
+    {
+        if (_readFor is null || ReferenceEquals(_readFor, Accounts.Identity)) return;
+        _readFor = null;
+        _ = InvokeAsync(async () =>
+        {
+            await Read();
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose() => Accounts.Changed -= Reread;
+}

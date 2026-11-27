@@ -21,6 +21,7 @@ builder.Services.AddScoped<InstanceService>();
 builder.Services.AddScoped<ThemeService>();
 builder.Services.AddScoped<AccountService>();
 builder.Services.AddScoped<RoleService>();
+builder.Services.AddScoped<DeclarationService>();
 // Shared so every surface reads and acts on the same scope.
 builder.Services.AddSingleton<ScopeService>();
 // Shared so open surfaces refresh on one follow cadence.

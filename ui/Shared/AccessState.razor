@@ -1,17 +1,15 @@
 @using Abom.WebAssembly.Models
 @using Abom.WebAssembly.Services
 @inject RoleService Roles
-@inject NavigationManager Navigation
 
-@* What signing in came to, said once for the whole page: a sign-in the server refused, and an account
-   with no ABOM role, which otherwise reads as every page failing on its own. *@
-@if (Refused(_signin) is { } said)
+@* No page is drawn until ABOM has said who is asking: drawn first, a page fetches figures the server
+   may refuse and shows them as none. An account with no ABOM role sees one state for the whole page,
+   rather than every page failing on its own. *@
+@if (!_known)
 {
-    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3" data-abom-signin-refused="@_signin">
-        @said <MudLink Href="@($"auth/login?return={Uri.EscapeDataString("/")}")" title="Start signing in again with your provider.">Sign in again</MudLink>
-    </MudAlert>
+    <MudProgressLinear Indeterminate="true" Class="my-8" data-abom-access-pending />
 }
-@if (_noRole)
+else if (_noRole)
 {
     <MudAlert Severity="Severity.Info" Class="my-4" data-abom-no-role>
         <MudText Typo="Typo.subtitle1">Your account has no ABOM role</MudText>
@@ -29,22 +27,12 @@ else
 @code {
     [Parameter] public RenderFragment? ChildContent { get; set; }
 
-    private string? _signin;
+    private bool _known;
     private bool _noRole;
 
     protected override async Task OnInitializedAsync()
     {
-        var query = new Uri(Navigation.Uri).Query;
-        _signin = System.Web.HttpUtility.ParseQueryString(query).Get("signin");
         _noRole = await Roles.MeAsync() is { Mode: "signed-in", User.Role.Length: 0 };
+        _known = true;
     }
-
-    private static string? Refused(string? kind) => kind switch
-    {
-        "not-started" => "That sign-in was not started in this browser, so it was not used.",
-        "mismatch" => "That sign-in did not answer the one this browser started, so it was not used.",
-        "refused" => "Your identity provider refused the sign-in.",
-        "failed" => "The sign-in could not be completed; whoever runs ABOM can see why in its log.",
-        _ => null,
-    };
 }

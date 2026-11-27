@@ -88,21 +88,42 @@ for (const theme of ['light', 'dark']) {
         expect(channels[3]).toBeGreaterThanOrEqual(theme === 'dark' ? 0.8 : 0.4);
         await expect(page.locator('[data-abom-tutorial-toggle]')).toHaveCount(0);
         await page.locator('[data-abom-tutorial-exit]').click();
-        await page.goto('/settings');
+        await page.goto('/settings?tab=accounts');
         await expect(target).toBeVisible();
         expect(await color()).toBe(during);
     });
 }
 
-test('Settings offers tutorials without removing the header discovery tracker', on('/settings'), async ({ page }) => {
+// The list sat above every Settings tab; it is Home's, and Settings keeps the header's tracker.
+test('Settings leaves tutorials to Home and keeps the header discovery tracker', on('/settings'), async ({ page }) => {
     await page.addLocatorHandler(page.getByRole('button', { name: 'Not now', exact: true }),
         async button => { await button.click(); });
     await page.goto('/settings');
     await ready(page);
+    await expect(page.locator('[data-abom-tabs]')).toBeVisible();
     await expect(page.locator('[data-abom-crawl]')).toBeVisible();
-    await expect(page.locator('[data-abom-tutorial-title]')).toHaveCount(6);
-    await page.locator('[data-abom-tutorial-title="new-rule"]').click();
-    await expect(page.locator('.abom-tutorial-position').first()).toContainText('Request a new detection rule');
-    await page.keyboard.press('Escape');
-    await expect(page).toHaveURL(/\/settings$/);
+    await expect(page.locator('[data-abom-tutorial-title]')).toHaveCount(0);
+});
+
+test.describe('a first visit', () => {
+    test.use({ tutorialFresh: true });
+
+    // The invitation sat above an open dialog, covering what somebody had just asked to see.
+    test('the welcome prompt waits while a dialog is open', on('/codeql?tab=catalog'), async ({ page }) => {
+        await page.goto('/codeql?tab=catalog');
+        await ready(page);
+        await expect(page.locator('[data-abom-queries-table], [data-abom-queries-empty]').first()).toBeVisible({ timeout: 30_000 });
+        const open = page.locator('[data-abom-query-components]').first();
+        test.skip(!(await open.count()), 'no query version with components in this corpus');
+        const welcome = page.locator('[data-abom-tutorial-welcome]');
+        await expect(welcome).toBeVisible();
+
+        await open.click();
+        await expect(page.locator('.mud-dialog')).toBeVisible();
+        await expect(welcome).toBeHidden();
+
+        await page.keyboard.press('Escape');
+        await expect(page.locator('.mud-dialog')).toHaveCount(0);
+        await expect(welcome).toBeVisible();
+    });
 });

@@ -14,12 +14,14 @@ from dataclasses import dataclass, field
 
 # Order is verify's: the longest group starts first.
 GROUPS = ["interface", "go", "postgres", "ql", "checks"]
-CHECKS = ["check-corrupt", "check-versions", "check-release-version", "pins", "chart", "fmt", "vet",
-          "lint", "script-test", "js", "style"]
+CHECKS = ["check-corrupt", "check-versions", "check-release-version", "pins", "workflows", "chart", "fmt",
+          "vet", "lint", "script-test", "js", "style"]
 
 # A change to any of these reaches every check.
 EVERYTHING = {"Makefile", "go.mod", "go.sum", ".codeql-version"}
 EVERYTHING_UNDER = ("testdata/",)
+# What signing in in a browser depends on: the access package, the test identity provider and the suite.
+SIGN_IN = ("internal/access/", "infra/tests/oidc-issuer/", "ui/tests/e2e/signin/", "ui/tests/e2e/playwright.signin.config.mjs")
 
 # Read by people, and by no check.
 UNCHECKED = {"LICENSE", "NOTICE", "CODEOWNERS", ".gitattributes", ".gitignore"}
@@ -83,6 +85,11 @@ def plan(changed, packages, dirs):
                 return None
             touched.add(pkg)
             p.add("checks", "check-corrupt", "fmt", "vet", "lint")
+            if path.startswith(SIGN_IN):
+                p.add("interface", "e2e-signin")
+        elif path.startswith(SIGN_IN):
+            p.add("interface", "e2e-signin")
+            p.add("checks", "js")
         elif path.startswith("ui/tests/e2e/"):
             p.add("checks", "js")
         elif path.startswith(("ui/wwwroot/js/", "ui/tools/")):
@@ -98,15 +105,19 @@ def plan(changed, packages, dirs):
                 p.add("checks", "check-versions", "check-release-version")
         elif path.startswith("infra/k8s/") or path in ("scripts/check-chart.sh", "scripts/setup-helm.sh"):
             p.add("checks", "chart")
-        elif path.startswith(("infra/docker/", "infra/qlaas-repo-template/")) or path == ".dockerignore":
+        elif path.startswith("infra/qlaas-repo-template/"):
+            p.add("checks", "check-versions", "workflows")
+        elif path.startswith("infra/docker/") or path == ".dockerignore":
             p.add("checks", "check-versions")
         elif path in ("scripts/check-versions.sh", "scripts/check-release-version.sh", "scripts/release-version.sh",
                       "scripts/upgrade-packs.sh", "scripts/update-release-version.sh"):
             p.add("checks", "check-versions", "check-release-version")
+        elif path in ("scripts/check-workflows.sh", ".github/actionlint.yaml"):
+            p.add("checks", "workflows")
         elif top in ("scripts", ".devcontainer"):
             p.add("checks", "script-test")
         elif path.startswith((".github/workflows/", ".github/actions/")):
-            p.add("checks", "pins")
+            p.add("checks", "pins", "workflows")
         elif path in (".github/dependabot.yml", ".github/dependency-review-config.yml"):
             continue
         elif path == ".golangci.yml":

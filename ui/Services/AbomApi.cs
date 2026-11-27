@@ -18,8 +18,9 @@ public sealed class AbomApi(HttpClient http, TutorialService? tutorial = null)
         PropertyNameCaseInsensitive = true,
     };
 
-    public async Task<Summary> GetSummaryAsync(CancellationToken ct = default) =>
-        await GetAsync<Summary>("api/summary", ct) ?? new Summary();
+    /// <summary>The figures Home counts, or null when they could not be read: never noughts in their place.</summary>
+    public async Task<Summary?> GetSummaryAsync(CancellationToken ct = default) =>
+        await GetAsync<Summary>("api/summary", ct);
 
     public async Task<AccountIdentity> GetAccountsAsync(CancellationToken ct = default) =>
         await GetAsync<AccountIdentity>("api/accounts", ct) ?? new AccountIdentity();
@@ -289,8 +290,9 @@ public sealed class AbomApi(HttpClient http, TutorialService? tutorial = null)
         await GetListAsync<NamedView>("api/views", ct);
 
     /// <summary>Every query version the ledger has a run for, and the lifecycle it is staged against.</summary>
-    public async Task<QueryCatalog> GetQueryCatalogAsync(CancellationToken ct = default) =>
-        await GetAsync<QueryCatalog>("api/queries", ct) ?? new QueryCatalog();
+    /// Null when it could not be read, which an empty catalog would otherwise be mistaken for.
+    public async Task<QueryCatalog?> GetQueryCatalogAsync(CancellationToken ct = default) =>
+        await GetAsync<QueryCatalog>("api/queries", ct);
 
     /// <summary>
     /// Asks for a run of query versions over the databases a predicate resolves to.
@@ -334,8 +336,9 @@ public sealed class AbomApi(HttpClient http, TutorialService? tutorial = null)
     }
 
     /// <summary>Every query request, newest first, with the vocabularies a form offers.</summary>
-    public async Task<QueryRequestList> GetQueryRequestsAsync(CancellationToken ct = default) =>
-        await GetAsync<QueryRequestList>("api/query-requests", ct) ?? new QueryRequestList();
+    /// Null when it could not be read, which an empty list would otherwise be mistaken for.
+    public async Task<QueryRequestList?> GetQueryRequestsAsync(CancellationToken ct = default) =>
+        await GetAsync<QueryRequestList>("api/query-requests", ct);
 
     /// <summary>A refusal is the reader leaving something out, so it is returned, not thrown.</summary>
     public Task<(QueryRequestList? List, string? Refusal)> SaveQueryRequestAsync(

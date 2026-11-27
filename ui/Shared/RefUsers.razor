@@ -33,11 +33,13 @@
                     @if (u.LockCoverage.Contains("covered") || u.LockCoverage.Contains("unsupported"))
                     {
                         @* Runs the tool once, offline and no-fix, because it was pressed. *@
-                        <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-verify-lock"
-                                   data-abom-verify-lock="@u.FullName"
-                                   Disabled="@(_verifying == u.FullName)"
-                                   title="@($"Check {u.FullName}'s lock file locally and refresh this row.")"
-                                   OnClick="@(() => VerifyLock(u.FullName))">check lock</MudButton>
+                        <Guarded Operation="abom/lock-verify" Context="denied"
+                                 Tip="@($"Check {u.FullName}'s lock file locally and refresh this row.")">
+                            <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-verify-lock"
+                                       data-abom-verify-lock="@u.FullName"
+                                       Disabled="@(_verifying == u.FullName || denied is not null)"
+                                       OnClick="@(() => VerifyLock(u.FullName))">check lock</MudButton>
+                        </Guarded>
                     }
                     @if (_verifyRefusal.TryGetValue(u.FullName, out var refusal))
                     {

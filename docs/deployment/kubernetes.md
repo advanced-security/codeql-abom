@@ -18,6 +18,9 @@ registry.
 | Object store | S3, or an S3-compatible store beside kind. Grants, packs and results pass through it. |
 | Workload PKI | cert-manager, trust-manager and csi-driver-spiffe. Each pool runs as its own ServiceAccount and SPIFFE identity, and a result is accepted only as signed by its pool's. |
 
+Every pod runs as a non-root user with a read-only root filesystem. A Job writes only to its own
+scratch volume and `/tmp`, so nothing an attempt does changes what the next one runs.
+
 ## On kind
 
 `make kind-up` builds the image and brings up the cluster, its PKI, PostgreSQL, an object store and
@@ -89,7 +92,7 @@ placeholders are `<ACCOUNT_ID>`, `<REGION>`, `<CLUSTER>`, `<ECR_REPO>`, `<RDS_EN
      `abom-oidc` Secret under `client-secret`; `signIn.mode: oidc`. Where an MFA or conditional
      access policy is required, this is the way.
    - GitHub: `signIn.mode: github` through the reading App, with `https://<HOST>/auth/callback`
-     added as a callback URL in its settings, a client secret generated there in the Secret
+     added as a redirect URI in its settings, a client secret generated there in the Secret
      `signIn.clientSecretName` names, and `signIn.roleMap`.
 10. **GitHub Apps.** The reading App's directory in the Secret `githubApp.secretName` names. A
     publisher for query exports, installed on its one repository, in `publisherApp.secretName`.
@@ -114,3 +117,17 @@ What the kind cluster is drilled against, on EKS:
 - `kubectl -n abom exec deploy/abom-coordinator -- codeql-abom audit verify` verifies every signed
   decision, grant and receipt, reading the database and the trust bundle from the pod's
   environment.
+
+## Stop, restart and uninstall
+
+A coordinator that stops deletes the Jobs it started, their Secrets with them, and one that starts
+deletes any its predecessor left behind; what they were analyzing is asked again. Discovery that was
+running is left paused unless resume-on-start is on in Settings. Sessions are kept in the database,
+so a rollout signs nobody out. `helm rollback` changes the image and not the database: an earlier
+image starts against the schema a later one migrated to, since migrations only add, but nothing
+promises it reads everything the later one wrote.
+
+`helm uninstall` keeps the `abom-state` volume, which holds the decision key, so a reinstall in the
+namespace verifies every decision already made. It leaves the Secrets you created and the
+`abom-decision-trust` ConfigMap the coordinator publishes its public keys in. To remove ABOM
+entirely, delete those and the volume as well.

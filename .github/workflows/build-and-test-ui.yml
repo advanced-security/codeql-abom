@@ -142,7 +142,7 @@ jobs:
       # Offline by construction: `make corpus` replays recorded CodeQL output, so the populated
       # run needs no CLI, no network and no token.
       - name: Build - Build the binary, the interface and the shared data set
-        run: make build publish corpus
+        run: make build publish corpus oidc-issuer
 
       # Which spec files exist, read from the directory rather than listed in this file: a suite
       # split across jobs by a hand-written list is one where a new spec file is silently never
@@ -150,7 +150,7 @@ jobs:
       - name: Build - List the spec files
         id: specs
         run: |
-          names=$(cd ui/tests/e2e/specs && ls -1 ./*.spec.mjs | xargs -n1 basename)
+          names=$(cd ui/tests/e2e/specs && find . -maxdepth 1 -name '*.spec.mjs' -exec basename {} \; | sort)
           if [ -z "$names" ]; then
             echo "no spec files under ui/tests/e2e/specs"; exit 1
           fi
@@ -167,7 +167,7 @@ jobs:
       # One tarball rather than 216 loose files, because an artifact of a Blazor publish is mostly
       # `_framework`, and it also carries the executable bit that the artifact format drops.
       - name: Build - Pack what the suite drives
-        run: tar -czf interface.tar.gz bin/codeql-abom .abom/ui/wwwroot .abom/corpus
+        run: tar -czf interface.tar.gz bin/codeql-abom .abom/oidc-issuer .abom/ui/wwwroot .abom/corpus
 
       - name: Build - Upload what the suite drives
         uses: actions/upload-artifact@v7.0.1
@@ -258,11 +258,57 @@ jobs:
           SPEC: ${{ matrix.spec }}
         run: make e2e-corpus-run ABOM_E2E_SPECS="specs/$SPEC"
 
+  # The interface with sign-in on: people signed in through the test identity provider, which no
+  # spec in the suite above can do because every one of its pages assumes nobody signs in.
+  signin:
+    name: Interface - Browser suite with sign-in
+    needs: build
+    runs-on: ubuntu-26.04
+
+    steps:
+      - name: Sign-in suite - Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Sign-in suite - Setup Node.js
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version-file: '.node-version'
+          cache: 'npm'
+          cache-dependency-path: ui/tests/e2e/package-lock.json
+
+      - name: Sign-in suite - Download what it drives
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: interface
+
+      - name: Sign-in suite - Unpack what it drives
+        run: tar -xzf interface.tar.gz && rm interface.tar.gz
+
+      - name: Sign-in suite - Install the harness
+        working-directory: ui/tests/e2e
+        run: npm ci --no-fund --no-audit
+
+      - name: Sign-in suite - Cache the pinned browser
+        uses: actions/cache@v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('ui/tests/e2e/package-lock.json') }}
+
+      - name: Sign-in suite - Install the pinned browser
+        working-directory: ui/tests/e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Sign-in suite - Setup Graphviz
+        run: scripts/setup-graphviz.sh
+
+      - name: Sign-in suite - Sign in as each role
+        run: make e2e-signin-run
+
   # One check to read, and one name for a ruleset to require. A split workflow otherwise reports
   # as a list that grows whenever a spec file is added, which no required-check list can follow.
   interface:
     name: Build and Test - Interface
-    needs: [browser, build, components, suite]
+    needs: [browser, build, components, signin, suite]
     if: always()
     runs-on: ubuntu-26.04
 
@@ -273,6 +319,7 @@ jobs:
           BUILD: ${{ needs.build.result }}
           COMPONENTS: ${{ needs.components.result }}
           SUITE: ${{ needs.suite.result }}
+          SIGNIN: ${{ needs.signin.result }}
         run: |
           {
             echo "## Interface"
@@ -283,7 +330,8 @@ jobs:
             echo "| Blazor build and component tests | $COMPONENTS |"
             echo "| Binary, interface and shared data set | $BUILD |"
             echo "| Browser suite, empty and populated | $SUITE |"
+            echo "| Browser suite with sign-in | $SIGNIN |"
           } >> "$GITHUB_STEP_SUMMARY"
-          for result in "$BROWSER" "$BUILD" "$COMPONENTS" "$SUITE"; do
+          for result in "$BROWSER" "$BUILD" "$COMPONENTS" "$SIGNIN" "$SUITE"; do
             if [ "$result" != "success" ]; then exit 1; fi
           done

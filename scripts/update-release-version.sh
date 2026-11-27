@@ -62,11 +62,11 @@ pack_manifests() {
 }
 
 read_printast_version() {
-	sed -n 's/^const ToolsPack = toolsPackName + "@\([^"]*\)".*/\1/p' "${REPO_ROOT}/${PRINTAST_GO}" | head -1
+	sed -n 's/^const ToolsPack = toolsPackName + "@\([^"]*\)".*/\1/p' "${REPO_ROOT}/${PRINTAST_GO}" | sed -n 1p
 }
 
 read_copilot_version() {
-	sed -n 's/.*codeql-development-mcp-server@\([^" ]*\).*/\1/p' "${REPO_ROOT}/${COPILOT_GO}" | head -1
+	sed -n 's/.*codeql-development-mcp-server@\([^" ]*\).*/\1/p' "${REPO_ROOT}/${COPILOT_GO}" | sed -n 1p
 }
 
 ## Emits "file|version|kind" where kind is "base" for files that only ever carry X.Y.Z.

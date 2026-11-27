@@ -24,12 +24,33 @@ coordinator into pools of Jobs; authoring is the last work still in it.
   `organization_copilot_requests` token for the session and hands it over in the Job's Secret,
   owned by the Job, as analysis hands a repository token over today. No person's token is used.
 
+## What a session does with the store today
+
+Measured in `internal/harness`, where 4,360 lines run a session inside the coordinator:
+
+- **While the agent runs it writes** events (`Sessions.recorder` → `RecordAuthoringEvent`), printed
+  trees (`keeper` → `RecordAuthoringAST`), spend (`AddAuthoringSpend`), the model the runtime chose
+  (`SetAuthoringSessionModel`), the query a request targets (`DecideTarget`, twice in `session.go`)
+  and test results, through `RunTests`. Drafting adds `RecordRequestDraft`.
+- **It reads** the request, the catalog, a query's tests and newest trees, the analysis run a draft
+  came from and the sessions already on record.
+- **Events point at rows the store numbered.** A printed tree's event carries the tree's row id in
+  `Capture.ArtifactID` and in its own words ("as printout 12"). A worker cannot know those ids, so
+  its journal numbers what it keeps itself and the coordinator renumbers on ingest, both the field
+  and the sentence; or the event names the tree by digest. Decide which before 1.
+- **The seam already exists for analysis.** `expand.RemoteRunner` with `execution.Runner` behind it,
+  grants signed through `authz.Point`, content-addressed uploads, and a signed receipt per attempt.
+  Sessions follow the same pattern; nothing about them needs a second protocol.
+
 ## Pending
 
 1. **The session contract.** What a session needs as inputs (the request, the workspace snapshot,
-   the test database) and what it returns (the workspace's changed files, the audit events, the
-   tree prints), as content-addressed objects under the pool's prefix, with a result attestation
-   signed by the attempt. Depends on nothing.
+   the test database, and the reads above as of the start) and what it returns (the workspace's
+   changed files, a journal of everything it would have written, the tree prints), as
+   content-addressed objects under the pool's prefix, with a result attestation signed by the
+   attempt. Begin with a `Sink` in the harness that every write above goes through, store-backed as
+   today, and prove a journal replayed into the store yields the same rows as writing directly.
+   Depends on nothing.
 2. **The worker command.** `codeql-abom worker` runs a session from its grant: it verifies the grant,
    materializes the workspace, starts ql-mcp behind the one-call-at-a-time relay, runs the Copilot CLI
    with the confinement the local harness applies, and uploads what changed. Depends on 1.

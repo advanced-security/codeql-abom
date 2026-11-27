@@ -1,5 +1,6 @@
 @page "/"
 @inject AbomApi Api
+@inject DeclarationService Declaration
 
 <PageTitle>ABOM — Actions Bill of Materials</PageTitle>
 
@@ -12,6 +13,15 @@
 </PageHeader>
 
 <TutorialChecklist />
+
+<DeclarationState />
+
+@if (_read && _summary is null)
+{
+    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3" data-abom-summary-unread>
+        ABOM could not read its figures just now, so none is shown. Reload the page to ask again.
+    </MudAlert>
+}
 
 <section class="abom-home-scopes" data-abom-home-scopes aria-labelledby="abom-home-scopes-title">
 <h2 id="abom-home-scopes-title" class="mud-typography mud-typography-subtitle1">Explore your inventory</h2>
@@ -28,12 +38,12 @@
                 @* style-check: off — each card is a link into the scope its figure counts, so the
                    figure is the way in rather than a count tile beside one. *@
                 <MudText Typo="Typo.h5" data-abom-count
-                         Class="@(Unclaimed(s) ? "abom-num abom-coverage-unknown" : "abom-num")">
-                    @(Unclaimed(s) ? "none" : s.Count.ToString("N0"))
+                         Class="@(Said(s) is null ? "abom-num" : "abom-num abom-coverage-unknown")">
+                    @(Said(s) ?? s.Count.ToString("N0"))
                 </MudText>
                 @* style-check: on *@
                 <MudText Typo="Typo.caption" Class="mud-text-secondary">@s.Measures</MudText>
-                @if (s.Severity.Length > 0 && !Unclaimed(s))
+                @if (s.Severity.Length > 0 && Said(s) is null)
                 {
                     <MudText Typo="Typo.caption" Class="mud-text-secondary d-block"
                              data-abom-entry-severity>@s.Severity</MudText>
@@ -56,20 +66,36 @@
 </section>
 
 @code {
-    private Summary _summary = new();
+    private Summary? _summary;
+    private bool _read;
+    private ScopeDecision? _decision;
 
     [Inject] private NavigationManager Nav { get; set; } = default!;
 
-    protected override async Task OnInitializedAsync() => _summary = await Api.GetSummaryAsync();
+    protected override async Task OnInitializedAsync()
+    {
+        _summary = await Api.GetSummaryAsync();
+        _read = true;
+        _decision = await Declaration.ReadAsync();
+    }
 
     private void Go(string href) => Nav.NavigateTo(href);
 
     private sealed record Entry(string Key, string Title, int Count, string Measures, string Href,
         string Icon, string Tip, bool Owned = false, string Severity = "");
 
-    // Nothing declared is an absence of a claim, not a measurement of zero, and the coverage strip
-    // says so in this same word. A nought here would read as a set examined and found clean.
-    private bool Unclaimed(Entry e) => e.Owned && _summary.OwnedRepos == 0;
+    // What a card says in place of its count, or null when the count stands. Nothing read is not a
+    // nought; a declaration nobody confirmed is not an empty one; and nothing declared is an absence
+    // of a claim, which the coverage strip says in this same word. Each nought would read as a set
+    // examined and found clean.
+    private string? Said(Entry e) =>
+        !_read ? "\u2026"
+        : _summary is null ? "not read"
+        : e.Owned && DeclarationService.Unconfirmed(_decision) ? DeclarationWords.NotConfirmed
+        : e.Owned && _summary.OwnedRepos == 0 ? "none"
+        : null;
+
+    private Summary S => _summary ?? new();
 
     // Every control names a count it can produce and the scope that produces it. Where a figure
     // can be bounded to the declaration it is, and the total it was drawn from is named beside
@@ -77,24 +103,24 @@
     // own reads as the other.
     private IEnumerable<Entry> Entries =>
     [
-        new("findings", "Findings in what you own", _summary.OwnedFindings,
-            $"of {_summary.Findings:N0} recorded, across {_summary.Rules} rules",
+        new("findings", "Findings in what you own", S.OwnedFindings,
+            $"of {S.Findings:N0} recorded, across {S.Rules} rules",
             "/inventory?unit=workflows&flags=findings", Icons.Material.Outlined.PlayCircleOutline,
-            "Open the Inventory at the workflows that have findings.", Owned: true, Severity: SeverityText.Summary(_summary.OwnedSeverity)),
-        new("advisories", "Advisories recorded", _summary.Advisories,
-            $"published advisories, naming {_summary.AffectedActions:N0} actions in use",
+            "Open the Inventory at the workflows that have findings.", Owned: true, Severity: SeverityText.Summary(S.OwnedSeverity)),
+        new("advisories", "Advisories recorded", S.Advisories,
+            $"published advisories, naming {S.AffectedActions:N0} actions in use",
             "/inventory?unit=advisories", Icons.Material.Outlined.Build,
             "Open the Inventory at the published advisories that name an action in use."),
-        new("actions", "Dependencies in use", _summary.Dependencies,
+        new("actions", "Dependencies in use", S.Dependencies,
             "actions, composite actions and images your starting points run or hold",
             "/inventory", Icons.Material.Outlined.Extension,
             "Open the Inventory at every action, composite action and image your starting points run or hold."),
-        new("repositories", "Repositories you own", _summary.OwnedRepos,
-            $"declared of {_summary.SeedRepos:N0}",
+        new("repositories", "Repositories you own", S.OwnedRepos,
+            $"declared of {S.SeedRepos:N0}",
             "/inventory?unit=repositories&scope=owned", Icons.Material.Outlined.FolderOpen,
             "Open the Inventory at the repositories you declared as yours.", Owned: true),
-        new("exposure", "On a route to an advisory", _summary.OwnedExposures,
-            $"from a repository you declared, of {_summary.Exposures:N0} recorded",
+        new("exposure", "On a route to an advisory", S.OwnedExposures,
+            $"from a repository you declared, of {S.Exposures:N0} recorded",
             "/inventory?scope=exposure", Icons.Material.Outlined.Route,
             "Open the Inventory at the actions on a route from a repository you declared to an advisory.",
             Owned: true),

@@ -709,14 +709,18 @@ from its own crawl, not an import of a SQLite database.
 | `abom_app_installation`, `abom_app_installer` | The App's installations as last read, and who created each, from its delivery |
 | `repository` | Every repository seen, with `origin` recording how it entered |
 | `abom_authz_log` | Every signed authorization assertion in the order it was made, each chained to the one before; triggers refuse an update or a delete |
+| `abom_session` | Who is signed in, by the digest of each session cookie, until the session expires or is signed out |
 
 **A decision is signed and logged.** The decision point signs each verdict, a refusal as much as a
 grant, as a DSSE envelope holding an in-toto Statement, with an ECDSA P-256 key kept in `authz/`
 beside the database (or named with `--authz-dir`) and trusted through the bundle there; a rotation
-keeps the old key trusted for a window. Every assertion is appended to `abom_authz_log`, with a
+retires the old key at the log's head, which the new key checkpoints, and keeps it trusted for a
+window for what is presented now. Every assertion is appended to `abom_authz_log`, with a
 signed checkpoint over the head every hundred entries and when the server stops, and `codeql-abom
 audit verify` re-checks every signature and the chain offline, stopping at the first entry that
-fails and trusting nothing after it.
+fails and trusting nothing after it. A logged decision a retired key signed is honored only once the
+chain from it reaches a checkpoint by a key still deciding, since a copy of that key could otherwise
+rewrite the row unseen; each is walked once per process.
 
 **A declaration drives work only under its signed decision.** Writing a declaration is the decision:
 the store judges it by the rule Settings offers, signs the verdict with the judgments as evidence,
@@ -735,6 +739,15 @@ command that writes is decided the same way before it acts, and every command na
 or why it needs none. Tests fail a route or command added without one, a second writer of the
 declaration or the log, and any entry point reaching a different decision about the same
 declaration. Requests the boundary refuses are not logged, so no web page can grow the log.
+
+**Who did something is who signed in.** With sign-in on, every record of who acted, such as who
+started a run, filed a request, adopted a policy or advanced a query, is the signed-in person, whatever
+name the request carries; a test refuses a handler that reads a claimed name before replacing it.
+Without sign-in nobody signs in to say otherwise, and the name the interface sends stands. A session
+is kept in `abom_session` by the digest of its cookie, never the cookie, so a restart signs nobody
+out: it lasts an hour through an identity provider, whose roles are read once at sign-in, and eight
+through GitHub, which reads memberships again before a change, and ends after two hours unused.
+Without sign-in the interface listens on loopback alone.
 
 **Analysis is admitted before it is granted.** The source policy decides whether a repository may
 be read: public, or declared owned with evidence that code scanning is licensed there; eligibility

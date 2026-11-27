@@ -19,13 +19,11 @@
          data-abom-crawl-state="@(_error is not null ? "unknown" : _state.Available ? _state.Status.State : "unavailable")">
         @if (_state.Available)
         {
-        <MudTooltip Text="@ToggleHint">
-            <span>
-                <MudIconButton Icon="@ToggleIcon" Color="@ToggleColor" Size="Size.Small"
-                               Disabled="@(_busy || IsPausing)" OnClick="Toggle"
-                               aria-label="@ToggleHint" data-abom-crawl-toggle />
-            </span>
-        </MudTooltip>
+        <Guarded Operation="abom/discovery-control" Tip="@ToggleHint" Placement="Placement.Bottom" Context="denied">
+            <MudIconButton Icon="@ToggleIcon" Color="@ToggleColor" Size="Size.Small"
+                           Disabled="@(_busy || IsPausing || denied is not null)" OnClick="Toggle"
+                           aria-label="@(denied ?? ToggleHint)" data-abom-crawl-toggle />
+        </Guarded>
         }
         else
         {

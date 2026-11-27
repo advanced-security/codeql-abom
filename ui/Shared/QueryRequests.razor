@@ -4,6 +4,7 @@
 @inject AccountService Accounts
 @inject RequestDraft Asked
 @inject FollowService Follow
+@inject RoleService Roles
 @implements IDisposable
 
 @* Both examples are required: they are what a query's test is written from. *@
@@ -19,7 +20,7 @@
         <MudSpacer />
         <Tip Text="@NewTip">
             <MudButton Size="Size.Small" Variant="Variant.Outlined" DropShadow="false"
-                       StartIcon="@Icons.Material.Outlined.Add" Disabled="@(!CanFile || _draft is not null)"
+                       StartIcon="@Icons.Material.Outlined.Add" Disabled="@(!CanFile || _draft is not null || _mayNotFile is not null)"
                        OnClick="New" data-abom-request-new>New request</MudButton>
         </Tip>
     </div>
@@ -40,7 +41,13 @@
                           OnSaved="Saved" OnDiscard="Discard" />
     }
 
-    @if (_list is null)
+    @if (Unread)
+    {
+        <MudAlert Severity="Severity.Warning" Dense="true" data-abom-requests-unread>
+            The query requests could not be read just now, so none is listed. Reload the page to ask again.
+        </MudAlert>
+    }
+    else if (_list is null)
     {
         <MudProgressLinear Indeterminate="true" />
     }
@@ -89,7 +96,7 @@
                                 <MudText Typo="Typo.caption" Class="abom-nowrap">Delete #@context.Item.RowId?</MudText>
                                 <Tip Text="Delete it now, with what was written in it. Files in your pack are not touched.">
                                     <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Error" DropShadow="false"
-                                               Disabled="_busy" OnClick="@(() => Delete(context.Item.RowId))"
+                                               Disabled="@(_busy || _mayNotFile is not null)" OnClick="@(() => Delete(context.Item.RowId))"
                                                data-abom-request-delete-confirm>Delete</MudButton>
                                 </Tip>
                                 <Tip Text="Keep this request as it is.">
@@ -103,9 +110,9 @@
                         {
                             @if (IsWorking(context.Item))
                             {
-                                <Tip Text="Stop the agent working this request. What it wrote stays.">
+                                <Tip Text="@(_mayNotAuthor ?? "Stop the agent working this request. What it wrote stays.")">
                                     <MudIconButton Icon="@Icons.Material.Outlined.StopCircle" Size="Size.Small" Color="Color.Error"
-                                                   Disabled="_busy" OnClick="@(() => StopAgent(context.Item.RowId))"
+                                                   Disabled="@(_busy || _mayNotAuthor is not null)" OnClick="@(() => StopAgent(context.Item.RowId))"
                                                    aria-label="@($"Stop the agent working request #{context.Item.RowId}")"
                                                    data-abom-request-stop />
                                 </Tip>
@@ -114,7 +121,7 @@
                             {
                                 <Tip Text="@AgentTip">
                                     <MudIconButton Icon="@Icons.Material.Outlined.SmartToy" Size="Size.Small" Color="Color.Primary"
-                                                   Disabled="@(!CanFile || _readiness?.FirstProblem is not null || _busy)"
+                                                   Disabled="@(!CanFile || _readiness?.FirstProblem is not null || _busy || _mayNotAuthor is not null)"
                                                    OnClick="@(() => StartAgent(context.Item.RowId))"
                                                    aria-label="@($"Work request #{context.Item.RowId} with an agent")"
                                                    data-abom-request-agent />
@@ -140,9 +147,9 @@
                                                aria-label="@($"Resubmit request #{context.Item.RowId} as a new request")"
                                                data-abom-request-resubmit />
                             </Tip>
-                            <Tip Text="Delete this request; asks first. One an agent has worked keeps its record and is not deleted: resubmit it as new instead.">
+                            <Tip Text="@(_mayNotFile ?? "Delete this request; asks first. One an agent has worked keeps its record and is not deleted: resubmit it as new instead.")">
                                 <MudIconButton Icon="@Icons.Material.Outlined.Delete" Size="Size.Small"
-                                               Disabled="_busy"
+                                               Disabled="@(_busy || _mayNotFile is not null)"
                                                OnClick="@(() => _deleting = context.Item.RowId)"
                                                aria-label="@($"Delete request #{context.Item.RowId}")"
                                                data-abom-request-delete />
@@ -310,6 +317,10 @@
     [Parameter] public long FocusRequest { get; set; }
 
     private QueryRequestList? _list;
+    private bool _read;
+
+    // Read and not answered: a list that failed, never one still arriving.
+    private bool Unread => _read && _list is null;
     private QueryCatalog? _catalog;
     private QueryRequest? _draft;
     private AuthoringReadiness? _readiness;
@@ -328,19 +339,25 @@
     public TimeSpan Beat => _beat;
 
     private string AgentTip =>
-        !CanFile ? "Sign in with gh to record who started the agent."
+        _mayNotAuthor ?? (!CanFile ? "Sign in with gh to record who started the agent."
         : _readiness?.FirstProblem is { } p ? $"No agent session can start until this is fixed: {p.Name}: {p.Reason}."
-        : "Work it with an agent: it writes and tests this query in your pack; the row shows where it is.";
+        : "Work it with an agent: it writes and tests this query in your pack; the row shows where it is.");
 
     private bool CanFile => Accounts.Identity.Login.Length > 0;
 
     private string NewTip =>
-        !CanFile ? "Sign in with gh to record who asked."
+        _mayNotFile ?? (!CanFile ? "Sign in with gh to record who asked."
         : _draft is not null ? "Finish or discard the open form first."
-        : "Ask for a new or improved CodeQL query for GitHub Actions code.";
+        : "Ask for a new or improved CodeQL query for GitHub Actions code.");
+
+    // What the signed-in role does not allow, offered disabled with the role it needs.
+    private string? _mayNotFile;
+    private string? _mayNotAuthor;
 
     protected override async Task OnInitializedAsync()
     {
+        _mayNotFile = await Roles.RefusalAsync("abom/query-request");
+        _mayNotAuthor = await Roles.RefusalAsync("abom/authoring");
         if (FocusRequest != 0)
         {
             _opened.Add(FocusRequest);
@@ -349,6 +366,7 @@
         await Accounts.EnsureLoadedAsync();
         var catalog = Api.GetQueryCatalogAsync();
         _list = await Api.GetQueryRequestsAsync();
+        _read = true;
         _catalog = await catalog;
         Arm();
         if (Asked.Request is { } asked)

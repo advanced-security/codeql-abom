@@ -74,6 +74,7 @@ func (s *Server) setTool(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "the request body is not the expected JSON")
 		return
 	}
+	body.By = s.actor(r, body.By)
 	switch err := s.Toolchain.SetTool(r.Context(), r.PathValue("tool"), body.Path, body.By); {
 	case errors.Is(err, toolchain.ErrUnusable):
 		writeError(w, http.StatusBadRequest, err.Error())

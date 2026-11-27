@@ -51,6 +51,11 @@ make corpus            # replays recorded CodeQL output; offline, and what CI us
 make e2e-corpus-run    # the populated half, spec-for-spec what CI runs
 ```
 
+**Every suite above runs with sign-in off.** `make e2e-signin` is the one that signs people in, as a
+viewer, an operator and an administrator, through the test issuer in `infra/tests/oidc-issuer`; its
+specs live in `ui/tests/e2e/signin/` because every page of the others assumes nobody signs in. A
+change to what a session sees, or to what a role is offered, is checked there.
+
 **Booted is not loaded.** `ready(page)` waits for Blazor, not a grid's first response. Choose
 test subjects from the API's actual first page, then wait for their controls to appear; never
 skip because an immediate DOM count is zero. PostgreSQL exposed eight such false skips with
@@ -101,7 +106,7 @@ Four surfaces, and everything else is a unit, a tab or an action on one of them:
 | **Dashboard** (`/`) | How complete the picture is, and what discovery is configured to do |
 | **Inventory** (`/inventory`) | Which things match — in tabs that are named views, reprojected by a unit switch, with actions on the scope |
 | **Explorer** (`/explore`) | What those things touch |
-| **Settings** (`/settings`) | What the operator claims and how ABOM is configured |
+| **Settings** (`/settings`) | What you claim and how ABOM is configured, in tabs chosen with `?tab=`: `discovery` (where it opens), `accounts`, `code-scanning`, `agent-sessions`, `data` and `you` |
 
 A fifth nav entry is a finding: a question grew its own page again, and a page has to invent its
 own scope. `/repositories`, `/pinning`, `/remediation` and `/discovery` still **answer** at their

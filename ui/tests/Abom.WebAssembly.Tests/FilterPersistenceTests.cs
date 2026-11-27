@@ -138,8 +138,9 @@ public sealed class FilterPersistenceTests : AbomTestContext
         cut.WaitForAssertion(() => Assert.Contains(Sent, r => r.Url.Contains("api/actions")));
 
         cut.Find("[data-abom-add-filter]").Click();
-        popover.Find("[data-abom-term='scope']").Click();
-        popover.Find("[data-abom-value='owned']").Click();
+        // The popover draws its items after it opens, so each is waited for rather than found.
+        popover.WaitForElement("[data-abom-term='scope']").Click();
+        popover.WaitForElement("[data-abom-value='owned']").Click();
 
         cut.WaitForAssertion(() => Assert.Contains(
             "scope=owned",

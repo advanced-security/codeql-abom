@@ -8,6 +8,7 @@
 @inject RunDraft Draft
 @inject ScopeService Scope
 @inject IDialogService Dialogs
+@inject RoleService Roles
 
 @if (_refusal is not null)
 {
@@ -44,7 +45,13 @@
     </RunDraftPanel>
 }
 
-@if (_catalog is null)
+@if (_unread)
+{
+    <MudAlert Severity="Severity.Warning" Dense="true" data-abom-queries-unread>
+        The query catalog could not be read just now, so nothing is listed. Reload the page to ask again.
+    </MudAlert>
+}
+else if (_catalog is null)
 {
     <MudProgressLinear Indeterminate="true" data-abom-queries-loading />
 }
@@ -58,7 +65,7 @@ else if (_catalog.Queries.Count == 0)
             query on repositories chosen in the Inventory, and each version is catalogued as it runs.
         </MudText>
         <Tip Text="Set up the crawl that runs queries as it finds repositories.">
-            <MudButton Href="/settings" Variant="Variant.Outlined" Class="mt-4"
+            <MudButton Href="/settings?tab=discovery" Variant="Variant.Outlined" Class="mt-4"
                        StartIcon="@Icons.Material.Outlined.Settings">Discovery</MudButton>
         </Tip>
     </MudPaper>
@@ -361,6 +368,8 @@ else
     protected override async Task OnInitializedAsync()
     {
         Follow.Changed += Arm;
+        _mayNotAdvance = await Roles.RefusalAsync("abom/query-lifecycle");
+        _mayNotTest = await Roles.RefusalAsync("abom/query-test");
         // A draft left on either page opens on this one too, over no scope until one is chosen.
         if (Draft.Queries.Count > 0)
         {
@@ -371,7 +380,15 @@ else
         Arm();
     }
 
-    private async Task Load() => _catalog = await Api.GetQueryCatalogAsync();
+    private bool _unread;
+
+    private async Task Load()
+    {
+        var catalog = await Api.GetQueryCatalogAsync();
+        // A later read that fails keeps what was read before rather than taking it away.
+        _unread = catalog is null && _catalog is null;
+        _catalog = catalog ?? _catalog;
+    }
 
     private void Arm()
     {
@@ -492,10 +509,14 @@ else
         : $"Put in the {q.Stage} stage by {q.StagedBy}, {TimeText.DayAndTime(q.StagedAt)}.");
 
     private string AdvanceRefusal(CatalogQuery query) =>
-        !CanAdvance ? "Sign in to advance a query version."
+        _mayNotAdvance ?? (!CanAdvance ? "Sign in to advance a query version."
         : query.Lane ? "This is a whole suite, not a query version to advance."
         : query.QueryVersion.Length == 0 ? "No version was recorded, so there is no query version to advance."
-        : string.Empty;
+        : string.Empty);
+
+    // What the signed-in role does not allow, offered disabled with the role it needs.
+    private string? _mayNotAdvance;
+    private string? _mayNotTest;
 
     private async Task Advance(CatalogQuery query, string stage)
     {
@@ -514,14 +535,14 @@ else
 
     /// <summary>Only the working copy of the operator's own query has tests ABOM can run.</summary>
     private bool CanTest(CatalogQuery q) =>
-        CanAdvance && q.Source == "custom" && q.Working && q.QueryVersion.Length > 0;
+        CanAdvance && _mayNotTest is null && q.Source == "custom" && q.Working && q.QueryVersion.Length > 0;
 
     private static Color TestColor(CatalogQuery q) =>
         !q.Tested ? Color.Default : q.Passing ? Color.Success : Color.Error;
 
     /// <summary>Empty when the Test action is available, so the tests' own evidence is shown.</summary>
     private string TestRefusal(CatalogQuery q) =>
-        !CanAdvance ? "Sign in to run tests" : string.Empty;
+        _mayNotTest ?? (!CanAdvance ? "Sign in to run tests" : string.Empty);
 
     private static string SupersededTooltip(CatalogQuery q) =>
         "Only the version on disk can be tested. " + (

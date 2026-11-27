@@ -104,7 +104,9 @@ planted() {
 	cp "$scratch/.saved" "$file"
 }
 
-first=$(manifests | head -1)
+# Read to the end: head would close the pipe on a writer still echoing, and pipefail turns that
+# SIGPIPE into a failure whenever load slows the reader.
+first=$(manifests | sed -n 1p)
 planted "packs at two different versions" "$first" sed "s/^version:.*/version: $cli-rc1/"
 planted "a pre-release pinned as the CLI" .codeql-version sed "s/\$/-rc1/"
 planted "a pre-release of ql-mcp's tool pack" internal/runner/printast.go \

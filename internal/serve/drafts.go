@@ -36,6 +36,7 @@ func (s *Server) startDraft(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "the request body is not the expected JSON")
 		return
 	}
+	body.By = s.actor(r, body.By)
 	switch {
 	case strings.TrimSpace(body.By) == "":
 		writeError(w, http.StatusBadRequest, "a draft records who asked for it; sign in with gh")

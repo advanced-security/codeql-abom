@@ -27,6 +27,7 @@ func (p people) User(r *http.Request) (access.User, bool) {
 func (people) Login(w http.ResponseWriter, _ *http.Request)    { w.WriteHeader(http.StatusFound) }
 func (people) Callback(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }
 func (people) Logout(w http.ResponseWriter, _ *http.Request)   { w.WriteHeader(http.StatusNoContent) }
+func (people) Page(w http.ResponseWriter, _ *http.Request)     { w.WriteHeader(http.StatusOK) }
 
 var signedIn = people{
 	"viewer":   {ID: "https://idp.example#s1", Username: "vera@example.com", Role: authz.RoleViewer},
@@ -130,11 +131,11 @@ func TestAContentDecisionNamesWhoAskedAndCitesTheRouteDecision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	route, err := bundle.DecisionOf(entries[len(entries)-2])
+	route, err := bundle.DecisionOf(entries[len(entries)-2], st, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	content, err := bundle.DecisionOf(entries[len(entries)-1])
+	content, err := bundle.DecisionOf(entries[len(entries)-1], st, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,10 +181,10 @@ func TestMeSaysWhoIsSignedInAndWhatTheyMayDo(t *testing.T) {
 	}
 }
 
-// With sign-in on, a session is needed for everything that reads what ABOM holds, not only /api/:
-// the metrics name the declared accounts, and pprof serves memory. The interface's own files and
-// the sign-in exchange stay public, because nothing could sign in without them.
-func TestASignedInDeploymentGuardsEveryRouteButTheInterfaceAndSignIn(t *testing.T) {
+// With sign-in on, a session is needed for everything but signing in, not only /api/: the metrics
+// name the declared accounts, pprof serves memory, and the interface drawn for nobody reads as an
+// instance somebody is signed in to.
+func TestASignedInDeploymentGuardsEveryRouteButSigningIn(t *testing.T) {
 	s, _, _ := controlServer(t, "")
 	s.Access = signedIn
 	s.UI = fstest.MapFS{"index.html": {Data: []byte("<html></html>")}}
@@ -192,10 +193,11 @@ func TestASignedInDeploymentGuardsEveryRouteButTheInterfaceAndSignIn(t *testing.
 		"/metrics":       http.StatusUnauthorized,
 		"/debug/pprof/":  http.StatusUnauthorized,
 		"/api/metrics":   http.StatusUnauthorized,
-		"/":              http.StatusOK,
+		"/":              http.StatusFound,
+		"/auth/":         http.StatusOK,
 		"/auth/login":    http.StatusFound,
 		"/healthz":       http.StatusOK,
-		"/no-such-thing": http.StatusOK,
+		"/no-such-thing": http.StatusFound,
 	} {
 		if w := serveAs(s, "", localRequest(http.MethodGet, path, nil)); w.Code != want {
 			t.Errorf("anonymous GET %s answered %d: %s; want %d", path, w.Code, w.Body.String(), want)
@@ -206,6 +208,47 @@ func TestASignedInDeploymentGuardsEveryRouteButTheInterfaceAndSignIn(t *testing.
 	}
 	if w := serveAs(s, "viewer", localRequest(http.MethodGet, "/metrics", nil)); w.Code != http.StatusOK {
 		t.Errorf("a viewer's GET /metrics answered %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// Opening the interface without a session goes straight to signing in, remembering where it was,
+// rather than drawing pages whose every figure was refused. Its other files are refused like any
+// read; signed in, or with sign-in off, it is served as ever.
+func TestTheInterfaceIsOnlyServedToASession(t *testing.T) {
+	s, _, _ := controlServer(t, "")
+	s.UI = fstest.MapFS{
+		"index.html":                       {Data: []byte("<html></html>")},
+		"css/app.css":                      {Data: []byte("body{}")},
+		"_framework/blazor.webassembly.js": {Data: []byte("//")},
+	}
+	if w := serveAs(s, "", localRequest(http.MethodGet, "/", nil)); w.Code != http.StatusOK {
+		t.Fatalf("with sign-in off, GET / answered %d", w.Code)
+	}
+
+	s.Access = signedIn
+	for path, want := range map[string]string{
+		"/":                    "/auth/login?return=%2F",
+		"/inventory?unit=jobs": "/auth/login?return=%2Finventory%3Funit%3Djobs",
+		"/node/acme/jobs/.github/workflows/ci.yml": "/auth/login?return=%2Fnode%2Facme%2Fjobs%2F.github%2Fworkflows%2Fci.yml",
+	} {
+		w := serveAs(s, "", localRequest(http.MethodGet, path, nil))
+		if w.Code != http.StatusFound || w.Header().Get("Location") != want || w.Header().Get("Cache-Control") != "no-store" {
+			t.Errorf("anonymous GET %s answered %d to %q (%s); want a fresh redirect to %q",
+				path, w.Code, w.Header().Get("Location"), w.Header().Get("Cache-Control"), want)
+		}
+	}
+	for _, path := range []string{"/css/app.css", "/_framework/blazor.webassembly.js", "/_framework/missing.js"} {
+		if w := serveAs(s, "", localRequest(http.MethodGet, path, nil)); w.Code != http.StatusUnauthorized {
+			t.Errorf("anonymous GET %s answered %d; want it refused", path, w.Code)
+		}
+	}
+	if w := serveAs(s, "", localRequest(http.MethodPost, "/", nil)); w.Code != http.StatusUnauthorized {
+		t.Errorf("anonymous POST / answered %d; only a page is sent to sign in", w.Code)
+	}
+	for _, path := range []string{"/", "/inventory", "/css/app.css"} {
+		if w := serveAs(s, "viewer", localRequest(http.MethodGet, path, nil)); w.Code != http.StatusOK {
+			t.Errorf("a viewer's GET %s answered %d", path, w.Code)
+		}
 	}
 }
 

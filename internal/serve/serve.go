@@ -17,6 +17,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/pprof"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -251,6 +252,11 @@ func (s *Server) guardRequests(routes *http.ServeMux, next http.Handler) http.Ha
 		if s.Access != nil && !public(pattern) {
 			u, ok := s.Access.User(r)
 			if !ok {
+				if pattern == "/" && (r.Method == http.MethodGet || r.Method == http.MethodHead) && s.entry(r.URL.Path) {
+					w.Header().Set("Cache-Control", "no-store")
+					http.Redirect(w, r, "/auth/login?return="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
+					return
+				}
 				writeProblem(w, problemSignInRequired, "sign in to use ABOM", withLogin("/auth/login"))
 				return
 			}
@@ -289,11 +295,13 @@ func (s *Server) ProbeHandler() http.Handler {
 	return mux
 }
 
-// public reports whether a route serves nothing ABOM holds: the interface's own files, and the
-// sign-in exchange that no session can exist before. Everything else needs one when sign-in is on.
+// public reports whether a route serves nothing ABOM holds: the sign-in exchange that no session
+// can exist before, and the page saying how it went. Everything else needs one when sign-in is on,
+// the interface's own files included: drawn for nobody, it reads as an instance somebody is signed
+// in to, with every figure refused and shown as none.
 func public(pattern string) bool {
 	switch pattern {
-	case "/", "GET /auth/login", "GET /auth/callback", "POST /auth/logout":
+	case "GET /auth/{$}", "GET /auth/login", "GET /auth/callback", "POST /auth/logout":
 		return true
 	}
 	return false
@@ -470,6 +478,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/me", reading(s.me))
 
 	if s.Access != nil {
+		mux.HandleFunc("GET /auth/{$}", s.Access.Page)
 		mux.HandleFunc("GET /auth/login", s.Access.Login)
 		mux.HandleFunc("GET /auth/callback", s.Access.Callback)
 		mux.HandleFunc("POST /auth/logout", s.Access.Logout)
@@ -590,19 +599,12 @@ var assetRoots = []string{"_framework/", "_content/", "css/", "js/", "lib/"}
 func (s *Server) ui() http.Handler {
 	files := http.FileServer(http.FS(s.UI))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		name := strings.TrimPrefix(r.URL.Path, "/")
-		if name == "" {
-			name = "index.html"
-		}
-		if _, err := fs.Stat(s.UI, name); err != nil {
-			for _, root := range assetRoots {
-				if strings.HasPrefix(name, root) {
-					http.NotFound(w, r)
-					return
-				}
-			}
+		if s.entry(r.URL.Path) {
 			r = r.Clone(r.Context())
 			r.URL.Path = "/"
+		} else if _, err := fs.Stat(s.UI, strings.TrimPrefix(r.URL.Path, "/")); err != nil {
+			http.NotFound(w, r)
+			return
 		}
 		// Revalidate rather than serve from cache. A browser holding an old ES module after a
 		// rebuild fails in a way that looks like a code bug and costs far more than the
@@ -610,6 +612,24 @@ func (s *Server) ui() http.Handler {
 		w.Header().Set("Cache-Control", "no-cache")
 		files.ServeHTTP(w, r)
 	})
+}
+
+// entry reports whether a path is answered with the interface's entry point: the root, and any
+// route that is not one of its files.
+func (s *Server) entry(path string) bool {
+	name := strings.TrimPrefix(path, "/")
+	if name == "" {
+		return true
+	}
+	if _, err := fs.Stat(s.UI, name); err == nil {
+		return false
+	}
+	for _, root := range assetRoots {
+		if strings.HasPrefix(name, root) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) summary(w http.ResponseWriter, r *http.Request) {

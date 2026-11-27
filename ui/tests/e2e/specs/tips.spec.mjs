@@ -5,8 +5,9 @@ import { test, expect, ready, on, UNITS, EXPLORE_DRAWN } from '../harness.mjs';
 // including controls a component builds for itself and markup a suppression block hides.
 
 const CODEQL_TABS = ['requests', 'catalog', 'runs', 'audit', 'suites'];
+const SETTINGS_TABS = ['discovery', 'accounts', 'code-scanning', 'agent-sessions', 'data', 'you'];
 const PAGES = ['/', ...CODEQL_TABS.map((t) => `/codeql?tab=${t}`), ...UNITS.map((u) => `/inventory?unit=${u}`),
-    '/explore', EXPLORE_DRAWN, '/settings'];
+    '/explore', EXPLORE_DRAWN, ...SETTINGS_TABS.map((t) => `/settings?tab=${t}`)];
 
 // Controls MudBlazor draws for itself — pagers, sort arrows, pickers — which carry their own words.
 const FRAMEWORK = ['.mud-table-pagination', '.sort-direction-icon', '.column-options', '.mud-input-adornment',

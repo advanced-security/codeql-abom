@@ -69,11 +69,12 @@ What follows, in order. The first is ranked above everything below by your decis
 hosted instance has no query authoring.
 
 1. **[Authoring sessions run as their own worker pool](api/authoring-workers.md)** — the last work
-   still inside the coordinator; in a cluster no session can start until it moves.
-2. **[Who may use a hosted instance](api/access.md)** — how long a role holds after the provider
-   removes it, sessions surviving a restart, and GitHub sign-in and the KMS signer on real accounts.
+   still inside the coordinator; in a cluster no session can start until it moves. What a session
+   writes while it runs, and why its events cannot be copied as they are, is measured in the plan.
+2. **[Who may use a hosted instance](api/access.md)** — what only a second account and an EKS
+   cluster can show: a role removed within its window, and the KMS signer.
 3. **[ABOM on Kubernetes, past kind](tools/kubernetes.md)** — EKS end to end, scale on a large
-   machine, worker pods as hardened as the coordinator, recovery and upgrade, published images.
+   machine, published images.
 
 ## Ranked next
 

@@ -167,4 +167,60 @@ public sealed class RoleRefusalTests : AbomTestContext
 
         cut.WaitForAssertion(() => Assert.Contains("re-analyzing needs the operator role", cut.Markup));
     }
+
+    private const string Operator = """
+        {"mode":"signed-in","user":{"id":"https://idp.example#o","name":"Otto","username":"otto","role":"operator"},
+         "may":["abom/discovery-control"],"needs":{"abom/discovery-control":"operator","abom/configure":"admin"}}
+        """;
+
+    // The control is given the refusal to disable itself by, and the tip says what it needs instead
+    // of what it does.
+    [Fact]
+    public void AGuardedControlIsGivenTheRefusalAndItsTipSaysWhatIsNeeded()
+    {
+        Answer("api/me", Operator);
+
+        var refused = Render<Shared.Guarded>(p => p
+            .Add(g => g.Operation, "abom/configure").Add(g => g.Tip, "Save this pool's rate.")
+            .Add(g => g.ChildContent, (string? refusal) => b => b.AddMarkupContent(0, $"<button disabled=\"{refusal is not null}\">Save</button>")));
+        var allowed = Render<Shared.Guarded>(p => p
+            .Add(g => g.Operation, "abom/discovery-control").Add(g => g.Tip, "Start the crawl.")
+            .Add(g => g.ChildContent, (string? refusal) => b => b.AddMarkupContent(0, $"<button data-refused=\"{refusal is not null}\">Start</button>")));
+
+        refused.WaitForAssertion(() => Assert.Contains("needs the admin role",
+            refused.Find("[data-abom-tip]").GetAttribute("data-abom-tip")));
+        Assert.Equal("Start the crawl.", allowed.Find("[data-abom-tip]").GetAttribute("data-abom-tip"));
+        Assert.Equal("False", allowed.Find("button").GetAttribute("data-refused"));
+    }
+
+    // The bar's start button is on every page, so it is the first a viewer would press.
+    [Fact]
+    public void TheBarDoesNotOfferAViewerToStartTheCrawl()
+    {
+        Answer("api/me", Viewer);
+        Answer("api/discovery/status", DiscoveryStateBuilder.NeverStarted().ToJson());
+
+        var bar = Render<Shared.CrawlStatus>();
+
+        bar.WaitForAssertion(() => SaysTheRoleItNeeds(bar.Find("[data-abom-crawl-toggle]")));
+    }
+
+    // Every component that asks for a change the role check can refuse offers it through Guarded, or
+    // asks RoleService itself; one that does neither offers a control a viewer presses and is refused.
+    [Fact]
+    public void EveryControlThatChangesSomethingSaysWhichRoleItNeeds()
+    {
+        var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../.."));
+        var writes = new System.Text.RegularExpressions.Regex(
+            @"\bApi\.(Set|Save|Start|Stop|Delete|Advance|Print|Test|Cancel|Retry|Requeue|Convert|Forget|Verify|Approve|Act|Preview)[A-Za-z]*Async\(");
+        var unguarded = Directory.EnumerateFiles(Path.Combine(root, "Shared"), "*.razor")
+            .Concat(Directory.EnumerateFiles(Path.Combine(root, "Pages"), "*.razor"))
+            .Where(f => writes.IsMatch(File.ReadAllText(f)))
+            .Where(f => !File.ReadAllText(f).Contains("<Guarded") && !File.ReadAllText(f).Contains("RefusalAsync("))
+            .Select(Path.GetFileName)
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        Assert.Empty(unguarded);
+    }
 }

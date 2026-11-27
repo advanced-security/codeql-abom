@@ -65,6 +65,8 @@
     z-index: 1401;
     box-shadow: var(--mud-elevation-8);
 }
+/* An invitation waits while a dialog is open; above it, it covers what was asked for. */
+body:has(.mud-dialog-container) .abom-tutorial-welcome { display: none; }
 .abom-tutorial-welcome p, .abom-tutorial-coach p, .abom-tutorial-preview p { margin: 0.65rem 0; }
 .abom-tutorial-link { color: var(--mud-palette-primary); text-align: left; }
 .abom-tutorial-layer { position: fixed; inset: 0; z-index: 1600; pointer-events: none; }

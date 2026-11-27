@@ -45,6 +45,7 @@ func (s *Server) startComparison(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "the request body is not the expected JSON")
 		return
 	}
+	body.By = s.actor(r, body.By)
 	if _, err := s.Store.AnalysisRun(runID); err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return

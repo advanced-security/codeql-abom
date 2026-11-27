@@ -76,6 +76,11 @@ func (s *Server) prune(w http.ResponseWriter, r *http.Request) {
 	// than a fault. Returned as a 500 it reached the Discovery page as "could not reach the
 	// server", on the one visit — the first — where nothing has gone wrong.
 	if unavailable := pruneUnavailable(err); unavailable != "" {
+		// An empty closure under a declaration nobody confirmed is empty because nothing counts as
+		// yours yet, not because nothing was found.
+		if verdict, verr := s.Store.ScopeVerdict(); errors.Is(err, store.ErrEmptyClosure) && verr == nil && verdict.Undecided() {
+			unavailable = "Your declaration is not confirmed, so nothing counts as yours yet, and nothing can be found outside it."
+		}
 		out.Unavailable = unavailable
 		writeJSON(w, out, nil)
 		return
@@ -89,7 +94,7 @@ func (s *Server) prune(w http.ResponseWriter, r *http.Request) {
 func pruneUnavailable(err error) string {
 	switch {
 	case errors.Is(err, store.ErrEmptyClosure):
-		return "Nothing has been enumerated yet, so there is no closure to be outside of."
+		return "Nothing has been enumerated yet, so nothing can be found outside what you own."
 	case errors.Is(err, store.ErrUnanalyzedClosure):
 		return "Nothing you declared has been analyzed yet, so what it reaches is not " +
 			"known. Removing now would take out everything it is going to reach."

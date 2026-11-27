@@ -22,6 +22,8 @@ const (
 	podTrust = "/etc/abom/trust"
 	podSVID  = "/var/run/secrets/spiffe.io"
 	podWork  = "/scratch"
+	// podTemp is where CodeQL's JVM keeps its own files; nothing else beyond podWork is writable.
+	podTemp = "/tmp"
 )
 
 // Kubernetes launches each attempt as a Job in one namespace, running the pool's ServiceAccount
@@ -94,7 +96,9 @@ func (k *Kubernetes) job(name string, labels map[string]string, secrets map[stri
 	deadline := int64(k.Deadline / time.Second)
 	ttl := int32(600)
 	backoff := int32(0)
-	env := append([]corev1.EnvVar{}, k.Env...)
+	// The lock every CodeQL invocation takes is made in the user's cache directory, beneath the
+	// read-only HOME unless it is moved.
+	env := append([]corev1.EnvVar{{Name: "XDG_CACHE_HOME", Value: podTemp + "/cache"}}, k.Env...)
 	if _, ok := secrets[TokenSecret]; ok {
 		env = append(env, corev1.EnvVar{Name: TokenSecret, ValueFrom: &corev1.EnvVarSource{
 			SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: TokenSecret}}})
@@ -118,13 +122,14 @@ func (k *Kubernetes) job(name string, labels map[string]string, secrets map[stri
 					Containers: []corev1.Container{{
 						Name: "worker", Image: k.Image, Args: args, Env: env, EnvFrom: k.EnvFrom, Resources: k.Resources,
 						TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
-						SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &no,
+						SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &no, ReadOnlyRootFilesystem: &yes,
 							Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
 						VolumeMounts: []corev1.VolumeMount{
 							{Name: "grant", MountPath: podGrant, ReadOnly: true},
 							{Name: "trust", MountPath: podTrust, ReadOnly: true},
 							{Name: "spiffe", MountPath: podSVID, ReadOnly: true},
 							{Name: "scratch", MountPath: podWork},
+							{Name: "tmp", MountPath: podTemp},
 						},
 					}},
 					Volumes: []corev1.Volume{
@@ -135,6 +140,7 @@ func (k *Kubernetes) job(name string, labels map[string]string, secrets map[stri
 						{Name: "spiffe", VolumeSource: corev1.VolumeSource{CSI: &corev1.CSIVolumeSource{
 							Driver: "spiffe.csi.cert-manager.io", ReadOnly: &yes}}},
 						{Name: "scratch", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+						{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 					},
 				},
 			},

@@ -4,6 +4,7 @@
 const PARTS = {
     codeql: { param: 'tab', opens: 'requests' },
     inventory: { param: 'unit', opens: 'dependencies' },
+    settings: { param: 'tab', opens: 'discovery' },
 };
 
 function pageOf(pathname) {

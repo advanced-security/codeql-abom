@@ -127,7 +127,7 @@ public class ScopeDecisionTests : AbomTestContext
         cut.WaitForAssertion(() => Assert.NotEmpty(cut.FindAll("[data-abom-scope-decision='unverified']")));
         var banner = cut.Find("[data-abom-scope-decision='unverified']").TextContent;
         Assert.Contains("changed after it was decided", banner);
-        Assert.NotNull(cut.Find("[data-abom-scope-decision='unverified'] a[href='/settings#declared-accounts']"));
+        Assert.NotNull(cut.Find("[data-abom-scope-decision='unverified'] a[href='/settings?tab=accounts#declared-accounts']"));
     }
 
     // Not being able to read the decision is not evidence against the declaration.
@@ -144,5 +144,28 @@ public class ScopeDecisionTests : AbomTestContext
             Assert.NotEmpty(cut.FindAll("[data-abom-declared='acme']"));
         });
         Assert.Empty(cut.FindAll("[data-abom-scope-decision]"));
+    }
+
+    // Confirming signs the declaration as it stands, so the banner says what that is before it is
+    // pressed, including what the App cannot see: confirmed, it all counts as yours.
+    [Fact]
+    public void ConfirmSaysWhatItWillSign()
+    {
+        Answer("api/owned-scope/decision", """{"state":"unsigned","reason":"no recorded decision shows that saving it was allowed","digest":"","decidedAt":"","decidedBy":""}""");
+        Answer("api/owned-scope", """
+            [{"owner":"acme","kind":"organization","enabled":true,"includesOnly":false,"includes":[],"state":"confirmed","declaredBy":"cli"},
+             {"owner":"elsewhere","kind":"organization","enabled":true,"includesOnly":true,"includes":["a","b","c"],
+              "notInstalled":["a","b","c"],"state":"unknown","declaredBy":"cli"},
+             {"owner":"paused","kind":"organization","enabled":false,"includesOnly":false,"includes":[],"state":"confirmed","declaredBy":"cli"}]
+            """);
+        Answer("api/owner-candidates", "[]");
+        Answer("api/accounts", Identity);
+
+        var cut = Render<Pages.Settings>();
+
+        var covers = cut.WaitForElement("[data-abom-confirm-covers]").TextContent;
+        Assert.Contains("acme: every repository", covers);
+        Assert.Contains("elsewhere: 3 named repositories, none of them in the App's installation", covers);
+        Assert.Contains("paused: turned off", covers);
     }
 }

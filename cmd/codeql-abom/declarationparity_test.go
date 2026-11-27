@@ -132,7 +132,7 @@ func decisionsIn(t *testing.T, db string) []authz.Decision {
 		if e.PredicateType != authz.PredicateDecision {
 			continue
 		}
-		d, err := bundle.DecisionOf(e)
+		d, err := bundle.DecisionOf(e, s, nil)
 		if err != nil {
 			t.Fatalf("a logged decision does not verify: %v", err)
 		}

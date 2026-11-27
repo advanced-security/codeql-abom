@@ -63,8 +63,8 @@ unknown completeness, not that the operator belongs to no organization.
 
 A process with a GitHub App configured reads no person's token for anything, and writes nothing.
 Its Copilot sessions need the App's organization Copilot Requests permission, approved by the
-installation; until then each session is refused with the missing grant named, and Settings → *What
-agent sessions run on* says so. Copilot requests are billed to the
+installation; until then each session is refused with the missing grant named, and Settings →
+*Agent sessions* says so. Copilot requests are billed to the
 App's own organization unless `--authoring-org` names another it is installed on, whose policy must
 allow Copilot requests from GitHub App installations. An installation is offered fewer models than
 a person; a session whose `--authoring-model` is not among them runs on the runtime's own choice, and
@@ -139,7 +139,7 @@ SQLite file or mutate the source while deriving comparisons.
 
 ## Ownership
 
-Declare ownership in **Settings**, as [source setup](source.md#start-and-declare-your-scope)
+Declare ownership in Settings → **Accounts**, as [source setup](source.md#start-and-declare-your-scope)
 describes. Saving there lists the declared accounts' repositories and queues them without
 analyzing anything, so you can review the scope before pressing **Start analysis**.
 
@@ -173,7 +173,7 @@ Every declaration, from `own`, Settings or a local file, is a decision signed wi
 that directory with `ABOM_AUTHZ_DIR`, which every command reads; `serve`, `own` and `audit` also
 take `--authz-dir`. A command refuses rather than make a new key beside a log another key signed. A
 declaration no decision holds for drives nothing until it is
-confirmed: press **Confirm** at the head of Settings, or run the same `own` command again. In a pod,
+confirmed: press **Confirm** in Settings → **Accounts**, or run the same `own` command again. In a pod,
 `own` reads as the App `ABOM_APP_DIR` names, and its decision names the pod's ServiceAccount.
 
 On standard error `own` names each enabled declaration discovery cannot act on: one a complete membership list
@@ -288,18 +288,28 @@ bindings are configured through their existing interface controls, not guessed J
 
 ## Network boundary
 
-By default the service has no browser sign-in and no built-in TLS: `X-Abom-Control`, loopback Host
-checks and `--allow-remote-control` are not user identities. Do not expose it through a public
-listener or proxy as part of source setup.
+By default the service has no browser sign-in and no built-in TLS: `X-Abom-Control` and loopback
+Host checks are not user identities. Without sign-in, `serve` therefore listens on loopback alone: it
+refuses an `--addr` any network reaches, and `--allow-remote-control`, and says to sign people in
+with `--auth` instead. `--allow-host` still names the host a port-forward presents, because the
+listener stays on loopback. Do not expose it through a proxy as part of source setup.
 
 ### Sign-in
 
-With sign-in on, every API request needs a session, each control is refused below the role its
-operation needs, and every decision names who asked by an identifier their provider keeps for
-them: the issuer and subject, or the GitHub account ID. What they were called is kept beside it.
-Discovery, declaring, pruning and export are offered disabled when your role does not allow them,
-naming the role they need; any other control is refused when pressed, saying the same. TLS is the
-ingress's to terminate. Choose one provider:
+With sign-in on, every request needs a session, the interface's own files included: opening ABOM
+without one goes straight to signing in, so nothing is drawn for nobody. A refused sign-in, and
+signing out, land on `/auth/`, which says how it went and offers to sign in again without doing so
+by itself. Each control is refused below the role its operation needs, and every decision names who
+asked by an identifier their provider keeps for them: the issuer and subject, or the GitHub account
+ID. What they were called is kept beside it. Whoever a record says started a run, filed a request
+or adopted a policy is the person signed in; a name a script sends with `by` or `requestedBy` is
+ignored. The bar shows who you are signed in as and your role, and Settings → *You* says who
+vouched for you, what granted your role, what it lets you do and when the session ends. Every control
+your role does not allow is offered disabled, naming the role it needs. Sessions are kept in the
+database, by a digest of the cookie, so a restart or a rollout signs nobody out: one through an
+identity provider lasts an hour, since its roles are read only at sign-in, one through GitHub lasts
+eight hours, and either ends after two hours unused. TLS is the ingress's to terminate. Choose one
+provider:
 
 - **`--auth=oidc`**, through an OpenID Connect provider: `--oidc-issuer`, `--oidc-client-id`,
   `--oidc-redirect-url` (this deployment's `/auth/callback`) and the client secret in
@@ -310,8 +320,8 @@ ingress's to terminate. Choose one provider:
   - Okta or Keycloak: groups, with `--oidc-roles-claim=groups` and a map such as
     `abom-operators=operator`.
   - Dex with its GitHub connector: teams in `groups` as `org:team`.
-- **`--auth=github`**, through the reading App: `--github-redirect-url`, added as a callback URL in
-  the App's settings; a client secret generated there, in `ABOM_GITHUB_CLIENT_SECRET` or
+- **`--auth=github`**, through the reading App: `--github-redirect-url`, added as a redirect URI
+  under *Identifying and authorizing users* in the App's settings; a client secret generated there, in `ABOM_GITHUB_CLIENT_SECRET` or
   `--github-client-secret-file`; and `--github-role-map`, whose keys are `org/team` for a team's
   members, `org` for every member and `org:owners` for owners alone. Memberships are read with the
   App's `members: read` permission, which each organization's owners approve;
@@ -322,8 +332,9 @@ ingress's to terminate. Choose one provider:
 
 Every request, including reads and diagnostics, requires a loopback Host by default. A hostname
 that resolves to loopback is not enough, and forwarded headers do not grant access.
-`--allow-remote-control` explicitly relaxes that Host restriction for reads and controls; it does
-not remove the control-header or cross-site checks, or let a `--reader-only` instance accept writes.
+With sign-in on, `--allow-remote-control` relaxes that Host restriction for reads and controls; it
+does not remove the control-header or cross-site checks, or let a `--reader-only` instance accept
+writes.
 
 API mutations and linked-source reads require `X-Abom-Control: 1`. The ownership and dependency
 snapshot previews are read-only POSTs and need no control header, but still enforce the Host

@@ -34,19 +34,19 @@ LDFLAGS := -X main.codeqlVersion=$(CODEQL_VERSION) $(if $(ABOM_VERSION),-X main.
 ABOM_RELEASE ?= $(ABOM_TMP)/release
 
 .PHONY: backend-test bench build chart check check-corrupt corpus check-release-version check-versions clean demo demo-check demo-login \
-	demo-reset download e2e e2e-corpus e2e-corpus-run e2e-run go-test test-postgres test-sqlite \
+	demo-reset download e2e e2e-corpus e2e-corpus-run e2e-run e2e-signin e2e-signin-run oidc-issuer go-test test-postgres test-sqlite \
 	fmt itest js kind-up lint logs package pins publish ql \
 	quality release-archive release-ui restart script-test security-test selfcheck serve start status stop style test ui \
-	ui-test verify vet
+	ui-test verify vet workflows
 
 .DEFAULT_GOAL := build
 
 ## verify: every check, as groups run side by side, each logging under $(ABOM_TMP)/verify; what
 ## defines verified. ABOM_VERIFY_JOBS=1 runs one group at a time. CI runs the same targets as jobs.
 verify:
-	@ABOM_VERIFY_LOGS="$(ABOM_TMP)/verify" scripts/verify.sh interface:ui,ui-test,e2e go:test-sqlite \
+	@ABOM_VERIFY_LOGS="$(ABOM_TMP)/verify" scripts/verify.sh interface:ui,ui-test,e2e,e2e-signin go:test-sqlite \
 		postgres:test-postgres ql:ql \
-		checks:check-corrupt,check-versions,check-release-version,pins,chart,fmt,vet,lint,script-test,js,style
+		checks:check-corrupt,check-versions,check-release-version,pins,workflows,chart,fmt,vet,lint,script-test,js,style
 
 ## check: what the diff against main touched, chosen by scripts/check-changed.py and run as verify
 ## runs; between changes, never what calls work done.
@@ -164,6 +164,26 @@ e2e-run:
 		ABOM_E2E_QL="$(ABOM_E2E_QL)" \
 		npx playwright test $(ABOM_E2E_FLAGS) $(ABOM_E2E_SPECS)
 
+## e2e-signin: the interface with sign-in on, signing people in through the test identity provider
+## in infra/tests/oidc-issuer, which is built here and never shipped.
+ABOM_E2E_SIGNIN_DIR ?= $(ABOM_TMP)/e2e-signin
+ABOM_E2E_ISSUER    ?= $(ABOM_TMP)/oidc-issuer
+e2e-signin: build publish oidc-issuer
+	@$(MAKE) e2e-signin-run
+
+oidc-issuer:
+	@go build -o "$(ABOM_E2E_ISSUER)" ./infra/tests/oidc-issuer
+
+e2e-signin-run:
+	@rm -rf "$(ABOM_E2E_SIGNIN_DIR)" && mkdir -p "$(ABOM_E2E_SIGNIN_DIR)"
+	@cd ui/tests/e2e && \
+		ABOM_E2E_BIN="$(CURDIR)/$(BIN)" \
+		ABOM_E2E_ISSUER_BIN="$(abspath $(ABOM_E2E_ISSUER))" \
+		ABOM_E2E_SIGNIN_DB="$(ABOM_E2E_SIGNIN_DIR)/abom.db" \
+		ABOM_E2E_UI="$(ABOM_UI)/wwwroot" \
+		ABOM_E2E_CHANNEL="$(ABOM_E2E_CHANNEL)" \
+		npx playwright test -c playwright.signin.config.mjs $(ABOM_E2E_FLAGS)
+
 fmt:
 	@out=$$(gofmt -l $(GO_FILES) 2>&1 || true); \
 	if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi; \
@@ -236,6 +256,12 @@ pins:
 		echo "gh actions-lock is not installed: gh extension install github/gh-actions-lock"; exit 1; \
 	fi
 	@gh actions-lock --verify-local --no-fix --no-interactive
+
+## workflows: actionlint, with shellcheck, over the workflows here and in the query repository template.
+# CI and the Copilot setup steps install this version; the script refuses any other.
+ACTIONLINT_VERSION = v1.7.12
+workflows:
+	@ACTIONLINT_VERSION=$(ACTIONLINT_VERSION) scripts/check-workflows.sh
 
 ## publish: build the interface into $(ABOM_UI). Separate from `ui`, which only typechecks it.
 publish:
@@ -326,7 +352,7 @@ start: build publish
 			echo "start: the server exited during startup; see $(ABOM_LOG)"; \
 			tail -n 20 "$(ABOM_LOG)"; rm -f "$(ABOM_PID)"; exit 1; \
 		fi; \
-		if curl -fsS -o /dev/null "http://$(ABOM_ADDR)/api/summary" 2>/dev/null; then \
+		if curl -fsS -o /dev/null "http://$(ABOM_ADDR)/healthz" 2>/dev/null; then \
 			echo "start: http://$(ABOM_ADDR) (pid $$(cat $(ABOM_PID)), log $(ABOM_LOG))"; \
 			exit 0; \
 		fi; \
@@ -342,7 +368,12 @@ status:
 	done | tr '\n' ' '); \
 	if [ -z "$$running" ]; then echo "status: not running"; exit 0; fi; \
 	ps -o pid=,args= -p $$running; \
-	curl -fsS "http://$(ABOM_ADDR)/api/discovery/status" && echo
+	out=$$(curl -sS -w ' %{http_code}' "http://$(ABOM_ADDR)/api/discovery/status") || exit 1; \
+	case "$$out" in \
+		(*" 200") echo "$${out% 200}";; \
+		(*" 401") echo "status: sign-in is on, so discovery's state is shown in the interface after you sign in";; \
+		(*) echo "$$out"; exit 1;; \
+	esac
 
 ## stop: stop every abom server on the machine, including one started by hand.
 stop:
@@ -399,8 +430,9 @@ ui:
 
 ## ui-test: component behavior; layout stays in browser tests.
 ui-test:
+	@# Quiet, except that a failure is named: under load the log is the only place to find which.
 	@dotnet test ui/tests/Abom.WebAssembly.Tests/Abom.WebAssembly.Tests.csproj \
-		--nologo -v quiet && echo "ui-test: ok"
+		--nologo -v quiet --logger "console;verbosity=minimal" && echo "ui-test: ok"
 
 vet:
 	@go vet ./... && echo "vet: ok"

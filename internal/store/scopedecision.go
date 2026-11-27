@@ -38,6 +38,9 @@ type decisionKeys struct {
 	dir    string
 	mu     sync.Mutex
 	signer authz.Signer
+	// pins is what a retired key signed that the chain has been shown to commit to, so the scope
+	// gate walks it once rather than on every ownership read.
+	pins authz.Pins
 }
 
 // ErrNoDecisionKey is a database with no decision key directory, which can then decide nothing.
@@ -310,7 +313,7 @@ func (s *Store) judgeScope(accounts []DeclaredAccount) (ScopeVerdict, error) {
 	if err != nil {
 		return unverified("the trust bundle cannot be read: %v", err)
 	}
-	d, err := bundle.DecisionOf(entry)
+	d, err := bundle.DecisionOf(entry, s, &s.decisions.pins)
 	switch {
 	case err != nil:
 		return unverified("its decision does not verify: %v", err)

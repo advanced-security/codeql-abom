@@ -50,6 +50,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "the request body is not the expected JSON")
 		return
 	}
+	body.By = s.actor(r, body.By)
 	session, err := s.Authoring.Start(id, body.By)
 	switch {
 	case errors.Is(err, store.ErrNoQueryRequest):

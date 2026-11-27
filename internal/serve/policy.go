@@ -88,6 +88,7 @@ func (s *Server) adoptPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	// A missing body is fine; an unreadable one is not worth guessing at.
 	_ = json.NewDecoder(r.Body).Decode(&body)
+	body.By = s.actor(r, body.By)
 	if err := s.Store.AdoptPolicy(r.PathValue("name"), body.By); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -112,6 +113,7 @@ func (s *Server) grantWaiver(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	body.GrantedBy = s.actor(r, body.GrantedBy)
 	waiver := store.Waiver{
 		Policy: r.PathValue("name"), Kind: body.Kind, Repository: body.Repository,
 		Reason: body.Reason, GrantedBy: body.GrantedBy,

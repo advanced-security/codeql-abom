@@ -14,7 +14,14 @@ func versionPack(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
 	files["codeql-pack.yml"] = "name: advanced-security/test-pack\nversion: 1.0.0\n"
+	// Its own workspace, or a temporary directory inside this checkout, where `make` puts them,
+	// finds the repository's and walks all of it: under load that outlasted the ten seconds
+	// TestAnImportCycleTerminates allows, and an import could resolve into a real pack.
+	files["codeql-workspace.yml"] = "provide:\n  - \"codeql-pack.yml\"\n"
 	writePack(t, dir, files)
+	if roots := libraryRoots(dir); len(roots) != 1 || roots[0] != dir {
+		t.Fatalf("the fixture pack finds libraries outside itself, in %v", roots)
+	}
 	return dir
 }
 

@@ -6,7 +6,10 @@ import (
 	"cmp"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
@@ -34,10 +37,30 @@ const (
 	loginCookie   = "abom_login"
 )
 
-// defaultSessionTTL is how long a session lasts without signing in again.
-const defaultSessionTTL = 8 * time.Hour
+// How long a session lasts without signing in again. An identity provider's roles are read once,
+// from the ID token, so a session through one is short enough that a role it takes away is gone
+// within the hour; GitHub sign-in reads memberships again before a change, so its lasts the day.
+const (
+	oidcSessionTTL   = time.Hour
+	githubSessionTTL = 8 * time.Hour
+)
 
 const loginTTL = 10 * time.Minute
+
+// A session nobody has used for idleTTL ends whatever its lifetime. When it was last used is
+// written at most every touchEvery, so following a session does not rewrite it on every request.
+const (
+	idleTTL    = 2 * time.Hour
+	touchEvery = 5 * time.Minute
+)
+
+// SessionStore keeps sessions where a restart or a rollout does not reach: an opaque record by the
+// digest of the session cookie, never the cookie, so a copy of what is kept signs nobody in.
+type SessionStore interface {
+	PutSession(digest string, record []byte, now, expires time.Time) error
+	Session(digest string, now time.Time) ([]byte, bool, error)
+	DeleteSession(digest string) error
+}
 
 // maxPendingLogins bounds the attempts held for the provider to answer, since anyone may start one.
 const maxPendingLogins = 1024
@@ -55,6 +78,8 @@ type Config struct {
 	// RoleMap reads claim values as ABOM roles; nil is defaultRoleMap.
 	RoleMap    map[string]string
 	SessionTTL time.Duration
+	// Sessions keeps who is signed in across restarts; nil holds them in memory alone.
+	Sessions SessionStore
 	// Log is where a refused sign-in's own reason goes; the browser is told only which kind it was.
 	Log io.Writer
 }
@@ -69,9 +94,21 @@ type User struct {
 	// email address, or a GitHub login.
 	Username string `json:"username"`
 	// Role is the highest ABOM role their app roles grant; empty is none.
-	Role    string    `json:"role"`
-	Claimed []string  `json:"claimed"`
+	Role string `json:"role"`
+	// Claimed is what the provider sent that the role map names: app roles or groups, or the
+	// memberships GitHub confirmed.
+	Claimed []string `json:"claimed"`
+	// Grants are the claims that granted a role, each with the role it granted; Role is the highest.
+	Grants  []Grant   `json:"grants"`
 	Expires time.Time `json:"expires"`
+	// Provider is who vouched for them, as a sentence names it: GitHub, or the issuer's host.
+	Provider string `json:"provider"`
+}
+
+// Grant is one claim or membership and the ABOM role it granted.
+type Grant struct {
+	By   string `json:"by"`
+	Role string `json:"role"`
 }
 
 // Called is how a sentence names the person.
@@ -93,12 +130,21 @@ type provider interface {
 	identify(ctx context.Context, code string, p pending) (User, error)
 	// reread reads a person's role again; false where a provider's roles cannot change under a session.
 	reread(ctx context.Context, u User) (role string, rereads bool, err error)
+	// name is the provider as a sentence names it.
+	name() string
 }
 
 type held struct {
 	user User
-	// roleAt is when the role was last read.
-	roleAt time.Time
+	// roleAt is when the role was last read, and usedAt when the session was last used.
+	roleAt, usedAt time.Time
+}
+
+// keptSession is a held session as the store keeps it.
+type keptSession struct {
+	User   User      `json:"user"`
+	RoleAt time.Time `json:"roleAt"`
+	UsedAt time.Time `json:"usedAt"`
 }
 
 // Authenticator runs the authorization code flow with PKCE as a backend for the interface: tokens
@@ -112,26 +158,25 @@ type Authenticator struct {
 	refresh time.Duration
 	log     io.Writer
 	now     func() time.Time
+	keep    SessionStore
 
 	mu       sync.Mutex
 	logins   map[string]pending
 	sessions map[string]held
 }
 
-func authenticate(p provider, redirectURL string, ttl, refresh time.Duration, log io.Writer) (*Authenticator, error) {
+func authenticate(p provider, redirectURL string, ttl, refresh time.Duration, keep SessionStore, log io.Writer) (*Authenticator, error) {
 	redirect, err := url.Parse(redirectURL)
 	if err != nil || redirect.Host == "" {
 		return nil, fmt.Errorf("access: %q is not an absolute redirect URL", redirectURL)
 	}
-	if ttl <= 0 {
-		ttl = defaultSessionTTL
-	}
 	return &Authenticator{provider: p, redirect: redirectURL, secure: redirect.Scheme == "https", ttl: ttl,
-		refresh: refresh, log: log, now: time.Now, logins: map[string]pending{}, sessions: map[string]held{}}, nil
+		refresh: refresh, keep: keep, log: log, now: time.Now, logins: map[string]pending{}, sessions: map[string]held{}}, nil
 }
 
 // oidcProvider signs people in through an OpenID Connect issuer, whose ID token carries their roles.
 type oidcProvider struct {
+	issuer     string
 	oauth      oauth2.Config
 	verifier   *oidc.IDTokenVerifier
 	rolesClaim string
@@ -150,7 +195,9 @@ func New(ctx context.Context, cfg Config) (*Authenticator, error) {
 	if err != nil {
 		return nil, fmt.Errorf("access: discovering %s: %w", cfg.Issuer, err)
 	}
+	issuer, _ := url.Parse(cfg.Issuer)
 	p := &oidcProvider{
+		issuer: cmp.Or(issuer.Host, cfg.Issuer),
 		oauth: oauth2.Config{ClientID: cfg.ClientID, ClientSecret: cfg.ClientSecret, RedirectURL: cfg.RedirectURL,
 			Endpoint: discovered.Endpoint(), Scopes: []string{oidc.ScopeOpenID, "profile", "email"}},
 		verifier:   discovered.Verifier(&oidc.Config{ClientID: cfg.ClientID}),
@@ -160,7 +207,7 @@ func New(ctx context.Context, cfg Config) (*Authenticator, error) {
 	if p.roleMap == nil {
 		p.roleMap = defaultRoleMap
 	}
-	return authenticate(p, cfg.RedirectURL, cfg.SessionTTL, 0, cfg.Log)
+	return authenticate(p, cfg.RedirectURL, cmp.Or(cfg.SessionTTL, oidcSessionTTL), 0, cfg.Sessions, cfg.Log)
 }
 
 // Host is the name this deployment answers on, from its redirect URL.
@@ -225,6 +272,8 @@ func (o *oidcProvider) identify(ctx context.Context, code string, p pending) (Us
 // reread is never possible: the roles are the ID token's, read once at sign-in.
 func (o *oidcProvider) reread(context.Context, User) (string, bool, error) { return "", false, nil }
 
+func (o *oidcProvider) name() string { return o.issuer }
+
 // Callback completes a login: the state must be this browser's, the code is exchanged with its
 // verifier, and the ID token must verify for this client and carry the login's nonce.
 func (a *Authenticator) Callback(w http.ResponseWriter, r *http.Request) {
@@ -251,11 +300,9 @@ func (a *Authenticator) Callback(w http.ResponseWriter, r *http.Request) {
 		a.refuse(w, r, "failed", err.Error())
 		return
 	}
-	u.Expires = a.now().Add(a.ttl)
+	u.Expires, u.Provider = a.now().Add(a.ttl), a.provider.name()
 	id := random()
-	a.mu.Lock()
-	a.sessions[id] = held{user: u, roleAt: a.now()}
-	a.mu.Unlock()
+	a.update(id, held{user: u, roleAt: a.now(), usedAt: a.now()}, true)
 	http.SetCookie(w, &http.Cookie{Name: SessionCookie, Value: id, Path: "/", MaxAge: int(a.ttl.Seconds()),
 		HttpOnly: true, Secure: a.secure, SameSite: http.SameSiteStrictMode})
 	// A page that navigates on, rather than a redirect, so the Strict cookie goes with the next
@@ -266,17 +313,69 @@ func (a *Authenticator) Callback(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `<!doctype html><meta http-equiv="refresh" content="0;url=%s"><a href="%s">Continue to ABOM</a>`, target, target)
 }
 
-// refuse sends the browser back to the interface, which says why a sign-in failed from its kind
-// alone: not-started, mismatch, refused or failed. The reason, in the provider's or the library's
-// words, goes to the log, where whoever runs ABOM can read it and a crafted callback cannot write to
-// the page.
+// refuse sends the browser to the sign-in page, which says why a sign-in failed from its kind alone:
+// not-started, mismatch, refused or failed. The reason, in the provider's or the library's words,
+// goes to the log, where whoever runs ABOM can read it and a crafted callback cannot write to the
+// page.
 func (a *Authenticator) refuse(w http.ResponseWriter, r *http.Request, kind, reason string) {
 	if a.log != nil {
 		fmt.Fprintf(a.log, "access: a sign-in was refused (%s): %s\n", kind, reason)
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	http.Redirect(w, r, "/?signin="+kind, http.StatusFound)
+	http.Redirect(w, r, "/auth/?signin="+kind, http.StatusFound)
 }
+
+// Page says where signing in stands for a browser with no session, and offers to sign in. It reads
+// nothing ABOM holds, so it is served before anyone signs in, and it never signs in by itself:
+// otherwise signing out would last only until the provider answered again, and a sign-in that
+// keeps failing would loop.
+func (a *Authenticator) Page(w http.ResponseWriter, r *http.Request) {
+	said := "Sign in to use ABOM."
+	switch r.URL.Query().Get("signin") {
+	case "signed-out":
+		said = "You signed out of ABOM. You may still be signed in to " + a.provider.name() +
+			", which can sign you in again without asking."
+	case "not-started":
+		said = "That sign-in was not started in this browser, so it was not used."
+	case "mismatch":
+		said = "That sign-in did not answer the one this browser started, so it was not used."
+	case "refused":
+		said = a.provider.name() + " refused the sign-in."
+	case "failed":
+		said = "The sign-in could not be completed; whoever runs ABOM can see why in its log."
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	fmt.Fprintf(w, signInPage, html.EscapeString(said), html.EscapeString(a.provider.name()))
+}
+
+// signInPage stands alone: the interface's own styles need a session, like everything it serves.
+const signInPage = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in to ABOM</title>
+<style>
+:root { color-scheme: light dark; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: Canvas; color: CanvasText; }
+main { max-width: 30rem; padding: 2rem; text-align: center; }
+h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 0.75rem; }
+p { margin: 0 0 1.5rem; line-height: 1.5; }
+a { display: inline-block; padding: 0.5rem 1.25rem; border-radius: 6px; background: #1f6feb; color: #fff;
+    font-weight: 600; text-decoration: none; }
+a:focus-visible { outline: 2px solid #1f6feb; outline-offset: 2px; }
+</style>
+</head>
+<body>
+<main>
+<h1>ABOM</h1>
+<p data-abom-signin>%s</p>
+<a href="/auth/login?return=%%2F">Sign in with %s</a>
+</main>
+</body>
+</html>
+`
 
 func (o *oidcProvider) user(t *oidc.IDToken) (User, error) {
 	var claims map[string]any
@@ -285,7 +384,7 @@ func (o *oidcProvider) user(t *oidc.IDToken) (User, error) {
 	}
 	text := func(name string) string { s, _ := claims[name].(string); return s }
 	u := User{ID: t.Issuer + "#" + t.Subject, Name: text("name"), Username: cmp.Or(text("preferred_username"), text("email")),
-		Claimed: []string{}}
+		Claimed: []string{}, Grants: []Grant{}}
 	values, _ := claims[o.rolesClaim].([]any)
 	if one, ok := claims[o.rolesClaim].(string); ok {
 		values = []any{one}
@@ -296,7 +395,12 @@ func (o *oidcProvider) user(t *oidc.IDToken) (User, error) {
 			continue
 		}
 		u.Claimed = append(u.Claimed, claimed)
-		if role := o.roleMap[claimed]; authz.Rank(role) > authz.Rank(u.Role) {
+		role := o.roleMap[claimed]
+		if role == "" {
+			continue
+		}
+		u.Grants = append(u.Grants, Grant{By: claimed, Role: role})
+		if authz.Rank(role) > authz.Rank(u.Role) {
 			u.Role = role
 		}
 	}
@@ -311,14 +415,18 @@ func (a *Authenticator) User(r *http.Request) (User, bool) {
 	if err != nil {
 		return User{}, false
 	}
-	a.mu.Lock()
-	s, ok := a.sessions[cookie.Value]
-	if ok && a.now().After(s.user.Expires) {
-		delete(a.sessions, cookie.Value)
-		ok = false
+	s, ok := a.held(cookie.Value)
+	if !ok {
+		return User{}, false
 	}
-	a.mu.Unlock()
-	if !ok || a.refresh <= 0 || !changes(r) || a.now().Sub(s.roleAt) <= a.refresh {
+	if now := a.now(); now.After(s.user.Expires) || now.Sub(s.usedAt) > idleTTL {
+		a.forget(cookie.Value)
+		return User{}, false
+	} else if now.Sub(s.usedAt) > touchEvery {
+		s.usedAt = now
+		a.update(cookie.Value, s, false)
+	}
+	if a.refresh <= 0 || !changes(r) || a.now().Sub(s.roleAt) <= a.refresh {
 		return s.user, ok
 	}
 	role, rereads, err := a.provider.reread(r.Context(), s.user)
@@ -335,12 +443,71 @@ func (a *Authenticator) User(r *http.Request) (User, bool) {
 		return u, true
 	}
 	s.user.Role, s.roleAt = role, a.now()
+	a.update(cookie.Value, s, false)
+	return s.user, true
+}
+
+// held is the session a cookie names, from memory or, after a restart, from where it is kept.
+func (a *Authenticator) held(id string) (held, bool) {
 	a.mu.Lock()
-	if _, still := a.sessions[cookie.Value]; still {
-		a.sessions[cookie.Value] = s
+	s, ok := a.sessions[id]
+	a.mu.Unlock()
+	if ok || a.keep == nil {
+		return s, ok
+	}
+	record, found, err := a.keep.Session(sessionDigest(id), a.now())
+	if err != nil && a.log != nil {
+		fmt.Fprintf(a.log, "access: a kept session could not be read, so it signs nobody in: %v\n", err)
+	}
+	var k keptSession
+	if !found || err != nil || json.Unmarshal(record, &k) != nil {
+		return held{}, false
+	}
+	s = held{user: k.User, roleAt: k.RoleAt, usedAt: k.UsedAt}
+	a.mu.Lock()
+	a.sessions[id] = s
+	a.mu.Unlock()
+	return s, true
+}
+
+// update holds a session, and keeps it where the next server reads it. Only a new one is added: a
+// session ended while this request ran stays ended.
+func (a *Authenticator) update(id string, s held, created bool) {
+	a.mu.Lock()
+	_, still := a.sessions[id]
+	if created || still {
+		a.sessions[id] = s
 	}
 	a.mu.Unlock()
-	return s.user, true
+	if (!created && !still) || a.keep == nil {
+		return
+	}
+	record, err := json.Marshal(keptSession{User: s.user, RoleAt: s.roleAt, UsedAt: s.usedAt})
+	if err == nil {
+		err = a.keep.PutSession(sessionDigest(id), record, a.now(), s.user.Expires)
+	}
+	if err != nil && a.log != nil {
+		fmt.Fprintf(a.log, "access: %s's session could not be kept, so a restart signs them out: %v\n", s.user.Called(), err)
+	}
+}
+
+// forget ends a session here and wherever it is kept.
+func (a *Authenticator) forget(id string) {
+	a.mu.Lock()
+	delete(a.sessions, id)
+	a.mu.Unlock()
+	if a.keep == nil {
+		return
+	}
+	if err := a.keep.DeleteSession(sessionDigest(id)); err != nil && a.log != nil {
+		fmt.Fprintf(a.log, "access: an ended session is still kept, until it expires: %v\n", err)
+	}
+}
+
+// sessionDigest is how a session is named where it is kept: never by the cookie itself.
+func sessionDigest(id string) string {
+	sum := sha256.Sum256([]byte(id))
+	return hex.EncodeToString(sum[:])
 }
 
 // changes reports whether a request may change something, which is when a stale role is read again.
@@ -355,9 +522,7 @@ func changes(r *http.Request) bool {
 // Logout ends the session here. The provider's own session is the provider's to end.
 func (a *Authenticator) Logout(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie(SessionCookie); err == nil {
-		a.mu.Lock()
-		delete(a.sessions, cookie.Value)
-		a.mu.Unlock()
+		a.forget(cookie.Value)
 	}
 	http.SetCookie(w, &http.Cookie{Name: SessionCookie, Path: "/", MaxAge: -1, HttpOnly: true, Secure: a.secure,
 		SameSite: http.SameSiteStrictMode})

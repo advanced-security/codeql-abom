@@ -13,7 +13,7 @@ public class TutorialFlowTests : AbomTestContext
         var overview = TutorialLessons.All.Single(l => l.Id == "orientation");
         Assert.Equal(new[]
         {
-            "/settings", "/inventory?unit=coverage",
+            "/settings?tab=accounts", "/inventory?unit=coverage",
             "/codeql?tab=requests", "/codeql?tab=catalog", "/codeql?tab=runs", "/codeql?tab=suites",
             "/inventory", "/inventory?unit=dependencies", "$node", "/inventory?unit=workflows",
         }, overview.Steps.Select(s => s.Route));

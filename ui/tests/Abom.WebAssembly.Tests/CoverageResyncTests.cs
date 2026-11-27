@@ -156,6 +156,24 @@ public class CoverageResyncTests : AbomTestContext
         Assert.Empty(page.FindAll("[data-abom-coverage-account='switched-off']"));
     }
 
+    // An account not listed yet is waiting on the crawl, unless the declaration naming it is not
+    // confirmed: then nothing lists it until it is, and saying it will be listed soon is untrue.
+    [Theory]
+    [InlineData(false, "discovery lists it when it next runs")]
+    [InlineData(true, "your declaration is not confirmed")]
+    public void AnAccountNotListedYetSaysWhatItWaitsOn(bool unconfirmed, string why)
+    {
+        Answer("api/owned-scope/decision", unconfirmed
+            ? """{"state":"unsigned","reason":"no recorded decision shows that saving it was allowed","digest":"","decidedAt":"","decidedBy":""}"""
+            : """{"state":"signed","reason":"","digest":"ab","decidedAt":"","decidedBy":"octocat"}""");
+
+        var page = Coverage();
+
+        page.WaitForAssertion(() =>
+            Assert.Contains(why, page.Find("[data-abom-coverage-account='fresh-org']").TextContent));
+        Assert.DoesNotContain("cycle", page.Find("[data-abom-coverage-account='fresh-org']").TextContent);
+    }
+
     // Choosing every row shown is how "everything unavailable" is said once the state is chosen,
     // and changing the state starts the choice again rather than carrying rows nobody can see.
     [Fact]

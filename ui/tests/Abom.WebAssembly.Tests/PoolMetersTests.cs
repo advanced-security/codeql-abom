@@ -66,7 +66,8 @@ public class PoolMetersTests : AbomTestContext
         }
         foreach (var button in cut.FindAll("button"))
         {
-            var title = button.GetAttribute("title") ?? button.ParentElement?.GetAttribute("title");
+            var title = button.GetAttribute("title") ?? button.ParentElement?.GetAttribute("title")
+                ?? button.Closest("[data-abom-tip]")?.GetAttribute("data-abom-tip");
             Assert.False(string.IsNullOrWhiteSpace(title), $"action '{button.TextContent.Trim()}' has no title");
             Assert.EndsWith(".", title);
         }

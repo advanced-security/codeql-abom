@@ -1208,6 +1208,12 @@ public sealed record Me
     public IReadOnlyDictionary<string, string> Needs { get; init; } = new Dictionary<string, string>();
 }
 
+public sealed record GrantedRole
+{
+    public string By { get; init; } = string.Empty;
+    public string Role { get; init; } = string.Empty;
+}
+
 public sealed record SignedInUser
 {
     /// <summary>The provider's issuer and its subject for the person: what decisions name them by.</summary>
@@ -1216,6 +1222,17 @@ public sealed record SignedInUser
     /// <summary>What the provider calls them: a user principal name, an email address or a GitHub login.</summary>
     public string Username { get; init; } = string.Empty;
     public string Role { get; init; } = string.Empty;
+    /// <summary>
+    /// What granted the role: the app roles or groups the provider sent, or the memberships GitHub
+    /// confirmed, as role map entries such as <c>acme/abom-operators</c> or <c>acme:owners</c>.
+    /// </summary>
+    public IReadOnlyList<string> Claimed { get; init; } = [];
+    /// <summary>The claims that granted a role, each with the role it granted; the highest applies.</summary>
+    public IReadOnlyList<GrantedRole> Grants { get; init; } = [];
+    /// <summary>Who vouched for them, as a sentence names it: GitHub, or the issuer's host.</summary>
+    public string Provider { get; init; } = string.Empty;
+    /// <summary>When the session ends; null when the server did not say.</summary>
+    public DateTimeOffset? Expires { get; init; }
 }
 
 /// <summary>

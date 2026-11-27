@@ -28,7 +28,7 @@ public static class TutorialLessons
         new("orientation", "Find your way around ABOM",
         "Start with Settings and coverage, then learn CodeQL and the Inventory.",
         [
-            new("settings", "Choose what ABOM manages", "Settings is where you choose your accounts and repositories, and configure discovery.", "/settings", "[data-abom-identity]"),
+            new("settings", "Choose what ABOM manages", "Settings is where you choose your accounts and repositories, and configure discovery.", "/settings?tab=accounts", "[data-abom-identity]"),
             new("coverage", "Check what has been analyzed", "Coverage shows which dependencies are analyzed, waiting or unavailable. Check it before drawing conclusions from a result.", "/inventory?unit=coverage", "[data-abom-unit-description]"),
             new("requests", "Request a detection rule", "Requests describe what a query should detect, using examples it should report and examples it should leave alone.", "/codeql?tab=requests", "[data-abom-requests]"),
             new("catalog", "Follow each query version", "The Query catalog shows the rules ABOM knows, their test evidence and their stage.", "/codeql?tab=catalog", "[data-abom-queries-table], [data-abom-queries-empty]"),

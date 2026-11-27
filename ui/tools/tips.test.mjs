@@ -64,6 +64,19 @@ test('a Tip describes what it encloses, and its text is a sentence', () => {
     assert.deepEqual(messages(text), ['4: tip "new query" is not a sentence']);
 });
 
+test('a Guarded control is described by its tip, whose text is a sentence', () => {
+    const text = [
+        '<Guarded Operation="abom/configure" Tip="Save this pool\'s rate." Context="refusal">',
+        '    <MudButton OnClick="Save" Disabled="@(refusal is not null)">Save</MudButton>',
+        '</Guarded>',
+        '<Guarded Operation="abom/configure" Tip="save" Context="refusal">',
+        '    <MudButton OnClick="Save">Save</MudButton>',
+        '</Guarded>',
+    ].join('\n');
+
+    assert.deepEqual(messages(text), ['4: tip "save" is not a sentence']);
+});
+
 test('an action inside a tooltip carries no title as well, or two tips show at once', () => {
     const text = [
         '<Tip Text="Ask for a new CodeQL query.">',

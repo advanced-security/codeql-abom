@@ -1,0 +1,11 @@
+self-hosted-runner:
+  # A GitHub-hosted image newer than the pinned actionlint knows about, not a self-hosted runner.
+  labels:
+    - ubuntu-26.04
+
+paths:
+  .github/workflows/**/*.{yml,yaml}:
+    ignore:
+      # actionlint does not read the same-repository `$/` form yet (rhysd/actionlint#711). Only that
+      # form is let through: an `owner/repo` without a ref is still refused.
+      - 'specifying action "\$/[^"]+" in invalid format because ref is missing'

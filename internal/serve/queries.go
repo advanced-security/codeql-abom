@@ -287,6 +287,7 @@ func (s *Server) advanceQuery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "the request body is not the expected JSON")
 		return
 	}
+	body.By = s.actor(r, body.By)
 	refusal, err := s.queryVersionRefusal(body.QueryID, body.Version)
 	if err != nil {
 		writeJSON(w, nil, err)
