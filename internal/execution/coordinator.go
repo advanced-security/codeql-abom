@@ -3,6 +3,7 @@ package execution
 import (
 	"cmp"
 	"context"
+	"crypto/ecdsa"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -15,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/semaphore"
 
 	"github.com/advanced-security/codeql-abom/internal/authz"
 	"github.com/advanced-security/codeql-abom/internal/expand"
@@ -36,6 +39,12 @@ type Runner struct {
 	PackRoot func() string
 	Timeout  time.Duration
 	Now      func() time.Time
+	// ReportPoll is how often a session's reports are read while its worker runs; zero is every two
+	// seconds.
+	ReportPoll time.Duration
+	// ReportBudget bounds the bytes of reports one session may make, each of which the store keeps;
+	// zero is 256 MB.
+	ReportBudget int64
 
 	// handed are the packs already put where workers read them, by digest.
 	mu     sync.Mutex
@@ -58,11 +67,14 @@ func (r *Runner) Run(ctx context.Context, t expand.RemoteTask, dir string) (expa
 	if err != nil {
 		return expand.RemoteOutput{}, err
 	}
-	g := r.newGrant(attempt)
+	g, key, err := r.newGrant(attempt)
+	if err != nil {
+		return expand.RemoteOutput{}, err
+	}
 	if g.Task, g.PackSHA256, err = r.withPack(ctx, t); err != nil {
 		return expand.RemoteOutput{}, err
 	}
-	secrets := map[string]string{}
+	secrets := map[string]string{AttemptKeySecret: key}
 	// uninstalled is a read the App lends nothing for: the worker reads anonymously, so a refusal
 	// may be a private repository the App cannot see, and is explained as one read here would be.
 	uninstalled := false
@@ -117,10 +129,13 @@ func (r *Runner) RunTests(ctx context.Context, root string, dirs []string) (runn
 	if err != nil {
 		return runner.TestResult{}, err
 	}
-	g := r.newGrant(attempt)
+	g, key, err := r.newGrant(attempt)
+	if err != nil {
+		return runner.TestResult{}, err
+	}
 	g.Test = &TestTask{PackSHA256: pack, Tests: tests}
 	what := strings.Join(tests, ",")
-	grantDigest, err := r.execute(ctx, g, map[string]string{}, what)
+	grantDigest, err := r.execute(ctx, g, map[string]string{AttemptKeySecret: key}, what)
 	if err != nil {
 		return runner.TestResult{}, err
 	}
@@ -154,6 +169,13 @@ func (r *Runner) settle(ctx context.Context, receipt Receipt, land func(Result) 
 		receipt.Verdict, receipt.Outcome = ReceiptAccepted, f.Kind
 		return errors.Join(failureError(f), r.sign(ctx, receipt))
 	}
+	// Bounded by within when it verified.
+	size, _ := result.within()
+	if err := holding.Acquire(ctx, size); err != nil {
+		receipt.Reason = err.Error()
+		return errors.Join(wrapLand(err), r.sign(ctx, receipt))
+	}
+	defer holding.Release(size)
 	if err := land(result); err != nil {
 		receipt.Reason = err.Error()
 		return errors.Join(wrapLand(err), r.sign(ctx, receipt))
@@ -165,10 +187,16 @@ func (r *Runner) settle(ctx context.Context, receipt Receipt, land func(Result) 
 
 func (r *Runner) prefix() string { return Prefix + r.Pool + "/" }
 
-func (r *Runner) newGrant(attempt string) Grant {
+// newGrant is the grant for attempt, naming a key made for it alone, whose private half it answers as
+// what the attempt's worker is lent.
+func (r *Runner) newGrant(attempt string) (Grant, string, error) {
+	key, private, err := NewAttemptKey()
+	if err != nil {
+		return Grant{}, "", fmt.Errorf("making a key for attempt %s: %w", attempt, err)
+	}
 	now := r.now()
-	return Grant{Attempt: attempt, Pool: r.Pool, Identity: r.Identity, Prefix: r.prefix(),
-		IssuedAt: now.UTC().Format(time.RFC3339Nano), NotAfter: now.Add(r.Timeout).UTC().Format(time.RFC3339Nano)}
+	return Grant{Attempt: attempt, Pool: r.Pool, Identity: r.Identity, Prefix: r.prefix(), AttemptKey: key.PublicPEM(),
+		IssuedAt: now.UTC().Format(time.RFC3339Nano), NotAfter: now.Add(r.Timeout).UTC().Format(time.RFC3339Nano)}, private, nil
 }
 
 // withPack moves an analysis's findings queries that live in the operator's pack to paths inside
@@ -218,17 +246,61 @@ func (r *Runner) handOver(ctx context.Context, root string) (string, error) {
 	return sum, nil
 }
 
-// execute signs g, launches its worker with secrets and waits for it, answering the grant's digest.
-func (r *Runner) execute(ctx context.Context, g Grant, secrets map[string]string, what string) (string, error) {
+// grant signs g and keeps it beside its attempt, answering it and its digest.
+func (r *Runner) grant(ctx context.Context, g Grant, what string) (authz.Envelope, string, error) {
 	body, err := json.Marshal(g)
 	if err != nil {
-		return "", err
+		return authz.Envelope{}, "", err
 	}
 	env, grantDigest, err := r.Point.Sign(ctx, authz.Statement{
 		Subject:       []authz.Subject{{Name: g.Attempt, Digest: map[string]string{"sha256": digest(body)}}},
 		PredicateType: authz.PredicateTaskGrant, Predicate: body})
 	if err != nil {
-		return "", fmt.Errorf("granting %s: %w", what, err)
+		return authz.Envelope{}, "", fmt.Errorf("granting %s: %w", what, err)
+	}
+	signed, err := json.Marshal(env)
+	if err != nil {
+		return authz.Envelope{}, "", err
+	}
+	if err := r.Objects.Put(ctx, grantKey(r.prefix(), g.Attempt), signed); err != nil {
+		return authz.Envelope{}, "", fmt.Errorf("keeping the grant for %s: %w", what, err)
+	}
+	return env, grantDigest, nil
+}
+
+// attemptKey is the public half of the key the grant of digest grantDigest names for attempt, read
+// from the grant kept beside the attempt. A worker of the pool can write there, so a grant whose digest
+// is not grantDigest is refused: the digest is of the very statement the coordinator signed.
+func (r *Runner) attemptKey(ctx context.Context, attempt, grantDigest string) (*ecdsa.PublicKey, error) {
+	signed, err := r.Objects.Get(ctx, grantKey(r.prefix(), attempt), maxSigned)
+	if err != nil {
+		return nil, fmt.Errorf("reading the grant of attempt %s: %w", attempt, err)
+	}
+	var env authz.Envelope
+	if err := json.Unmarshal(signed, &env); err != nil {
+		return nil, fmt.Errorf("the grant of attempt %s is not an envelope: %w", attempt, err)
+	}
+	if d, err := env.Digest(); err != nil || d != grantDigest {
+		return nil, fmt.Errorf("the grant kept beside attempt %s is not the one it was granted", attempt)
+	}
+	payload, err := base64.StdEncoding.DecodeString(env.Payload)
+	if err != nil {
+		return nil, err
+	}
+	var st struct {
+		Predicate Grant `json:"predicate"`
+	}
+	if err := json.Unmarshal(payload, &st); err != nil {
+		return nil, err
+	}
+	return attemptPublicKey(st.Predicate.AttemptKey)
+}
+
+// execute signs g, launches its worker with secrets and waits for it, answering the grant's digest.
+func (r *Runner) execute(ctx context.Context, g Grant, secrets map[string]string, what string) (string, error) {
+	env, grantDigest, err := r.grant(ctx, g, what)
+	if err != nil {
+		return "", err
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, r.Timeout)
 	defer cancel()
@@ -260,51 +332,108 @@ func (r *Runner) sign(ctx context.Context, receipt Receipt) error {
 // accept verifies an attempt's attestation: chained to the roots, naming the pool's identity,
 // signed with that identity's key, for this attempt's grant.
 func (r *Runner) accept(ctx context.Context, attempt, grantDigest string) (Result, string, error) {
-	signed, err := r.Objects.Get(ctx, attestationKey(r.prefix(), attempt))
+	signed, err := r.Objects.Get(ctx, attestationKey(r.prefix(), attempt), maxSigned)
 	if err != nil {
 		return Result{}, "", fmt.Errorf("no attestation: %w", err)
 	}
-	result, err := r.verify(attempt, grantDigest, signed)
+	result, err := r.verify(ctx, attempt, grantDigest, signed)
 	return result, digest(signed), err
 }
 
-func (r *Runner) verify(attempt, grantDigest string, signed []byte) (Result, error) {
-	var env authz.Envelope
-	if err := json.Unmarshal(signed, &env); err != nil {
-		return Result{}, fmt.Errorf("the attestation is not an envelope: %w", err)
-	}
-	payload, err := base64.StdEncoding.DecodeString(env.Payload)
+func (r *Runner) verify(ctx context.Context, attempt, grantDigest string, signed []byte) (Result, error) {
+	own, err := r.attemptKey(ctx, attempt, grantDigest)
 	if err != nil {
 		return Result{}, err
 	}
-	var claimed struct {
-		Predicate Result `json:"predicate"`
-	}
-	if err := json.Unmarshal(payload, &claimed); err != nil {
-		return Result{}, err
-	}
-	id, key, err := VerifyChain(claimed.Predicate.Chain, r.Roots, r.now())
+	predicate, id, err := r.open(signed, authz.PredicateResultAttestation, own)
 	if err != nil {
 		return Result{}, err
-	}
-	if id != r.Identity {
-		return Result{}, fmt.Errorf("signed by %s, not %s", id, r.Identity)
-	}
-	st, err := authz.OpenWithKey(env, key)
-	if err != nil {
-		return Result{}, err
-	}
-	if st.PredicateType != authz.PredicateResultAttestation {
-		return Result{}, fmt.Errorf("%s is not a result attestation", st.PredicateType)
 	}
 	var result Result
-	if err := json.Unmarshal(st.Predicate, &result); err != nil {
+	if err := json.Unmarshal(predicate, &result); err != nil {
 		return Result{}, err
 	}
 	if result.Attempt != attempt || result.Grant != grantDigest || result.Identity != id {
 		return Result{}, errors.New("the attestation is for another attempt, grant or identity")
 	}
+	if _, err := result.within(); err != nil {
+		return Result{}, err
+	}
 	return result, nil
+}
+
+// What a coordinator reads of results, all of which it holds in memory before any of it lands: a
+// hostile or broken worker signs for whatever it likes.
+const (
+	// maxSigned bounds a signed result, which lists its outputs.
+	maxSigned = 16 << 20
+	// maxOutputs bounds the outputs a result names.
+	maxOutputs = 10_000
+	// maxHeld bounds the bytes of results held at once, one result's or several settling together,
+	// well inside the memory a coordinator is given.
+	maxHeld = 1 << 30
+)
+
+// holding is what every pool in this process holds of the results it is reading.
+var holding = semaphore.NewWeighted(maxHeld)
+
+// within checks what a result names against what may be read of one, before any of it is, answering
+// how many bytes its outputs come to.
+func (result Result) within() (int64, error) {
+	if len(result.Outputs) > maxOutputs {
+		return 0, fmt.Errorf("the result names %d outputs, more than %d", len(result.Outputs), maxOutputs)
+	}
+	var total int64
+	for _, o := range result.Outputs {
+		if o.Size < 0 || o.Size > maxObject {
+			return 0, fmt.Errorf("output %s says it is %d bytes", o.Name, o.Size)
+		}
+		total += o.Size
+	}
+	if total > maxHeld {
+		return 0, fmt.Errorf("the result's outputs come to %d bytes, more than %d", total, maxHeld)
+	}
+	return total, nil
+}
+
+// open verifies signed as a statement of predicateType by the pool's identity and by an attempt's own
+// key, own: chained to the roots, naming that identity, and signed both with its key and with own. It
+// answers the predicate and the identity.
+func (r *Runner) open(signed []byte, predicateType string, own *ecdsa.PublicKey) (json.RawMessage, string, error) {
+	var env authz.Envelope
+	if err := json.Unmarshal(signed, &env); err != nil {
+		return nil, "", fmt.Errorf("it is not an envelope: %w", err)
+	}
+	payload, err := base64.StdEncoding.DecodeString(env.Payload)
+	if err != nil {
+		return nil, "", err
+	}
+	var claimed struct {
+		Predicate struct {
+			Chain string `json:"chain"`
+		} `json:"predicate"`
+	}
+	if err := json.Unmarshal(payload, &claimed); err != nil {
+		return nil, "", err
+	}
+	id, key, err := VerifyChain(claimed.Predicate.Chain, r.Roots, r.now())
+	if err != nil {
+		return nil, "", err
+	}
+	if id != r.Identity {
+		return nil, "", fmt.Errorf("signed by %s, not %s", id, r.Identity)
+	}
+	st, err := authz.OpenWithKey(env, key)
+	if err != nil {
+		return nil, "", err
+	}
+	if _, err := authz.OpenWithKey(env, own); err != nil {
+		return nil, "", errors.New("it is not signed with its attempt's own key")
+	}
+	if st.PredicateType != predicateType {
+		return nil, "", fmt.Errorf("it is a %s, not a %s", st.PredicateType, predicateType)
+	}
+	return st.Predicate, id, nil
 }
 
 // materialize brings every output back under dir once all of them verify: only the kinds an
@@ -425,7 +554,7 @@ func (r *Runner) fetch(ctx context.Context, attempt string, o Output) ([]byte, e
 	if !plain(o.Name) {
 		return nil, fmt.Errorf("output %q is not a plain relative name", o.Name)
 	}
-	body, err := r.Objects.Get(ctx, outputKey(r.prefix(), attempt, o.Name))
+	body, err := r.Objects.Get(ctx, outputKey(r.prefix(), attempt, o.Name), o.Size)
 	if err != nil {
 		return nil, fmt.Errorf("output %s: %w", o.Name, err)
 	}

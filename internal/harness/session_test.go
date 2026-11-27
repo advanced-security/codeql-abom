@@ -133,7 +133,7 @@ func TestASessionIsRefusedWhereNoCopilotCLIIsConfigured(t *testing.T) {
 	b := newBench(t, nil)
 	b.sessions.Agent = nil
 	request := b.request(t, "")
-	if _, err := b.sessions.Start(request, "operator"); !errors.Is(err, ErrNoAgent) {
+	if _, err := b.sessions.Start(request, "operator", ""); !errors.Is(err, ErrNoAgent) {
 		t.Errorf("started without an agent: %v", err)
 	}
 	if got, _ := b.store.AuthoringSessions(request); len(got) != 0 {
@@ -156,7 +156,7 @@ func TestACopilotCLINamedWhileServingIsUsedByTheNextSession(t *testing.T) {
 		t.Fatal("the session did not run on the agent set after start-up")
 	}
 	b.sessions.SetAgent(nil)
-	if _, err := b.sessions.Start(b.request(t, ""), "operator"); !errors.Is(err, ErrNoAgent) {
+	if _, err := b.sessions.Start(b.request(t, ""), "operator", ""); !errors.Is(err, ErrNoAgent) {
 		t.Errorf("after the agent was taken away a start answered %v, want ErrNoAgent", err)
 	}
 }
@@ -166,7 +166,7 @@ func TestACopilotCLINamedWhileServingIsUsedByTheNextSession(t *testing.T) {
 func TestASessionWorksOnlyAQueryInThePack(t *testing.T) {
 	b := newBench(t, stand(func(context.Context, Setup) (string, error) { return "", nil }))
 	request := b.request(t, "actions/unpinned-tag")
-	_, err := b.sessions.Start(request, "operator")
+	_, err := b.sessions.Start(request, "operator", "")
 	if err == nil || !strings.Contains(err.Error(), "actions/unpinned-tag") {
 		t.Errorf("started on a query outside the pack: %v", err)
 	}
@@ -478,7 +478,7 @@ func TestAnOperatorsNewQueryIsRefusedWhereItCannotBeLaidOut(t *testing.T) {
 		r := asked()
 		r.QueryID, r.TargetSource, r.TargetDecision = id, store.TargetOperator, store.DecisionCreate
 		request := b.save(t, r)
-		if _, err := b.sessions.Start(request, "operator"); err == nil {
+		if _, err := b.sessions.Start(request, "operator", ""); err == nil {
 			t.Errorf("started a session laying out %s", id)
 		}
 		if got, _ := b.store.AuthoringSessions(request); len(got) != 0 {
@@ -605,7 +605,7 @@ func TestASessionIsRefusedWhileCodeQLIsBusy(t *testing.T) {
 	}
 	defer unlock()
 	request := b.request(t, "")
-	if _, err := b.sessions.Start(request, "operator"); !errors.Is(err, ErrBusy) {
+	if _, err := b.sessions.Start(request, "operator", ""); !errors.Is(err, ErrBusy) {
 		t.Errorf("started while CodeQL was busy: %v", err)
 	}
 	if got, _ := b.store.AuthoringSessions(request); len(got) != 0 {
@@ -624,7 +624,7 @@ func TestOneSessionAtATimeWorksARequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.sessions.Start(request, "operator"); !errors.Is(err, store.ErrSessionUnderWay) {
+	if _, err := b.sessions.Start(request, "operator", ""); !errors.Is(err, store.ErrSessionUnderWay) {
 		t.Errorf("a second session: %v", err)
 	}
 	close(release)
@@ -1239,6 +1239,40 @@ func TestTheAgentReadsWhatQLMCPWroteAndNotTheCLIsState(t *testing.T) {
 
 // A reader asks to see the tree the agent read the fixtures as, after the session and its scratch
 // are gone; it is kept on the request, against the query and the fixtures it was printed from.
+// A worker's tests run on a copy of the pack, so the database a tree is printed from names the copy
+// where the single binary's names the pack. The tree is kept, and named, as the pack names it.
+func TestATreePrintedFromTheCopyTestsRanInIsKeptAsThePackNamesIt(t *testing.T) {
+	copied := filepath.Join(t.TempDir(), "abom-tests")
+	var printed string
+	b := newBench(t, stand(func(_ context.Context, s Setup) (string, error) {
+		bounds := s.Gate.Bounds()
+		s.Gate.PostToolUse(copilot.PostToolUseHookInput{ToolName: Server + "-codeql_query_run",
+			ToolArgs: map[string]any{"queryName": "PrintAST", "queryLanguage": "actions",
+				"database": bounds.database(), "sourceFiles": ".github/workflows/runners.yml"},
+			ToolResult: map[string]any{"textResultForLlm": printout(t, s.Scratch, printed)}},
+			copilot.HookInvocation{})
+		return "done", nil
+	}))
+	b.sessions.TestedAt = copied
+	printed = copied + "/test/SelfHostedRunner/.github/workflows/runners.yml:\n#    1| [Job] a\n"
+	b.query(t, "SelfHostedRunner", "acme/self-hosted-runner", true)
+	request := b.request(t, "acme/self-hosted-runner")
+	b.finish(t, request, "operator")
+
+	listed, err := b.store.AuthoringASTs(request)
+	if err != nil || len(listed) != 1 {
+		t.Fatalf("kept %v %v", listed, err)
+	}
+	got, err := b.store.AuthoringAST(listed[0].RowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := b.sessions.Workspace + "/test/SelfHostedRunner/.github/workflows/runners.yml:\n#    1| [Job] a\n"
+	if got.Body != want || got.Digest != store.TreeDigest(want) {
+		t.Errorf("kept %q as %s; want %q as %s", got.Body, got.Digest, want, store.TreeDigest(want))
+	}
+}
+
 func TestAPrintedTreeOutlivesTheSessionOnTheRequest(t *testing.T) {
 	tree := "#10000 UsesStep\n  #10001 ScalarValue actions/checkout@v4\n"
 	b := newBench(t, stand(func(_ context.Context, s Setup) (string, error) {
@@ -1265,5 +1299,16 @@ func TestAPrintedTreeOutlivesTheSessionOnTheRequest(t *testing.T) {
 	if got.Body != tree || got.QueryID != "acme/self-hosted-runner" || got.TestDigest == "" ||
 		got.Database != "test/SelfHostedRunner/SelfHostedRunner.testproj" || got.CLIVersion != benchCLI {
 		t.Errorf("kept %+v", got)
+	}
+
+	// The event names the tree by what it says, which a worker can know before any store numbers it.
+	page, err := b.store.AuditEvents(store.AuditFilter{Session: got.SessionID, Hook: HookArtifact})
+	if err != nil || len(page.Items) != 1 {
+		t.Fatalf("artifact events %+v %v", page.Items, err)
+	}
+	e := page.Items[0]
+	if e.Capture.ArtifactDigest != store.TreeDigest(tree) || e.Capture.ArtifactID != 0 ||
+		!strings.Contains(e.Detail, "as printout "+store.TreeDigest(tree)[:12]) {
+		t.Errorf("the printout event names %+v with %q; want the tree's digest and no row id", e.Capture, e.Detail)
 	}
 }

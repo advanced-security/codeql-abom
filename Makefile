@@ -314,8 +314,8 @@ quality: selfcheck
 	@go run ./cmd/codeql-abom selfcheck --language=python --source-root=scripts \
 		--suite advanced-security/abom-python-quality-src:codeql-suites/abom-python-quality.qls
 
-## security-test: enforce the HTTP and deployed-query trust boundaries, and that every way to change
-## ABOM is a signed decision, without external services.
+## security-test: enforce the HTTP, deployed-query and authoring-worker trust boundaries, and that
+## every way to change ABOM is a signed decision, without external services.
 security-test:
 	@scripts/security-test.sh
 

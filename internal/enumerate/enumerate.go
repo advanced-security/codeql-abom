@@ -319,9 +319,9 @@ func (o Options) readRepositories(ctx context.Context, declared []store.Declared
 
 // marksFor decides how much of an account this run reads.
 //
-// Zero marks mean a full listing, which is the answer in four cases: an account an event asked to
-// have listed whole, one nobody has read, one whose last full listing has aged out, and one small
-// enough that reading it whole is cheaper than sweeping it. Only a full listing can establish that a repository is gone, so a design that
+// Zero marks mean a full listing, which is the answer in five cases: an account an event asked to
+// have listed whole, one nobody has read, one whose last full listing has aged out, one declared
+// since that listing, and one small enough that reading it whole is cheaper than sweeping it. Only a full listing can establish that a repository is gone, so a design that
 // sweeps forever keeps dead repositories and looks current doing it.
 func (o Options) marksFor(account store.DeclaredAccount) (catalog.Marks, error) {
 	owner := account.Owner
@@ -340,24 +340,21 @@ func (o Options) marksFor(account store.DeclaredAccount) (catalog.Marks, error) 
 	if state.ListedPages <= sweepWorthIt {
 		return catalog.Marks{}, nil
 	}
-	// A property scope saved since the last full listing has never been judged over the whole
-	// account, and a sweep reads only what moved, which retagging does not.
-	if account.HasProperties() && scopeNewerThan(account, state.ListedAt) {
+	// A declaration saved since the last full listing has never been applied to the whole account,
+	// and a sweep reads only what moved: neither a repository it newly includes nor one retagged into
+	// a property scope need have.
+	if declaredSince(account, state.ListedAt) {
 		return catalog.Marks{}, nil
 	}
 	return catalog.Marks{HighCreated: state.HighCreated, HighPushed: state.HighPushed}, nil
 }
 
-// scopeNewerThan reports whether any property scope was declared after t. One whose time cannot be
-// read counts as newer, which costs a full listing rather than a scope nobody judged.
-func scopeNewerThan(account store.DeclaredAccount, t time.Time) bool {
-	for _, c := range account.Properties {
-		at, err := time.Parse(time.RFC3339Nano, c.DeclaredAt)
-		if err != nil || at.After(t) {
-			return true
-		}
-	}
-	return false
+// declaredSince reports whether the account was declared after t. Its property scopes are written
+// with it, so they are never newer. A time that cannot be read counts as newer, which costs a full
+// listing rather than a scope nobody applied.
+func declaredSince(account store.DeclaredAccount, t time.Time) bool {
+	at, err := time.Parse(time.RFC3339Nano, account.DeclaredAt)
+	return err != nil || at.After(t)
 }
 
 // sweepWorthIt is the page count at or below which a full listing is the cheaper read.

@@ -8,8 +8,10 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"math/big"
+	"net"
 	"net/url"
 	"os"
 	"path"
@@ -17,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/advanced-security/codeql-abom/internal/authz"
 )
 
 // DirStore is an object store in a directory.
@@ -41,15 +45,24 @@ func (d DirStore) Put(_ context.Context, key string, body []byte) error {
 	return os.WriteFile(p, body, 0o644)
 }
 
-func (d DirStore) Get(_ context.Context, key string) ([]byte, error) {
+func (d DirStore) Get(_ context.Context, key string, limit int64) ([]byte, error) {
 	p, err := d.path(key)
 	if err != nil {
 		return nil, err
 	}
-	return os.ReadFile(p)
+	f, err := os.Open(p)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("reading %s: %w", key, ErrNotFound)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return readBounded(key, f, limit)
 }
 
-// InProcess launches each attempt's worker as a goroutine of this process.
+// InProcess launches each attempt's worker as a goroutine of this process, with an attestor holding the
+// worker's secrets across a socket as one does in a pod: the worker it makes keeps none of them.
 type InProcess struct {
 	// Worker makes the worker for one attempt from the secrets lent to it.
 	Worker func(secrets map[string]string) (*Worker, error)
@@ -58,6 +71,7 @@ type InProcess struct {
 
 	mu   sync.Mutex
 	done map[string]chan error
+	stop map[string]context.CancelFunc
 }
 
 func (p *InProcess) Start(ctx context.Context, l Launch) error {
@@ -66,20 +80,57 @@ func (p *InProcess) Start(ctx context.Context, l Launch) error {
 		return err
 	}
 	ch := make(chan error, 1)
+	ctx, cancel := context.WithCancel(ctx)
 	p.mu.Lock()
 	if p.done == nil {
-		p.done = map[string]chan error{}
+		p.done, p.stop = map[string]chan error{}, map[string]context.CancelFunc{}
 	}
-	p.done[l.Attempt] = ch
+	p.done[l.Attempt], p.stop[l.Attempt] = ch, cancel
 	p.mu.Unlock()
+	objects := w.Objects
+	worker, closeAttestor, err := attestedApart(w, l.Grant)
+	if err != nil {
+		cancel()
+		return err
+	}
 	go func() {
-		err := w.Run(ctx, l.Grant)
+		err := worker.Run(ctx, authz.Envelope{})
+		closeAttestor()
 		if p.After != nil {
-			p.After(w.Objects, l.Attempt)
+			p.After(objects, l.Attempt)
 		}
 		ch <- err
 	}()
 	return nil
+}
+
+// attestedApart is w with its secrets handed to an attestor holding them for the grant in env, served
+// on a socket of its own, and how to stop it. Its context is not the worker's, as an attestor outlives
+// its pod's worker being stopped.
+func attestedApart(w *Worker, env authz.Envelope) (*Worker, func(), error) {
+	held := Hold(env, Secrets{Bundle: w.Bundle, Identity: w.Identity, Renew: w.Renew, AttemptKey: w.AttemptKey,
+		Objects: w.Objects, Now: w.Now})
+	dir, err := os.MkdirTemp("", "abom-attest")
+	if err != nil {
+		return nil, nil, err
+	}
+	socket := filepath.Join(dir, "attestor.sock")
+	ln, err := net.Listen("unix", socket)
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return nil, nil, err
+	}
+	serving, stop := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- ServeAttestor(serving, ln, held) }()
+	apart := *w
+	apart.Bundle, apart.Identity, apart.Renew, apart.AttemptKey, apart.Objects = authz.Bundle{}, nil, nil, nil, nil
+	apart.Attestor = DialAttestor(socket)
+	return &apart, func() {
+		stop()
+		<-done
+		_ = os.RemoveAll(dir)
+	}, nil
 }
 
 func (p *InProcess) Wait(ctx context.Context, attempt string) error {
@@ -94,11 +145,24 @@ func (p *InProcess) Wait(ctx context.Context, attempt string) error {
 	}
 }
 
+// Stop cancels the worker's context, as a pod's worker is sent SIGTERM.
+func (p *InProcess) Stop(_ context.Context, attempt string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if stop := p.stop[attempt]; stop != nil {
+		stop()
+	}
+	return nil
+}
+
 func (p *InProcess) Cleanup(_ context.Context, attempt string) {
 	p.mu.Lock()
 	delete(p.done, attempt)
 	p.mu.Unlock()
 }
+
+// NewLocalCA is newLocalCA, for this package's tests that drive it from outside it.
+func NewLocalCA(trustDomain string) (*localCA, error) { return newLocalCA(trustDomain) }
 
 // localCA issues SPIFFE identities as a cluster's issuer would, so a worker's result is verified the
 // one way it is in production.

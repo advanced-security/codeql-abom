@@ -20,6 +20,11 @@ var ErrTestsDidNotRun = errors.New("the tests could not be run")
 // Tests runs a query's own tests.
 type Tests func(ctx context.Context, tests []string) (runner.TestResult, error)
 
+// TestRecorder keeps what a query's tests said: the store, or a worker's journal of what it keeps.
+type TestRecorder interface {
+	RecordQueryTest(t store.QueryTest) error
+}
+
 type testEvidenceKey struct{}
 
 // WithTestEvidence keeps measured iterations independently of the latest-test projection.
@@ -32,7 +37,7 @@ func WithTestEvidence(ctx context.Context, keep func(store.QueryTest) error) con
 //
 // ABOM never forms the opinion itself: `codeql test run` compiles the query, runs it against a
 // database built from the fixture tree and compares the output to the checked-in `.expected`.
-func RecordTests(ctx context.Context, st store.Backend, run Tests, root string, q Query, cli string) (answer runner.TestResult, answerErr error) {
+func RecordTests(ctx context.Context, st TestRecorder, run Tests, root string, q Query, cli string) (answer runner.TestResult, answerErr error) {
 	digest, err := DigestTests(root, q.Tests)
 	if err != nil {
 		return runner.TestResult{}, err

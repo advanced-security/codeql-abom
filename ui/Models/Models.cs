@@ -2745,12 +2745,20 @@ public sealed record AuthoringSession
     public long RowId { get; init; }
     public long RequestId { get; init; }
 
-    /// <summary><c>running</c>, <c>finished</c>, <c>stopped</c>, <c>failed</c> or <c>interrupted</c>.</summary>
+    /// <summary>
+    /// <c>queued</c>, <c>running</c>, <c>finished</c>, <c>stopped</c>, <c>failed</c> or <c>interrupted</c>.
+    /// </summary>
     public string State { get; init; } = string.Empty;
     public string StartedBy { get; init; } = string.Empty;
     public string Model { get; init; } = string.Empty;
+
+    /// <summary>Empty for a session that has not begun: one waiting its turn, or stopped while it waited.</summary>
     public string StartedAt { get; init; } = string.Empty;
     public string EndedAt { get; init; } = string.Empty;
+
+    /// <summary>When a session past the limit of sessions at once began waiting, and how many wait ahead of it.</summary>
+    public string QueuedAt { get; init; } = string.Empty;
+    public int Ahead { get; init; }
 
     /// <summary>How it ended, in words: the agent's last message, or why it stopped.</summary>
     public string Detail { get; init; } = string.Empty;
@@ -3005,6 +3013,9 @@ public sealed record DraftSession
     public string State { get; init; } = string.Empty;
     public string StartedBy { get; init; } = string.Empty;
     public string StartedAt { get; init; } = string.Empty;
+    /// <summary>When a draft past the limit of sessions at once began waiting, and how many wait before it.</summary>
+    public string QueuedAt { get; init; } = string.Empty;
+    public int Ahead { get; init; }
     public string Detail { get; init; } = string.Empty;
     public int Events { get; init; }
     public AgentDraft? Draft { get; init; }

@@ -150,8 +150,8 @@ func grantOf(t *testing.T, e authz.Entry) Grant {
 // swapping is an object store whose pack is replaced after the grant was signed over it.
 type swapping struct{ ObjectStore }
 
-func (s swapping) Get(ctx context.Context, key string) ([]byte, error) {
-	body, err := s.ObjectStore.Get(ctx, key)
+func (s swapping) Get(ctx context.Context, key string, limit int64) ([]byte, error) {
+	body, err := s.ObjectStore.Get(ctx, key, limit)
 	if strings.Contains(key, "/packs/") {
 		return append(bytes.Clone(body), 0), err
 	}
@@ -211,8 +211,14 @@ func TestOnlyWhatTheGrantedTestsLeaveComesBack(t *testing.T) {
 // forge adds outputs to an attempt's result and signs it again as the pool's identity would.
 func forge(t *testing.T, f *fixture, objects ObjectStore, attempt string, extra map[string]string) {
 	t.Helper()
+	forgeAs(t, f, objects, attempt, KindActual, extra)
+}
+
+// forgeAs is forge, adding outputs of kind.
+func forgeAs(t *testing.T, f *fixture, objects ObjectStore, attempt, kind string, extra map[string]string) {
+	t.Helper()
 	ctx := context.Background()
-	signed, err := objects.Get(ctx, attestationKey(f.runner.prefix(), attempt))
+	signed, err := objects.Get(ctx, attestationKey(f.runner.prefix(), attempt), maxSigned)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,18 +239,15 @@ func forge(t *testing.T, f *fixture, objects ObjectStore, attempt string, extra 
 	}
 	r := st.Predicate
 	r.Chain = id.ChainPEM()
-	w := &Worker{Identity: id, Objects: objects}
+	h := &held{s: Secrets{Identity: id, AttemptKey: f.keyOf(t, attempt), Objects: objects}}
 	g := Grant{Attempt: attempt, Prefix: f.runner.prefix()}
 	for name, body := range extra {
-		file := filepath.Join(t.TempDir(), "out")
-		if err := os.WriteFile(file, []byte(body), 0o644); err != nil {
+		if err := objects.Put(ctx, outputKey(g.Prefix, attempt, name), []byte(body)); err != nil {
 			t.Fatal(err)
 		}
-		if err := w.put(ctx, g, &r, name, KindActual, "", file); err != nil {
-			t.Fatal(err)
-		}
+		r.Outputs = append(r.Outputs, Output{Name: name, Kind: kind, SHA256: digest([]byte(body)), Size: int64(len(body))})
 	}
-	if err := w.attest(ctx, g, r); err != nil {
+	if err := h.attest(ctx, g, r); err != nil {
 		t.Fatal(err)
 	}
 }

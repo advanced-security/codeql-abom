@@ -1,12 +1,18 @@
 package main
 
 import (
+	"context"
+	"flag"
+	"io"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/kubernetes/fake"
+
+	"github.com/advanced-security/codeql-abom/internal/execution"
 )
 
 // A worker is capped at what it is given, so it cannot take the coordinator's or the database's
@@ -58,5 +64,29 @@ func TestAPoolsBudgetIsRefusedUnderItsOwnFlag(t *testing.T) {
 	}
 	if _, _, err := ok.budget(); err != nil {
 		t.Errorf("%+v: %v", ok, err)
+	}
+}
+
+// Each pool reaches out through its own listener of the egress proxy, named by that pool's flag, so no
+// pool is admitted to the hosts only another needs; a session's agent uses its pool's.
+func TestEveryPoolIsToldItsOwnProxy(t *testing.T) {
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	c := addExecutorFlags(fs)
+	if err := fs.Parse([]string{"--worker-egress-proxy", "http://p:3129", "--test-worker-egress-proxy", "http://p:3130",
+		"--run-worker-egress-proxy", "http://p:3131", "--authoring-egress-proxy", "http://p:3128",
+		"--worker-no-proxy", "minio.abom.svc, .cluster.local"}); err != nil {
+		t.Fatal(err)
+	}
+	k := cluster{c: *c, client: fake.NewSimpleClientset(), namespace: "abom", stdout: io.Discard}
+	for want, p := range map[string]poolFlags{"http://p:3129": c.analysis, "http://p:3130": c.tests,
+		"http://p:3131": c.runs, "http://p:3128": c.authoring} {
+		r, err := k.newPool(context.Background(), p, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		launcher := r.Launch.(*execution.Kubernetes)
+		if launcher.Proxy != want || !slices.Equal(launcher.NoProxy, []string{"minio.abom.svc", ".cluster.local"}) {
+			t.Errorf("the %s pool reaches out through %q, directly to %v; want %q", p.name, launcher.Proxy, launcher.NoProxy, want)
+		}
 	}
 }

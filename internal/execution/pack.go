@@ -54,23 +54,43 @@ func packBundle(root string) ([]byte, error) {
 }
 
 func tarGz(root string, files []string, limit int64) ([]byte, error) {
-	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gz)
-	var size int64
-	for _, p := range files {
+	names := make([]string, len(files))
+	for i, p := range files {
 		rel, err := filepath.Rel(root, p)
 		if err != nil {
 			return nil, err
 		}
-		body, err := os.ReadFile(p)
+		names[i] = filepath.ToSlash(rel)
+	}
+	return archive(root, names, func(i int, _ int64) ([]byte, error) { return os.ReadFile(files[i]) }, limit)
+}
+
+// archiveIn is the files under dir within pack, slash paths, as a .tar.gz named relative to dir, each
+// read through no link and from nothing but a regular file.
+func archiveIn(pack *os.Root, dir string, files []string, limit int64) ([]byte, error) {
+	names := make([]string, len(files))
+	for i, f := range files {
+		names[i] = strings.TrimPrefix(f, dir+"/")
+	}
+	return archive(dir, names, func(i int, left int64) ([]byte, error) { return readIn(pack, files[i], left) }, limit)
+}
+
+// archive is names, each read by read with what is left of limit, as a .tar.gz in that order with
+// fixed ownership and time; what is what an error calls it.
+func archive(what string, names []string, read func(i int, left int64) ([]byte, error), limit int64) ([]byte, error) {
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	var size int64
+	for i, name := range names {
+		body, err := read(i, limit-size)
 		if err != nil {
 			return nil, err
 		}
 		if size += int64(len(body)); size > limit {
-			return nil, fmt.Errorf("%s holds more than %d MB", root, limit>>20)
+			return nil, fmt.Errorf("%s holds more than %d MB", what, limit>>20)
 		}
-		if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: filepath.ToSlash(rel), Mode: 0o644,
+		if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: name, Mode: 0o644,
 			Size: int64(len(body)), ModTime: epoch, Format: tar.FormatPAX}); err != nil {
 			return nil, err
 		}
@@ -87,12 +107,21 @@ func tarGz(root string, files []string, limit int64) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// untarGz writes an archive's regular files under dir, refusing any name that would land outside it.
+// untarGz writes an archive's regular files under dir, refusing any name that would land outside it,
+// and any link already in dir that would lead out of it, as the agent's share of a session's can hold.
 func untarGz(body []byte, dir string, limit int64) error {
 	gz, err := gzip.NewReader(bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
 	tr := tar.NewReader(gz)
 	var size int64
 	for {
@@ -115,11 +144,11 @@ func untarGz(body []byte, dir string, limit int64) error {
 		if size += h.Size; size > limit {
 			return fmt.Errorf("the archive holds more than %d MB", limit>>20)
 		}
-		file := filepath.Join(dir, filepath.FromSlash(h.Name))
-		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		file := filepath.FromSlash(h.Name)
+		if err := root.MkdirAll(filepath.Dir(file), 0o755); err != nil {
 			return err
 		}
-		out, err := os.OpenFile(file, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		out, err := root.OpenFile(file, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 		if err != nil {
 			return err
 		}

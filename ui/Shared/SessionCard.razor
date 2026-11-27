@@ -43,9 +43,19 @@
                                data-abom-session-markdown />
             </Tip>
         </header>
-        <div class="abom-session-who">
-            Started by @StartedBy @TimeText.DayAndTime(StartedAt)@(Model.Length > 0 ? $" · {Model}" : "")
-        </div>
+        @if (Waiting)
+        {
+            <div class="abom-session-who" data-abom-session-waiting>
+                Waiting its turn since @TimeText.DayAndTime(Summary?.QueuedAt ?? ""): @WaitingText.
+                Asked for by @StartedBy@(Model.Length > 0 ? $" · {Model}" : "")
+            </div>
+        }
+        else
+        {
+            <div class="abom-session-who">
+                Started by @StartedBy @TimeText.DayAndTime(StartedAt)@(Model.Length > 0 ? $" · {Model}" : "")
+            </div>
+        }
         <dl class="abom-session-metrics">
             <dt>Time</dt>
             <dd data-abom-session-duration data-abom-session-duration-percent="@(Percent?.ToString(CultureInfo.InvariantCulture))">
@@ -172,6 +182,13 @@
     private long RequestId => Summary?.RequestId ?? _meta?.RequestId ?? 0;
     private bool Running => State == "running";
 
+    // Past the limit of sessions at once, a session waits its turn and has not begun.
+    private bool Waiting => State == "queued";
+
+    private string WaitingText => Summary is { Ahead: > 0 } s
+        ? CountText.Of(s.Ahead, "session ahead", "sessions ahead")
+        : "next to begin";
+
     private SessionPolicyRecord? Policy => _meta?.Policies
         .OrderByDescending(e => e.RowId).Select(e => e.Capture.Policy).FirstOrDefault(p => p is not null);
 
@@ -264,6 +281,10 @@
     {
         get
         {
+            if (Waiting)
+            {
+                return "Not begun";
+            }
             if (Elapsed is not { } elapsed)
             {
                 return "How long it ran was not recorded";

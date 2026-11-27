@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -25,6 +26,10 @@ type authoringOptions struct {
 	qlmcp      string
 	limit      time.Duration
 	credits    float64
+	// creditsGiven says --authoring-credits was named, which a cluster's default does not override.
+	creditsGiven bool
+	// concurrency is how many sessions work at once in a cluster; the rest wait their turn.
+	concurrency int
 	// token is the credential sessions authenticate with; nil asks gh for the operator's.
 	token func(context.Context) (string, error)
 	// org is the organization an App's Copilot requests are billed to; empty is the App's owner.
@@ -33,6 +38,8 @@ type authoringOptions struct {
 	// installation token minted for them, and readiness says so.
 	mint       func(ctx context.Context, refresh bool) (string, time.Time, error)
 	credential toolchain.Credential
+	// revoke ends a token mint made, once the session it was minted for is done.
+	revoke func(ctx context.Context, token string) error
 }
 
 func (o *authoringOptions) register(fs *flag.FlagSet) {
@@ -45,9 +52,58 @@ func (o *authoringOptions) register(fs *flag.FlagSet) {
 		"command line that starts ql-mcp for authoring sessions")
 	fs.DurationVar(&o.limit, "authoring-limit", harness.DefaultLimit, "longest one authoring session may run")
 	fs.Float64Var(&o.credits, "authoring-credits", 0,
-		"AI credits one authoring session may spend (0: no limit)")
+		fmt.Sprintf("AI credits one authoring session may spend, %v or more (0: no limit; in a cluster %v unless given)",
+			minimumCredits, clusterCredits))
+	fs.IntVar(&o.concurrency, "authoring-concurrency", 1,
+		"authoring sessions that work at once in a cluster; the rest wait their turn")
 	fs.StringVar(&o.org, "authoring-org", "",
 		"organization a GitHub App's Copilot requests are billed to (default: the App's owner)")
+}
+
+// minimumCredits is the least the Copilot CLI takes as a session's limit; it refuses a session asking
+// for less. clusterCredits bounds a session in a cluster, where nobody watches each one, unless a
+// limit is given.
+const (
+	minimumCredits = 30
+	clusterCredits = 500
+)
+
+// check refuses what every session would fail on, and settles the credit limit for where sessions run.
+func (o *authoringOptions) check(cluster bool) error {
+	if cluster && !o.creditsGiven {
+		o.credits = clusterCredits
+	}
+	switch {
+	case o.credits < 0:
+		return fmt.Errorf("--authoring-credits is a number of AI credits, not %v", o.credits)
+	case o.credits > 0 && o.credits < minimumCredits:
+		return fmt.Errorf("--authoring-credits %v: the Copilot CLI refuses a session limit under %v AI credits, "+
+			"so every session would fail; give %v or more, or 0 for no limit", o.credits, minimumCredits, minimumCredits)
+	case o.concurrency < 1:
+		return fmt.Errorf("--authoring-concurrency is how many sessions work at once, at least 1, not %d", o.concurrency)
+	}
+	return nil
+}
+
+// sessionMint mints the token a session in a cluster works on, fresh for its whole hour, from the App;
+// without one no session can begin, since in a cluster none works on a person's token.
+func sessionMint(mint func(ctx context.Context, refresh bool) (string, time.Time, error),
+) func(context.Context) (string, time.Time, error) {
+	if mint == nil {
+		return func(context.Context) (string, time.Time, error) {
+			return "", time.Time{}, errors.New("this server has no GitHub App to mint the session's Copilot " +
+				"token with, and in a cluster no session works on a person's token")
+		}
+	}
+	return func(ctx context.Context) (string, time.Time, error) { return mint(ctx, true) }
+}
+
+// creditLimit says what a session may spend, as the startup line names it.
+func creditLimit(credits float64) string {
+	if credits == 0 {
+		return "no AI credit limit"
+	}
+	return fmt.Sprintf("%v AI credits", credits)
 }
 
 // newAuthoring runs sessions over the operator's pack, or nothing when no pack is configured, and

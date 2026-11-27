@@ -245,6 +245,11 @@ func (s *Store) finishMigration() error {
 		ON abom_authoring_event(session_id,source_id) WHERE source_id<>''`); err != nil {
 		return err
 	}
+	// After the column exists: an event names the tree it printed by digest, within its session.
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_authoring_ast_digest
+		ON abom_authoring_ast(session_id, digest)`); err != nil {
+		return err
+	}
 	if err := s.reviveWhatLiveEdgesName(); err != nil {
 		return err
 	}

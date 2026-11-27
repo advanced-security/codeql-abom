@@ -1,11 +1,13 @@
 package serve
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"testing"
 
+	"github.com/advanced-security/codeql-abom/internal/authz"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
@@ -98,6 +100,20 @@ func TestDraftingIsAGuardedControlOverWhatTheRunShowed(t *testing.T) {
 	}
 	if w := sessionPost(t, s, path+"/stop", "", true); w.Code != http.StatusOK {
 		t.Errorf("stopping the draft answered %d", w.Code)
+	}
+	// A draft that waits its turn is checked as it begins against the decision that asked for it.
+	if len(f.draftDecisions) != 1 || f.draftDecisions[0] == "" {
+		t.Fatalf("the draft was handed decisions %q", f.draftDecisions)
+	}
+	d, err := st.VerifiedDecision(f.draftDecisions[0])
+	var asked struct {
+		Path string `json:"path"`
+	}
+	if err == nil {
+		_ = json.Unmarshal(d.Evidence(), &asked)
+	}
+	if err != nil || d.Operation() != authz.OpAuthoring || !d.Allowed() || asked.Path != path {
+		t.Errorf("the decision handed over verifies as %v on %q, %v", d.Operation(), asked.Path, err)
 	}
 }
 

@@ -288,6 +288,12 @@ func (g *auditGuide) event(e store.AuthoringEvent, number int) {
 			g.printf("Safe recorded detail: %s\n\n", md(e.Detail))
 		}
 	}
+	switch d := e.Capture.ArtifactDigest; {
+	case sha256Hex.MatchString(d):
+		g.printf("[Printed tree %s](/api/authoring-sessions/%d/asts/%s)\n\n", d[:12], e.SessionID, d)
+	case d != "":
+		g.printf("Printed tree named %s, which is not a digest, so it is not linked.\n\n", md(d))
+	}
 	if e.Capture.ArtifactID > 0 {
 		g.printf("[Existing printed tree #%d](/api/authoring-asts/%d)\n\n", e.Capture.ArtifactID, e.Capture.ArtifactID)
 	}

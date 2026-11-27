@@ -9,13 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 
+	"github.com/advanced-security/codeql-abom/internal/regular"
 	"github.com/advanced-security/codeql-abom/internal/runner"
 )
 
@@ -157,7 +157,7 @@ func testsByQuery(root string) (map[string][]string, error) {
 
 // qlrefTarget is the query a .qlref names: a bare path, or YAML with a `query:` key.
 func qlrefTarget(file string) (string, error) {
-	body, err := os.ReadFile(file)
+	body, err := regular.ReadFile(file)
 	if err != nil {
 		return "", err
 	}
@@ -174,7 +174,7 @@ func qlrefTarget(file string) (string, error) {
 // metadata reads @id and @kind from a query's leading QLDoc comment, which is where the CLI
 // reads them from.
 func metadata(file string) (id, kind string, err error) {
-	f, err := os.Open(file)
+	f, err := regular.Open(file)
 	if err != nil {
 		return "", "", err
 	}
@@ -288,7 +288,7 @@ func walkTests(root string, tests []string, keep func(string) bool, each func(re
 			case d.IsDir() || !keep(p):
 				return nil
 			}
-			body, err := os.ReadFile(p)
+			body, err := regular.ReadFile(p)
 			if err != nil {
 				return err
 			}

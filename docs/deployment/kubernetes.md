@@ -14,12 +14,21 @@ registry.
 | `discovery` Jobs | One per repository the crawl analyzes. |
 | `qlaas-test` Jobs | One per Test of a query in your pack. |
 | `qlaas-run` Jobs | One per repository a requested run holds no database for. |
+| `authoring` Jobs | One per authoring session or draft, `workers.authoring.concurrency` at once (one by default), the rest waiting their turn. The worker runs beside the Copilot CLI, from the image built with `--target authoring`. A session begins only with a GitHub App that can mint its Copilot token. |
+| Attestor | One beside every Job's worker. It alone holds the attempt's grant, the decision bundle, the pool's SPIFFE identity, the attempt's own key and the object store's credentials; it reads only what the grant binds, signs each report and the result, and reads nothing the worker or an agent wrote. The worker reaches it over a socket only the two mount. |
+| Egress proxy | One Deployment, with a listener for each pool: the only way out of a Job's pod. Each tunnels to the hosts its pool names in `egressProxy.allow`, at public addresses, and refuses and logs everything else; a pool naming none has no listener. |
 | PostgreSQL | `DATABASE_URL` in the `database.secretName` Secret. Only the coordinator holds it. |
 | Object store | S3, or an S3-compatible store beside kind. Grants, packs and results pass through it. |
-| Workload PKI | cert-manager, trust-manager and csi-driver-spiffe. Each pool runs as its own ServiceAccount and SPIFFE identity, and a result is accepted only as signed by its pool's. |
+| Workload PKI | cert-manager, trust-manager and csi-driver-spiffe. Each pool runs as its own ServiceAccount and SPIFFE identity. Each attempt is lent a key of its own, named in its grant, and a report or result is accepted only signed by both its pool's identity and that key. |
 
 Every pod runs as a non-root user with a read-only root filesystem. A Job writes only to its own
-scratch volume and `/tmp`, so nothing an attempt does changes what the next one runs.
+scratch volume and `/tmp`, so nothing an attempt does changes what the next one runs. The attestor
+and the Copilot CLI run as native sidecars, so the chart needs Kubernetes 1.29 or later.
+
+A Job's pod reaches DNS and its own pool's listener of the proxy, and whatever
+`networkPolicy.workerEgress` adds, and nothing directly. An object store at an `objectStore.endpoint`
+of its own is reached directly, as are the hosts named in `egressProxy.direct`; on S3, every listener
+admits the bucket's own host and no other bucket's.
 
 ## On kind
 
@@ -69,14 +78,18 @@ placeholders are `<ACCOUNT_ID>`, `<REGION>`, `<CLUSTER>`, `<ECR_REPO>`, `<RDS_EN
    keys signed still verifies, and nothing they sign afterwards does. `audit rotate-key` refuses
    while a KMS key is named.
 6. **Identities.** EKS Pod Identity associations, or IRSA with
-   `serviceAccounts.<name>.annotations`. The EKS profile lets workers reach the Pod Identity agent
-   at `169.254.170.23` on port 80; the rest of `169.254.0.0/16`, the instance metadata service among
-   it, stays refused. One role each:
+   `serviceAccounts.<name>.annotations`. The EKS profile lets a Job's attestor reach the Pod
+   Identity agent at `169.254.170.23` on port 80, directly rather than through the proxy; the rest
+   of `169.254.0.0/16`, the instance metadata service among it, stays refused. With IRSA, name
+   `sts.<region>.amazonaws.com` in `egressProxy.everyPool` instead. Each Job's pod asks the
+   identity webhook to skip its worker and agent containers, so only the attestor is handed the
+   role. One role each:
    - `abom-coordinator`: `s3:GetObject` and `s3:PutObject` on `<prefix>attempts/*`, and
      `kms:Sign` and `kms:GetPublicKey` on the decision key, and nothing else.
-   - `abom-worker-discovery`, `abom-worker-qlaas-test` and `abom-worker-qlaas-run`: the same two S3
-     actions on their own pool's prefix only, `<prefix>attempts/discovery/*`,
-     `<prefix>attempts/qlaas-test/*` and `<prefix>attempts/qlaas-run/*`, and no KMS.
+   - `abom-worker-discovery`, `abom-worker-qlaas-test`, `abom-worker-qlaas-run` and
+     `abom-worker-authoring`: the same two S3 actions on their own pool's prefix only,
+     `<prefix>attempts/discovery/*`, `<prefix>attempts/qlaas-test/*`,
+     `<prefix>attempts/qlaas-run/*` and `<prefix>attempts/authoring/*`, and no KMS.
 7. **Workload PKI.** cert-manager with its default approver off, trust-manager, csi-driver-spiffe
    and approver-policy, which approves trust-manager's own certificate where kind approves it by
    hand. The CA `ClusterIssuer` and trust `Bundle` are those in
@@ -114,6 +127,8 @@ What the kind cluster is drilled against, on EKS:
 - The coordinator's log names the decision key and each pool's identity.
 - A discovery Job runs as `abom-worker-discovery`, and its pod cannot reach the coordinator's port
   or the instance metadata service.
+- A discovery Job's worker container holds no AWS credential, variable or token file, and its
+  attestor does.
 - `kubectl -n abom exec deploy/abom-coordinator -- codeql-abom audit verify` verifies every signed
   decision, grant and receipt, reading the database and the trust bundle from the pod's
   environment.
@@ -121,7 +136,10 @@ What the kind cluster is drilled against, on EKS:
 ## Stop, restart and uninstall
 
 A coordinator that stops deletes the Jobs it started, their Secrets with them, and one that starts
-deletes any its predecessor left behind; what they were analyzing is asked again. Discovery that was
+deletes any its predecessor left behind; what they were analyzing is asked again. An authoring
+session working when its coordinator stops is interrupted, keeping what its worker had reported, and
+one waiting its turn waits on. Stopping a session suspends its Job: the worker has its pod's grace
+period to report, and what it changed lands. Discovery that was
 running is left paused unless resume-on-start is on in Settings. Sessions are kept in the database,
 so a rollout signs nobody out. `helm rollback` changes the image and not the database: an earlier
 image starts against the schema a later one migrated to, since migrations only add, but nothing

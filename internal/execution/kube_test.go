@@ -89,13 +89,122 @@ func TestAnAttemptIsAJobOfThePoolsIdentityThatOwnsItsSecret(t *testing.T) {
 	}
 }
 
+// container is the one of pod named name, among its containers and its sidecars.
+func container(t *testing.T, pod corev1.PodSpec, name string) corev1.Container {
+	t.Helper()
+	for _, c := range append(slices.Clone(pod.InitContainers), pod.Containers...) {
+		if c.Name == name {
+			return c
+		}
+	}
+	t.Fatalf("the pod runs no %s container", name)
+	return corev1.Container{}
+}
+
+// A worker reads a repository, or what an agent left, and the CLI follows a link in what it reads, so
+// every pool's worker holds none of the attempt's secrets: an attestor beside it holds the grant, the
+// decision bundle, the SPIFFE identity, the attempt's key and the object store, and the two share only
+// a socket's directory. The attestor is a sidecar, so it outlives the worker's grace period.
+func TestAnAttestorBesideEveryWorkerHoldsItsSecrets(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	k := &Kubernetes{Client: client, Namespace: "abom", Image: "abom:dev", Pool: "discovery",
+		ServiceAccount: "abom-worker-discovery", TrustConfigMap: "abom-decision-trust", Deadline: time.Hour,
+		Env:     []corev1.EnvVar{{Name: "ABOM_S3_BUCKET", Value: "abom"}},
+		EnvFrom: []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "abom-s3"}}}}}
+	ctx := context.Background()
+	attempt := "0123456789abcdef01234567"
+	if err := k.Start(ctx, Launch{Attempt: attempt, Grant: authz.Envelope{PayloadType: authz.PayloadType},
+		Secrets: map[string]string{AttemptKeySecret: "-----BEGIN PRIVATE KEY-----", TokenSecret: "t0k"}}); err != nil {
+		t.Fatal(err)
+	}
+	job, err := client.BatchV1().Jobs("abom").Get(ctx, k.name(attempt), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod := job.Spec.Template.Spec
+	attestor, worker := container(t, pod, "attestor"), container(t, pod, "worker")
+	if attestor.RestartPolicy == nil || *attestor.RestartPolicy != corev1.ContainerRestartPolicyAlways || pod.InitContainers[0].Name != "attestor" {
+		t.Error("the attestor is not a sidecar started before the worker")
+	}
+	mounts := func(c corev1.Container) map[string]string {
+		out := map[string]string{}
+		for _, m := range c.VolumeMounts {
+			out[m.Name] = m.MountPath
+		}
+		return out
+	}
+	env := func(c corev1.Container) map[string]bool {
+		out := map[string]bool{}
+		for _, e := range c.Env {
+			out[e.Name] = true
+		}
+		return out
+	}
+	am, wm := mounts(attestor), mounts(worker)
+	for _, v := range []string{"grant", "trust", "spiffe"} {
+		if am[v] == "" || wm[v] != "" {
+			t.Errorf("%s is mounted by the attestor at %q and by the worker at %q", v, am[v], wm[v])
+		}
+	}
+	if am["attest"] == "" || am["attest"] != wm["attest"] || am["scratch"] != "" {
+		t.Errorf("the attestor and worker share %q and %q, and the attestor reads the scratch at %q",
+			am["attest"], wm["attest"], am["scratch"])
+	}
+	ae, we := env(attestor), env(worker)
+	if !ae[AttemptKeySecret] || !ae["ABOM_S3_BUCKET"] || len(attestor.EnvFrom) != 1 {
+		t.Errorf("the attestor holds %v and %d sources; want the attempt's key and the object store", ae, len(attestor.EnvFrom))
+	}
+	if we[AttemptKeySecret] || we["ABOM_S3_BUCKET"] || len(worker.EnvFrom) != 0 || !we[TokenSecret] || ae[TokenSecret] {
+		t.Errorf("the worker holds %v and %d sources; want the token it reads with and nothing of the attempt's", we, len(worker.EnvFrom))
+	}
+	if job.Spec.Template.Annotations["eks.amazonaws.com/skip-containers"] != "worker,agent" {
+		t.Errorf("a cloud role annotated on the pool's ServiceAccount would reach the worker: %v", job.Spec.Template.Annotations)
+	}
+	if attestor.SecurityContext == nil || attestor.SecurityContext.ReadOnlyRootFilesystem == nil ||
+		!*attestor.SecurityContext.ReadOnlyRootFilesystem {
+		t.Error("the attestor may write its root filesystem")
+	}
+}
+
+// Every pool reaches out through its own listener of the egress proxy, which admits only the hosts that
+// pool needs: its worker and its attestor are told to, in both spellings tools read, and reach directly
+// only the pod's loopback and what the cluster serves inside it.
+func TestEveryWorkerReachesOutThroughItsPoolsProxy(t *testing.T) {
+	k := &Kubernetes{Client: fake.NewSimpleClientset(), Namespace: "abom", Image: "abom:dev", Pool: "discovery",
+		Deadline: time.Hour, Proxy: "http://abom-egress-proxy:3129", NoProxy: []string{"minio.abom.svc"}}
+	pod := k.job("abom-discovery-0123", map[string]string{}, nil, false).Spec.Template.Spec
+	for _, name := range []string{"worker", "attestor"} {
+		env := map[string]string{}
+		for _, e := range container(t, pod, name).Env {
+			env[e.Name] = e.Value
+		}
+		for _, v := range []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"} {
+			if env[v] != k.Proxy {
+				t.Errorf("the %s's %s is %q; want its pool's proxy", name, v, env[v])
+			}
+		}
+		for _, v := range []string{"NO_PROXY", "no_proxy"} {
+			if env[v] != "127.0.0.1,localhost,minio.abom.svc" {
+				t.Errorf("the %s's %s is %q", name, v, env[v])
+			}
+		}
+	}
+	k.Proxy, k.NoProxy = "", nil
+	pod = k.job("abom-discovery-0123", map[string]string{}, nil, false).Spec.Template.Spec
+	for _, e := range container(t, pod, "worker").Env {
+		if strings.Contains(strings.ToUpper(e.Name), "PROXY") {
+			t.Errorf("a pool given no proxy names %s=%q", e.Name, e.Value)
+		}
+	}
+}
+
 // A worker writes only where a volume is mounted: its scratch directory, and /tmp, where CodeQL's JVM
 // keeps its own files. Everything else, HOME and the packs the image installed beneath it included,
 // is read-only as the coordinator's is, so no attempt changes what the next one in its pod runs.
 func TestAWorkerWritesOnlyToItsVolumes(t *testing.T) {
 	k := &Kubernetes{Client: fake.NewSimpleClientset(), Namespace: "abom", Image: "abom:dev", Pool: "discovery",
 		Deadline: time.Hour}
-	pod := k.job("abom-discovery-0123", map[string]string{}, nil).Spec.Template.Spec
+	pod := k.job("abom-discovery-0123", map[string]string{}, nil, false).Spec.Template.Spec
 	c := pod.Containers[0]
 	if c.SecurityContext.ReadOnlyRootFilesystem == nil || !*c.SecurityContext.ReadOnlyRootFilesystem {
 		t.Error("a worker's root filesystem is writable")
@@ -197,6 +306,19 @@ func TestAStartingCoordinatorReapsOnlyItsPoolsLeftoverJobs(t *testing.T) {
 	if want := []string{"abom-qlaas-test-cccccccccccccccc", "nightly-backup"}; !slices.Equal(left, want) {
 		t.Errorf("left %v; want %v", left, want)
 	}
+	// A leftover Job's Secret holds a token as live as a running one's, so it goes by name with the
+	// Job rather than waiting on garbage collection.
+	secrets, err := client.CoreV1().Secrets("abom").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kept []string
+	for _, s := range secrets.Items {
+		kept = append(kept, s.Name)
+	}
+	if want := []string{"abom-qlaas-test-cccccccccccccccc"}; !slices.Equal(kept, want) {
+		t.Errorf("left Secrets %v; want only the other pool's %v", kept, want)
+	}
 }
 
 // The Secret holding a grant and a lent token is owned by its Job from the moment it exists, so
@@ -271,6 +393,42 @@ func TestCleaningUpAnAttemptDeletesItsSecret(t *testing.T) {
 	}
 }
 
+// Stopping an attempt suspends its Job, which sends its pod SIGTERM and leaves the worker its grace
+// period to report and sign what it did; waiting on it answers ErrStopped only once no pod is left, so
+// what the worker wrote while stopping is read, and not before.
+func TestStoppingAnAttemptSuspendsItsJobAndWaitsForItsPodToGo(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	k := &Kubernetes{Client: client, Namespace: "abom", Pool: "authoring", Deadline: time.Hour, Poll: time.Millisecond}
+	ctx := context.Background()
+	attempt := "0123456789abcdef01"
+	if err := k.Start(ctx, Launch{Attempt: attempt, Grant: authz.Envelope{PayloadType: authz.PayloadType}}); err != nil {
+		t.Fatal(err)
+	}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: k.name(attempt) + "-x", Namespace: "abom",
+		Labels: map[string]string{"abom.github.com/attempt": attempt}}}
+	if _, err := client.CoreV1().Pods("abom").Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := k.Stop(ctx, attempt); err != nil {
+		t.Fatal(err)
+	}
+	job, err := client.BatchV1().Jobs("abom").Get(ctx, k.name(attempt), metav1.GetOptions{})
+	if err != nil || job.Spec.Suspend == nil || !*job.Spec.Suspend {
+		t.Fatalf("after stopping, the Job is %+v, %v; want it suspended", job.Spec.Suspend, err)
+	}
+	waiting, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	if err := k.Wait(waiting, attempt); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("waiting while the stopped pod is still finishing answered %v", err)
+	}
+	if err := client.CoreV1().Pods("abom").Delete(ctx, pod.Name, metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := k.Wait(ctx, attempt); !errors.Is(err, ErrStopped) {
+		t.Errorf("waiting once the stopped pod is gone answered %v; want ErrStopped", err)
+	}
+}
+
 // A variable the object store reads and its Jobs are not given would leave every worker unable to
 // reach what its coordinator can: S3Env is what is forwarded, so it names every one read.
 func TestEveryObjectStoreVariableIsOneAWorkerIsGiven(t *testing.T) {
@@ -286,5 +444,138 @@ func TestEveryObjectStoreVariableIsOneAWorkerIsGiven(t *testing.T) {
 		if !slices.Contains(S3Env, m[1]) {
 			t.Errorf("s3.go reads %s, which S3Env does not forward to workers", m[1])
 		}
+	}
+}
+
+// sessionPod is the pod an authoring session's Job runs, sealed or not: its spec, the agent, and the
+// worker.
+func sessionPod(t *testing.T, sealed bool) (corev1.PodSpec, corev1.Container, corev1.Container) {
+	t.Helper()
+	client := fake.NewSimpleClientset()
+	k := &Kubernetes{Client: client, Namespace: "abom", Image: "abom:dev", Pool: "authoring",
+		ServiceAccount: "abom-worker-authoring", TrustConfigMap: "abom-decision-trust", Deadline: time.Hour,
+		Env: []corev1.EnvVar{{Name: "ABOM_S3_BUCKET", Value: "abom"}},
+		EnvFrom: []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{
+			LocalObjectReference: corev1.LocalObjectReference{Name: "abom-s3"}}}},
+		Agent: &Agent{Workspace: "/var/lib/abom/custom-queries", Command: []string{"copilot"},
+			Proxy: "http://abom-egress:3128"}}
+	ctx := context.Background()
+	attempt := "0123456789abcdef01234567"
+	if err := k.Start(ctx, Launch{Attempt: attempt, Grant: authz.Envelope{PayloadType: authz.PayloadType},
+		Secrets: map[string]string{CopilotTokenSecret: "ghs_x", AgentConnectionSecret: "c0nn"}, Sealed: sealed}); err != nil {
+		t.Fatal(err)
+	}
+	job, err := client.BatchV1().Jobs("abom").Get(ctx, k.name(attempt), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod := job.Spec.Template.Spec
+	if len(pod.InitContainers) != 2 || len(pod.Containers) != 1 {
+		t.Fatalf("the pod runs %d init containers and %d containers", len(pod.InitContainers), len(pod.Containers))
+	}
+	return pod, container(t, pod, "agent"), container(t, pod, "worker")
+}
+
+// A session's pod runs the Copilot CLI as a sidecar the worker waits on, unable to write its own
+// root or keep a capability, and gives the worker time to report before the pod is killed.
+func TestASessionsPodRunsItsAgentAsASidecarTheWorkerWaitsOn(t *testing.T) {
+	pod, agent, _ := sessionPod(t, false)
+	if agent.RestartPolicy == nil || *agent.RestartPolicy != corev1.ContainerRestartPolicyAlways ||
+		agent.StartupProbe == nil || agent.StartupProbe.TCPSocket == nil ||
+		agent.StartupProbe.TCPSocket.Port.IntValue() != AgentPort {
+		t.Errorf("the agent is not a sidecar the worker waits on: %+v", agent)
+	}
+	if agent.SecurityContext == nil || agent.SecurityContext.ReadOnlyRootFilesystem == nil ||
+		!*agent.SecurityContext.ReadOnlyRootFilesystem || len(agent.SecurityContext.Capabilities.Drop) == 0 {
+		t.Error("the agent may write its root filesystem or keeps capabilities")
+	}
+	if pod.TerminationGracePeriodSeconds == nil || *pod.TerminationGracePeriodSeconds < 30 {
+		t.Error("the worker is given no time to report before its pod is killed")
+	}
+}
+
+// Only the agent holds the session's Copilot token, and it holds nothing of the object store; both
+// read the token the agent admits the worker with from the Job's Secret, and the agent reaches out
+// only through the egress proxy.
+func TestOnlyASessionsAgentHoldsItsCopilotToken(t *testing.T) {
+	_, agent, worker := sessionPod(t, false)
+	fromSecret := func(c corev1.Container, name string) bool {
+		for _, e := range c.Env {
+			if e.Name == name {
+				return e.Value == "" && e.ValueFrom != nil && e.ValueFrom.SecretKeyRef != nil &&
+					e.ValueFrom.SecretKeyRef.Key == name
+			}
+		}
+		return false
+	}
+	if !fromSecret(agent, CopilotTokenSecret) || !fromSecret(agent, AgentConnectionSecret) ||
+		!fromSecret(worker, AgentConnectionSecret) {
+		t.Error("the tokens do not reach the containers that need them from the Secret")
+	}
+	for _, e := range worker.Env {
+		if e.Name == CopilotTokenSecret {
+			t.Error("the worker holds the session's Copilot token")
+		}
+	}
+	if len(agent.EnvFrom) != 0 {
+		t.Error("the agent holds the object store's credentials")
+	}
+	env := map[string]string{}
+	for _, e := range agent.Env {
+		env[e.Name] = e.Value
+	}
+	if _, ok := env["ABOM_S3_BUCKET"]; ok || env["HTTPS_PROXY"] != "http://abom-egress:3128" ||
+		!strings.Contains(env["NO_PROXY"], "127.0.0.1") {
+		t.Errorf("the agent's environment is %v", env)
+	}
+}
+
+// The agent shares the pack and the scratch directory with the worker, at the same paths, and none of
+// the grant, the decision bundle, the worker's identity or its /tmp.
+func TestASessionsAgentSharesOnlyThePackAndScratch(t *testing.T) {
+	_, agent, worker := sessionPod(t, false)
+	mounts := func(c corev1.Container) map[string]corev1.VolumeMount {
+		out := map[string]corev1.VolumeMount{}
+		for _, m := range c.VolumeMounts {
+			out[m.MountPath] = m
+		}
+		return out
+	}
+	am, wm := mounts(agent), mounts(worker)
+	for _, path := range []string{podGrant, podTrust, podSVID, podAttest} {
+		if _, ok := am[path]; ok {
+			t.Errorf("the agent mounts %s", path)
+		}
+	}
+	for _, path := range []string{"/var/lib/abom/custom-queries", podWork} {
+		if am[path].Name == "" || am[path].Name != wm[path].Name || am[path].SubPath != wm[path].SubPath {
+			t.Errorf("the agent and the worker do not share %s: %+v and %+v", path, am[path], wm[path])
+		}
+	}
+	if am[podTemp].Name == "" || am[podTemp].Name == wm[podTemp].Name {
+		t.Error("the agent and the worker share a /tmp")
+	}
+}
+
+// A draft's agent is offered ABOM's tools and nothing else, so a sealed session's agent reads the pack
+// and writes nowhere the worker reads: it can leave no link or pipe there for the worker to follow.
+func TestASealedSessionsAgentWritesNothingTheWorkerReads(t *testing.T) {
+	_, agent, worker := sessionPod(t, true)
+	for _, m := range agent.VolumeMounts {
+		if !m.ReadOnly && m.MountPath != podTemp {
+			t.Errorf("a sealed session's agent writes %s", m.MountPath)
+		}
+	}
+	shared := false
+	for _, m := range agent.VolumeMounts {
+		shared = shared || m.MountPath == "/var/lib/abom/custom-queries" && m.ReadOnly
+	}
+	for _, m := range worker.VolumeMounts {
+		if m.MountPath == "/var/lib/abom/custom-queries" && m.ReadOnly {
+			t.Error("a sealed session's worker cannot write the pack")
+		}
+	}
+	if !shared {
+		t.Errorf("a sealed session's agent does not read the pack: %+v", agent.VolumeMounts)
 	}
 }

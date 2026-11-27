@@ -1,0 +1,9 @@
+{
+  "name": "codeql-abom-authoring",
+  "private": true,
+  "description": "The Copilot CLI and ql-mcp an authoring pod's agent runs, installed into the authoring image from package-lock.json beside this file.",
+  "dependencies": {
+    "@github/copilot": "1.0.88",
+    "codeql-development-mcp-server": "2.27.6"
+  }
+}

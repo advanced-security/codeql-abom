@@ -200,6 +200,27 @@ func TestOneSessionAtATimeWorksARequest(t *testing.T) {
 	}
 }
 
+// The interface and the guide make a printout's name a link, and a worker's report is what names it, so
+// a name that is not a digest is refused rather than kept.
+func TestAnEventNamesAPrintedTreeOnlyByItsDigest(t *testing.T) {
+	s := newTestStore(t)
+	_, session := aSessionOn(t, s)
+	naming := func(digest string) AuthoringEvent {
+		return AuthoringEvent{SessionID: session, At: "2026-09-23T12:00:00Z", Hook: "artifact",
+			Tool: "ql-mcp-codeql_query_run", Decision: "noted", Capture: AuditCapture{Version: 1, ArtifactDigest: digest}}
+	}
+	digest := TreeDigest("#1 Job a\n")
+	for _, named := range []string{"../../../api/authoring-sessions", "x](https://attacker.example/p)",
+		strings.ToUpper(digest), digest[:63], digest + "0"} {
+		if _, err := s.RecordAuthoringEvent(naming(named)); err == nil {
+			t.Errorf("an event naming printout %q was kept", named)
+		}
+	}
+	if _, err := s.RecordAuthoringEvent(naming(digest)); err != nil {
+		t.Errorf("an event naming a printout by its digest: %v", err)
+	}
+}
+
 func TestEveryEventIsKeptInTheOrderItHappened(t *testing.T) {
 	s := newTestStore(t)
 	_, session := aSessionOn(t, s)

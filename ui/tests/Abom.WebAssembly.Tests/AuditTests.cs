@@ -86,6 +86,25 @@ public class AuditTests : AbomTestContext
     }
 
     [Fact]
+    public void APrintedTreeIsLinkedByTheNameItsEventGives()
+    {
+        const string digest = "8f6ddbf93e080778d73f15749a81bd70ba51b031c2d3102b6ce7c3c5bcecc8d5";
+        Answer("api/authoring-events", $$$"""
+            {"items":[
+              {"rowId":9,"sessionId":4,"hook":"artifact","decision":"noted","capture":{"artifactDigest":"{{{digest}}}"}},
+              {"rowId":8,"sessionId":4,"hook":"artifact","decision":"noted","capture":{"artifactId":7}}],
+             "total":2,"through":9}
+            """);
+        var cut = Render<Shared.AuditEvents>();
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll("[data-abom-printed-tree]").Count));
+        var named = cut.Find("[data-abom-event='9'] [data-abom-printed-tree]");
+        Assert.Equal($"api/authoring-sessions/4/asts/{digest}", named.GetAttribute("href"));
+        Assert.Contains(digest[..12], named.TextContent);
+        var numbered = cut.Find("[data-abom-event='8'] [data-abom-printed-tree]");
+        Assert.Equal("api/authoring-asts/7", numbered.GetAttribute("href"));
+    }
+
+    [Fact]
     public void FilterControlsNameTheQuestionAndPreserveHistoricOutcomes()
     {
         ((Microsoft.AspNetCore.Components.NavigationManager)Services.GetService(

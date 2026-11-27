@@ -60,6 +60,30 @@ oidc=(--set signIn.mode=oidc --set signIn.issuer=https://issuer.example --set si
 
 render default
 ! grep -qE -- '-cpu-limit=$' "$out" || note "a pool with no CPU limit set renders an empty one"
+# A worker's pod reaches DNS and its own pool's listener of the egress proxy, and nothing directly: a
+# repository or an agent wrote what it reads. Each listener is reached from its own pool alone, admits
+# the hosts that pool needs, and the coordinator tells the pool where it is.
+policy() { awk -v name="$1" '/^---/ {on=0} $1 == "name:" && $2 == name {on=1} on' "$out"; }
+listener() { awk -v name="$1" '/^---/ {on=0} /name: abom-egress-proxy$/ {on=1} on' "$out" | grep -A6 -- "- name: $1$"; }
+for pool in discovery:3129:worker qlaas-test:3130:test-worker qlaas-run:3131:run-worker authoring:3128:authoring; do
+	IFS=: read -r name port flag <<<"$pool"
+	! policy "abom-worker-$name" | grep -qF '0.0.0.0/0' || note "a $name pod reaches the internet other than through the proxy"
+	policy "abom-worker-$name" | grep -qF "ports: [{port: $port, protocol: TCP}]" || note "a $name pod does not reach its listener"
+	policy abom-egress-proxy | grep -A1 -F "abom.github.com/pool: $name}}}]" | grep -qF "ports: [{port: $port, protocol: TCP}]" ||
+		note "$name pods do not reach their listener alone"
+	grep -qF -- "--$flag-egress-proxy=http://abom-egress-proxy:$port" "$out" || note "the coordinator does not tell $name its proxy"
+done
+for allow in discovery:github.com qlaas-test:abom.s3.us-east-1.amazonaws.com authoring:.githubcopilot.com; do
+	listener "${allow%%:*}" | grep -qF -- "${allow#*:}" || note "the ${allow%%:*} listener does not admit ${allow#*:}"
+done
+listener qlaas-test | grep -qF github.com && note "the qlaas-test listener admits a host only discovery needs"
+listener authoring | grep -qF 'github.com,' && note "the authoring listener admits a host only discovery needs"
+[ "$(policy abom-egress-proxy | grep -c 'from:')" = 4 ] || note "the egress proxy is reached from other than the pools"
+for want in --authoring-agent-image=codeql-abom:dev-authoring \
+	--ql-mcp=codeql-development-mcp-server --authoring-worker-service-account=abom-worker-authoring; do
+	grep -qF -- "$want" "$out" || note "the coordinator is not told $want"
+done
+! grep -qE -- '--authoring-(concurrency|credits)=' "$out" || note "sessions' concurrency or credits are set with nothing asking"
 # The lock every CodeQL invocation takes is made in the user's cache directory, beneath the
 # read-only HOME unless it is moved onto the coordinator's scratch.
 grep -qF '{name: XDG_CACHE_HOME, value: /tmp/cache}' "$out" || note "the coordinator's cache directory is on its read-only root"
@@ -68,12 +92,23 @@ render eks "${filled[@]}"
 grep -qF 'name: AWS_REGION, value: "eu-west-1"' "$out" || note "decisions are not signed in the KMS key's own region"
 # EKS Pod Identity hands a worker its credentials from the node's agent, inside the refused link-local range.
 grep -qF '169.254.170.23/32' "$out" || note "on EKS a worker cannot reach the Pod Identity agent for its credentials"
+grep -qF -- '--allow=github.com,abom-state.s3.us-east-1.amazonaws.com' "$out" || note "on EKS no listener admits the bucket"
+grep -qF -- '--worker-no-proxy=169.254.170.23,fd00:ec2::23' "$out" || note "on EKS a worker reaches its credentials through the proxy"
 # Numbers as a values file gives them: 0 lifts a Job's CPU cap, and a priority is written as an integer.
 render numbers --set-json workers.discovery.cpuLimit=0 --set-json priority.control=2000000
 for want in --worker-cpu-limit=0 'value: 2000000'; do
 	grep -qF -- "$want" "$out" || note "numeric values do not render $want"
 done
 render kind -f infra/tests/kind/values.yaml --set image.tag=dev-0123456789ab --set githubApp.secretName=abom-github-app
+# An object store in the cluster is reached directly, and a pool with nothing else to reach has no listener.
+grep -qF -- '--worker-no-proxy=s3.abom-deps' "$out" || note "on kind a worker reaches its object store through the proxy"
+! grep -qF -- '--test-worker-egress-proxy=' "$out" || note "on kind the test pool, with nothing to reach, is given a proxy"
+! policy abom-worker-qlaas-test | grep -qF 'port: 3130' || note "on kind the test pool reaches a listener it has not got"
+render sessions --set workers.authoring.concurrency=2 --set-json workers.authoring.credits=0 \
+	--set workers.authoring.image=registry.example/agent:1
+for want in --authoring-concurrency=2 --authoring-credits=0 --authoring-agent-image=registry.example/agent:1; do
+	grep -qF -- "$want" "$out" || note "the sessions profile does not render $want"
+done
 github=(--set signIn.mode=github --set signIn.clientSecretName=abom-github-signin
 	--set signIn.redirectUrl=https://abom.example/auth/callback --set 'signIn.roleMap=acme/abom-operators=operator\,acme:owners=admin'
 	--set githubApp.secretName=abom-github-app)
@@ -103,8 +138,12 @@ refuse "an ingress on another host than sign-in returns to" "is not the host of 
 	"${web[@]}" --set ingress.enabled=true --set ingress.host=other.example
 refuse "an ingress the network policy admits nothing to" "needs networkPolicy.webFrom" "${oidc[@]}" \
 	--set ingress.enabled=true --set ingress.host=abom.example
+refuse "a cluster too old for the attestor's native sidecar" "need Kubernetes 1.29 or later" --kube-version 1.28.0
+refuse "a listener admitting a URL rather than a host" "does not match pattern" --set 'egressProxy.allow.discovery[0]=https://github.com'
+refuse "a listener for a pool the chart has not got" "additional properties 'other' not allowed" --set 'egressProxy.allow.other[0]=github.com'
+refuse "a credit limit that is not a number" "does not match pattern" --set-string workers.authoring.credits=lots
 
 if [ $fail -eq 0 ]; then
-	echo "check-chart: the chart lints, renders 6 profiles and refuses 8"
+	echo "check-chart: the chart lints, renders 7 profiles and refuses 12"
 fi
 exit $fail

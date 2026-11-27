@@ -1,8 +1,9 @@
-package demo
+package egress
 
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
@@ -10,14 +11,28 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
-func egressProxy(t *testing.T, e *Egress) *url.URL {
+// anywhere dials whatever address a name resolves to, as these tests' targets are on loopback.
+func anywhere(ctx context.Context, network, addr string) (net.Conn, error) {
+	return (&net.Dialer{}).DialContext(ctx, network, addr)
+}
+
+func egressProxy(t *testing.T, e *Proxy) *url.URL {
 	t.Helper()
+	if e.Dial == nil {
+		e.Dial = anywhere
+	}
 	srv := httptest.NewServer(e)
 	t.Cleanup(srv.Close)
 	u, _ := url.Parse(srv.URL)
@@ -32,7 +47,7 @@ func TestEgressTunnelsOnlyToAllowedHosts(t *testing.T) {
 	defer target.Close()
 	_, port, _ := net.SplitHostPort(strings.TrimPrefix(target.URL, "https://"))
 	var log bytes.Buffer
-	proxy := egressProxy(t, &Egress{Allow: []string{"localhost"}, Ports: []string{port}, Log: &log})
+	proxy := egressProxy(t, &Proxy{Allow: []string{"localhost"}, Ports: []string{port}, Log: &log})
 	client := &http.Client{Transport: &http.Transport{
 		Proxy:           http.ProxyURL(proxy),
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // the test server's own certificate
@@ -56,7 +71,7 @@ func TestEgressTunnelsOnlyToAllowedHosts(t *testing.T) {
 
 // Plain HTTP proxying would let a child reach any host in clear; only tunnels are offered.
 func TestEgressRefusesEverythingButATunnel(t *testing.T) {
-	proxy := egressProxy(t, &Egress{Allow: []string{"api.githubcopilot.com"}})
+	proxy := egressProxy(t, &Proxy{Allow: []string{"api.githubcopilot.com"}})
 	conn, err := net.Dial("tcp", proxy.Host)
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +90,7 @@ func TestEgressRefusesEverythingButATunnel(t *testing.T) {
 
 // The allowlist names hosts and suffixes exactly; a look-alike name does not match.
 func TestEgressMatchesHostsExactly(t *testing.T) {
-	e := &Egress{Allow: []string{"api.githubcopilot.com", ".individual.githubcopilot.com"}}
+	e := &Proxy{Allow: []string{"api.githubcopilot.com", ".individual.githubcopilot.com"}}
 	for host, want := range map[string]bool{
 		"api.githubcopilot.com":                  true,
 		"API.githubcopilot.com":                  true,
@@ -107,7 +122,7 @@ func TestEgressForwardsOnlyCopilotPathsOnAnInspectedHost(t *testing.T) {
 		t.Fatal(err)
 	}
 	var log bytes.Buffer
-	e := &Egress{
+	e := &Proxy{
 		Inspect: map[string][]string{"localhost": {"/copilot_internal/"}}, Authority: authority,
 		Ports: []string{port}, Log: &log,
 		Upstream: &http.Transport{TLSClientConfig: &tls.Config{
@@ -196,7 +211,7 @@ func TestEgressAnswersInTheProtocolTheClientSpoke(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy := egressProxy(t, &Egress{
+	proxy := egressProxy(t, &Proxy{
 		Inspect: map[string][]string{"localhost": {"/copilot_internal/"}}, Authority: authority, Ports: []string{port},
 		Upstream: &http.Transport{ForceAttemptHTTP2: true, TLSClientConfig: &tls.Config{
 			RootCAs: certPool(upstream.Certificate()), ServerName: "example.com"}},
@@ -232,7 +247,7 @@ func TestEgressRelaysAnAnswerOfUnknownLengthSoItEnds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy := egressProxy(t, &Egress{
+	proxy := egressProxy(t, &Proxy{
 		Inspect: map[string][]string{"localhost": {"/copilot_internal/"}}, Authority: authority, Ports: []string{port},
 		Upstream: &http.Transport{ForceAttemptHTTP2: true, TLSClientConfig: &tls.Config{
 			RootCAs: certPool(upstream.Certificate()), ServerName: "example.com"}},
@@ -252,5 +267,140 @@ func TestEgressRelaysAnAnswerOfUnknownLengthSoItEnds(t *testing.T) {
 		if err != nil || string(body) != "part one,part two" {
 			t.Fatalf("request %d read %q, %v", i, body, err)
 		}
+	}
+}
+
+// An allowed name is reached only at public addresses, so a name an allowed suffix covers cannot be
+// pointed inside the cluster the proxy runs in.
+func TestTheProxyReachesAnAllowedNameOnlyAtPublicAddresses(t *testing.T) {
+	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	defer target.Close()
+	_, port, _ := net.SplitHostPort(strings.TrimPrefix(target.URL, "https://"))
+	var log bytes.Buffer
+	e := &Proxy{Allow: []string{"localhost"}, Ports: []string{port}, Log: &log}
+	srv := httptest.NewServer(e)
+	defer srv.Close()
+	proxy, _ := url.Parse(srv.URL)
+	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy),
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}} //nolint:gosec // never reached
+	if resp, err := client.Get("https://localhost:" + port + "/"); err == nil {
+		resp.Body.Close()
+		t.Fatal("an allowed name was reached at a loopback address")
+	}
+	if !strings.Contains(log.String(), "not a public address") {
+		t.Errorf("the refusal was not recorded as one: %q", log.String())
+	}
+}
+
+func TestOnlyAnAddressOnThePublicInternetIsPublic(t *testing.T) {
+	for addr, want := range map[string]bool{
+		"140.82.112.3": true, "2606:50c0:8000::153": true,
+		"10.0.0.1": false, "172.16.0.1": false, "192.168.1.1": false, "127.0.0.1": false, "0.0.0.0": false,
+		"169.254.169.254": false, "100.64.0.1": false, "198.18.0.1": false, "192.0.0.170": false,
+		"224.0.0.1": false, "::1": false, "fd00::1": false, "fe80::1": false, "fd00:ec2::254": false,
+		"::ffff:10.0.0.1": false, "::ffff:100.64.0.1": false, "64:ff9b::a00:1": false, "2002:a00:1::": false,
+	} {
+		if got := public(netip.MustParseAddr(addr)); got != want {
+			t.Errorf("public(%s) = %v, want %v", addr, got, want)
+		}
+	}
+}
+
+// A proxy told which clients to answer answers no other.
+func TestTheProxyAnswersOnlyTheClientsItAdmits(t *testing.T) {
+	proxy := egressProxy(t, &Proxy{Allow: []string{"api.githubcopilot.com"},
+		Admit: func(string) bool { return false }})
+	conn, err := net.Dial("tcp", proxy.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_, _ = conn.Write([]byte("CONNECT api.githubcopilot.com:443 HTTP/1.1\r\nHost: api.githubcopilot.com:443\r\n\r\n"))
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("a client the proxy does not admit was answered %d", resp.StatusCode)
+	}
+	if !Loopback("127.0.0.1:1") || Loopback("10.0.0.1:1") || Loopback("nonsense") {
+		t.Error("Loopback admits other than loopback clients")
+	}
+}
+
+// One session's agent cannot hold every tunnel the proxy can open: past its bound a tunnel is refused,
+// and one that closes makes room again.
+func TestTheProxyHoldsNoMoreTunnelsThanItsBound(t *testing.T) {
+	target, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	go func() {
+		for {
+			c, err := target.Accept()
+			if err != nil {
+				return
+			}
+			go func() { _, _ = io.Copy(io.Discard, c); _ = c.Close() }()
+		}
+	}()
+	_, port, _ := net.SplitHostPort(target.Addr().String())
+	proxy := egressProxy(t, &Proxy{Allow: []string{"localhost"}, Ports: []string{port}, MaxTunnels: 1})
+	connect := func() (net.Conn, int) {
+		conn, err := net.Dial("tcp", proxy.Host)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = conn.Write([]byte("CONNECT localhost:" + port + " HTTP/1.1\r\nHost: localhost:" + port + "\r\n\r\n"))
+		// A tunnel's answer has no end: its body is the tunnel, closed with the connection.
+		resp, err := http.ReadResponse(bufio.NewReader(conn), nil) //nolint:bodyclose // closed with conn
+		if err != nil {
+			t.Fatal(err)
+		}
+		return conn, resp.StatusCode
+	}
+	first, code := connect()
+	if code != http.StatusOK {
+		t.Fatalf("the first tunnel answered %d", code)
+	}
+	second, code := connect()
+	second.Close()
+	if code != http.StatusServiceUnavailable {
+		t.Errorf("a tunnel past the bound answered %d", code)
+	}
+	first.Close()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		third, code := connect()
+		third.Close()
+		if code == http.StatusOK {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("a tunnel after the first closed still answered %d", code)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// The chart names each pool's hosts, the authoring pool's among them; a host Copilot comes to need is
+// added here, and the chart's listener for sessions must admit it too, or every session is refused it.
+func TestTheChartsAuthoringListenerAdmitsTheHostsCopilotNeeds(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "infra", "k8s", "helm", "codeql-abom", "values.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var values struct {
+		EgressProxy struct {
+			Allow map[string][]string `yaml:"allow"`
+		} `yaml:"egressProxy"`
+	}
+	if err := yaml.Unmarshal(body, &values); err != nil {
+		t.Fatal(err)
+	}
+	if got := values.EgressProxy.Allow["authoring"]; !slices.Equal(got, CopilotHosts) {
+		t.Errorf("the chart's authoring listener admits %v; Copilot needs %v", got, CopilotHosts)
 	}
 }

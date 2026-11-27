@@ -139,6 +139,40 @@ func TestAListingThatCouldNotReadPropertiesChangesNoOwnership(t *testing.T) {
 	}
 }
 
+// A repository a new declaration includes need not have moved, so a sweep never names it, and it
+// waited for the daily full listing to be queued. Once that listing applies the declaration, sweeps
+// resume.
+func TestAnAccountDeclaredSinceItsLastFullListingIsReadWhole(t *testing.T) {
+	s := newStore(t)
+	pushed := time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC)
+	if err := s.RecordFullListing("has-ghas", catalog.RouteGraphQL, 5, pushed, pushed); err != nil {
+		t.Fatal(err)
+	}
+	var asked []catalog.Marks
+	read := func(_ context.Context, _ string, since catalog.Marks) (catalog.Listing, error) {
+		asked = append(asked, since)
+		return catalog.Listing{Route: catalog.RouteGraphQL, Full: since.Empty(), Pages: 5}, nil
+	}
+	run := func() {
+		t.Helper()
+		if _, err := Run(context.Background(), Options{Store: s, Read: read}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	run()
+	if err := s.SetOwnedScope([]store.DeclaredAccount{{Owner: "has-ghas", Kind: store.AccountOrganization,
+		Enabled: true, IncludesOnly: true, Includes: []string{"untouched"}}}, store.DeclaredByCLI); err != nil {
+		t.Fatal(err)
+	}
+	run()
+	run()
+
+	if len(asked) != 3 || asked[0].Empty() || !asked[1].Empty() || asked[2].Empty() {
+		t.Errorf("asked %+v, want a sweep, the account read whole once it was declared again, then a sweep", asked)
+	}
+}
+
 // Only a full listing can find every repository a changed scope newly covers; a sweep reads the
 // repositories that moved, and retagging moves nothing it walks by.
 func TestAPropertyScopeNewerThanTheLastFullListingIsReadWhole(t *testing.T) {

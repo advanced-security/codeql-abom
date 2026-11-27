@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/advanced-security/codeql-abom/internal/demo"
+	"github.com/advanced-security/codeql-abom/internal/egress"
 	"github.com/advanced-security/codeql-abom/internal/expand"
 	"github.com/advanced-security/codeql-abom/internal/frontier"
 	"github.com/advanced-security/codeql-abom/internal/ghauth"
@@ -389,7 +390,7 @@ func runDemoEgress(ctx context.Context, args []string, stdout, stderr io.Writer)
 	fs := flag.NewFlagSet("demo egress", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	addr := fs.String("addr", "127.0.0.1:8098", "loopback address to listen on")
-	allow := fs.String("allow", strings.Join(demo.CopilotHosts, ","),
+	allow := fs.String("allow", strings.Join(egress.CopilotHosts, ","),
 		"comma-separated hosts tunnels may reach; a leading dot allows a suffix")
 	caOut := fs.String("ca-out", "",
 		"write the certificate this proxy presents for api.github.com here, and forward only Copilot's "+
@@ -400,29 +401,29 @@ func runDemoEgress(ctx context.Context, args []string, stdout, stderr io.Writer)
 	if fs.NArg() > 0 {
 		return errors.New("demo egress: takes no arguments")
 	}
-	var hosts []string
-	for _, h := range strings.Split(*allow, ",") {
-		if h = strings.TrimSpace(h); h != "" {
-			hosts = append(hosts, h)
-		}
+	if host, _, err := net.SplitHostPort(*addr); err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
+		return fmt.Errorf("demo egress: the proxy listens on loopback only, not %q", *addr)
 	}
-	e := &demo.Egress{Allow: hosts, Log: stdout}
+	hosts := splitList(*allow)
+	// The Demo runs on this machine, so it reaches an allowed name wherever this machine resolves it.
+	e := &egress.Proxy{Allow: hosts, Log: stdout, Admit: egress.Loopback,
+		Dial: (&net.Dialer{Timeout: 15 * time.Second}).DialContext}
 	if *caOut != "" {
-		inspected := make([]string, 0, len(demo.CopilotPaths))
-		for host := range demo.CopilotPaths {
+		inspected := make([]string, 0, len(egress.CopilotPaths))
+		for host := range egress.CopilotPaths {
 			inspected = append(inspected, host)
 		}
-		authority, err := demo.NewAuthority(inspected)
+		authority, err := egress.NewAuthority(inspected)
 		if err != nil {
 			return err
 		}
 		if err := os.WriteFile(*caOut, authority.CertPEM(), 0o644); err != nil {
 			return fmt.Errorf("demo egress: %w", err)
 		}
-		e.Inspect, e.Authority = demo.CopilotPaths, authority
+		e.Inspect, e.Authority = egress.CopilotPaths, authority
 		fmt.Fprintf(stdout, "demo egress: reads %s and forwards only Copilot's paths there\n",
 			strings.Join(inspected, ", "))
 	}
 	fmt.Fprintf(stdout, "demo egress: tunnels from %s reach only %s\n", *addr, strings.Join(hosts, ", "))
-	return demo.ListenEgress(ctx, *addr, e)
+	return egress.Listen(ctx, *addr, e)
 }

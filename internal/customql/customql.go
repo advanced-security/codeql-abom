@@ -81,6 +81,19 @@ func Scaffold(dir, cliVersion string) (bool, error) {
 // queryName is a plain file stem: it becomes src/<name>.ql and test/<name>/, and nothing else.
 var queryName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,63}$`)
 
+// TestScaffold is what ScaffoldTest lays out for the query named name, each file by slash path
+// relative to the pack, with exactly what it holds.
+func TestScaffold(name string) map[string]string {
+	return map[string]string{
+		"test/" + Postprocess:                  postprocessQuery,
+		"test/" + name + "/" + name + ".qlref": testQLRef(name),
+	}
+}
+
+func testQLRef(name string) string {
+	return fmt.Sprintf("query: src/%s.ql\npostprocess: %s\n", name, Postprocess)
+}
+
 // ScaffoldTest lays out the test of src/<name>.ql, where its fixtures go and a .qlref naming it,
 // and returns the test directory. It never overwrites: a .qlref already there says what the test is
 // of, and a postprocess query already there is the operator's.
@@ -98,8 +111,7 @@ func ScaffoldTest(dir, name string) (string, error) {
 	if err := os.MkdirAll(filepath.Join(tests, ".github", "workflows"), 0o755); err != nil {
 		return "", fmt.Errorf("custom queries: preparing the test of %s: %w", name, err)
 	}
-	qlref := fmt.Sprintf("query: src/%s.ql\npostprocess: %s\n", name, Postprocess)
-	if err := createOnce(filepath.Join(tests, name+".qlref"), qlref); err != nil {
+	if err := createOnce(filepath.Join(tests, name+".qlref"), testQLRef(name)); err != nil {
 		return "", fmt.Errorf("custom queries: naming the query of %s: %w", name, err)
 	}
 	return tests, nil

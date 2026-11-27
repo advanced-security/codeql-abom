@@ -82,7 +82,7 @@ const pinnedWorkflow = "on: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n 
 // files of the repositories picked. It has no files, no shell and no ql-mcp, and files nothing.
 func TestADraftingSessionSeesOnlyWhatABOMHandsIt(t *testing.T) {
 	var sealed bool
-	var results, source string
+	var results, source, kept string
 	var refused []string
 	b := newBench(t, stand(func(_ context.Context, s Setup) (string, error) {
 		sealed = s.Sealed
@@ -106,14 +106,16 @@ func TestADraftingSessionSeesOnlyWhatABOMHandsIt(t *testing.T) {
 				refused = append(refused, why)
 			}
 		}
-		if _, err := call(t, tool(t, s, ToolDraft), map[string]any{
+		res, err = call(t, tool(t, s, ToolDraft), map[string]any{
 			"description":  "report actions/checkout pinned to a tag rather than a full SHA",
 			"compliant":    pinnedWorkflow,
 			"nonCompliant": strings.Replace(pinnedWorkflow, "692973e3d937129bcbf40652eb9f2f61becf3332", "v4", 1),
 			"rationale":    "the picked finding is a full SHA pin",
-		}); err != nil {
+		})
+		if err != nil {
 			return "", err
 		}
+		kept = res.TextResultForLLM
 		return "Drafted a request from the false alarm.", nil
 	}))
 	app := sourceDatabase(t, map[string]string{".github/workflows/ci.yml": pinnedWorkflow})
@@ -150,6 +152,11 @@ func TestADraftingSessionSeesOnlyWhatABOMHandsIt(t *testing.T) {
 		!strings.Contains(got.Draft.NonCompliant, "actions/checkout@v4") {
 		t.Errorf("drafted %+v", got)
 	}
+	// The agent is told which draft it kept by what it proposes, which a worker knows before any store
+	// numbers the draft.
+	if got.Draft != nil && !strings.Contains(kept, "Kept as draft "+got.Draft.Digest[:12]) {
+		t.Errorf("the agent was told %q; want the draft named by its digest %s", kept, got.Draft.Digest)
+	}
 	if requests, err := b.store.QueryRequests(); err != nil || len(requests) != 0 {
 		t.Errorf("drafting filed %+v %v", requests, err)
 	}
@@ -163,15 +170,37 @@ func TestADraftIsRefusedWithoutAnAgentOrAPick(t *testing.T) {
 	b := newBench(t, nil)
 	run := b.analysisRun(t, map[string]string{"octo/app": ""})
 	if _, err := b.sessions.Draft(run, "acme/pin", []Picked{{Repository: "octo/app",
-		Kind: store.RequestMissed}}, "operator"); !errors.Is(err, ErrNoAgent) {
+		Kind: store.RequestMissed}}, "operator", ""); !errors.Is(err, ErrNoAgent) {
 		t.Errorf("a draft with no agent: %v, want ErrNoAgent", err)
 	}
 	b.sessions.Agent = stand(func(context.Context, Setup) (string, error) { return "done", nil })
-	if _, err := b.sessions.Draft(run, "acme/pin", nil, "operator"); err == nil {
+	if _, err := b.sessions.Draft(run, "acme/pin", nil, "operator", ""); err == nil {
 		t.Error("a draft from nothing picked was started")
 	}
 	if _, err := b.sessions.Draft(run, "acme/pin", []Picked{{Repository: "octo/elsewhere",
-		Kind: store.RequestMissed}}, "operator"); err == nil {
+		Kind: store.RequestMissed}}, "operator", ""); err == nil {
 		t.Error("a draft from a repository the run does not hold was started")
+	}
+}
+
+// A worker reads a draft's databases where it unpacked them, not where the coordinator's run keeps
+// them, which on the worker's filesystem is nowhere.
+func TestADraftReadsTheDatabasesAWorkerWasHanded(t *testing.T) {
+	var results string
+	b := newBench(t, stand(func(_ context.Context, s Setup) (string, error) {
+		res, err := call(t, tool(t, s, ToolResults), map[string]any{})
+		if err != nil {
+			return "", err
+		}
+		results = res.TextResultForLLM
+		return "read", nil
+	}))
+	run := b.analysisRun(t, map[string]string{"octo/app": filepath.Join(t.TempDir(), "only-on-the-coordinator")})
+	b.sessions.Databases = map[string]string{
+		"octo/app": sourceDatabase(t, map[string]string{".github/workflows/ci.yml": pinnedWorkflow})}
+	b.drafted(t, run, []Picked{{Repository: "octo/app", Kind: store.RequestFalseAlarm,
+		FilePath: ".github/workflows/ci.yml", StartLine: 6, Message: "pinned"}})
+	if !strings.Contains(results, "actions/checkout@692973e") {
+		t.Errorf("the draft did not read the database it was handed:\n%s", results)
 	}
 }

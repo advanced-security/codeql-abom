@@ -84,6 +84,13 @@ type Supervisor struct {
 	// LastEnumeratedAt is when the accounts were last read, successfully or not. A failed attempt
 	// counts, or an unreachable account is retried on every cycle forever.
 	LastEnumeratedAt time.Time
+	// Declared reads what identifies the declaration on record and the accounts it names. A
+	// declaration is saved by whoever holds Settings or the CLI, often another process, and waiting
+	// out the period left what it newly covers unread for up to an hour. Nil leaves it to the period.
+	Declared func() (version string, owners []string, err error)
+	// declaration is the version Declared last answered, and declarationRead whether it has.
+	declaration     string
+	declarationRead bool
 	// asked holds what events asked the next cycle to read before a period would.
 	asked asked
 
@@ -252,19 +259,58 @@ func (s *Supervisor) readOrganization(ctx context.Context) {
 		return
 	}
 	ask := s.takeAsk()
+	redeclared := s.redeclared()
 	if s.enumerationDue() {
 		// Recorded before the attempt, so an account that fails is not retried every thirty seconds.
 		s.LastEnumeratedAt = s.now()
-		s.enumerate(ctx, Ask{})
+		s.enumerate(ctx, Ask{}, "")
 		// Listed as their marks allow by the due read; whole listings and repositories are not.
 		ask.Owners = nil
 	}
+	if len(redeclared) > 0 {
+		s.enumerate(ctx, Ask{Full: redeclared}, "because the declaration changed")
+		// Listed whole, which answers an event's ask for them either way.
+		ask.Owners, ask.Full = without(ask.Owners, redeclared), without(ask.Full, redeclared)
+	}
 	if !ask.empty() {
-		s.enumerate(ctx, ask)
+		s.enumerate(ctx, ask, "as events asked")
 	}
 }
 
-func (s *Supervisor) enumerate(ctx context.Context, ask Ask) {
+// redeclared names the declared accounts when the declaration changed since a cycle last read it.
+//
+// Compared by version rather than by when it was saved, so one saved while its accounts were being
+// listed is still listed again. The first read only learns it: a process's first cycle reads every
+// account, and enumeration lists one declared since its last full listing whole.
+func (s *Supervisor) redeclared() []string {
+	if s.Declared == nil {
+		return nil
+	}
+	version, owners, err := s.Declared()
+	if err != nil {
+		s.logf("could not read the declaration: %v", err)
+		return nil
+	}
+	changed := s.declarationRead && version != s.declaration
+	s.declaration, s.declarationRead = version, true
+	if !changed {
+		return nil
+	}
+	return owners
+}
+
+// without is list less every name in drop, compared case-insensitively, and nil when nothing is left.
+func without(list, drop []string) []string {
+	list = slices.DeleteFunc(list, func(n string) bool {
+		return slices.ContainsFunc(drop, func(d string) bool { return strings.EqualFold(n, d) })
+	})
+	if len(list) == 0 {
+		return nil
+	}
+	return list
+}
+
+func (s *Supervisor) enumerate(ctx context.Context, ask Ask, why string) {
 	queued, err := s.Enumerate(ctx, ask)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -279,7 +325,7 @@ func (s *Supervisor) enumerate(ctx context.Context, ask Ask) {
 	}
 	switch {
 	case !ask.empty():
-		s.logf("%s as events asked, and queued %d repositories", ask, queued)
+		s.logf("%s %s, and queued %d repositories", ask, why, queued)
 	case queued > 0:
 		s.logf("read the organization and queued %d repositories", queued)
 	}

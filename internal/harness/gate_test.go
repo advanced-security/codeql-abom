@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -429,18 +430,18 @@ func TestWhatPrintASTPrintedIsKeptPastTheSession(t *testing.T) {
 	g, j, p := newGate(t)
 	scratch := filepath.Join(p.root, "scratch")
 	var kept []Printed
-	if err := g.KeepPrinted(scratch, func(pr Printed) (int64, error) {
+	if err := g.KeepPrinted(scratch, func(pr Printed) (string, error) {
 		kept = append(kept, pr)
-		return 7, nil
+		return "7e1f0d3c2b1a99", nil
 	}); err == nil {
 		t.Error("kept printouts from a scratch directory that does not exist")
 	}
 	if err := os.MkdirAll(scratch, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.KeepPrinted(scratch, func(pr Printed) (int64, error) {
+	if err := g.KeepPrinted(scratch, func(pr Printed) (string, error) {
 		kept = append(kept, pr)
-		return 7, nil
+		return "7e1f0d3c2b1a99", nil
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -457,7 +458,7 @@ func TestWhatPrintASTPrintedIsKeptPastTheSession(t *testing.T) {
 	}
 	var noted bool
 	for _, e := range j.all() {
-		noted = noted || (e.Hook == HookArtifact && e.Step == StepAST && strings.Contains(e.Detail, "7"))
+		noted = noted || (e.Hook == HookArtifact && e.Step == StepAST && strings.Contains(e.Detail, "as printout 7e1f0d3c2b1a") && e.Capture.ArtifactDigest == "7e1f0d3c2b1a99")
 	}
 	if !noted {
 		t.Errorf("the timeline does not say the tree was kept: %+v", j.all())
@@ -473,7 +474,7 @@ func TestAPrintoutIsReadOnlyFromTheSessionsScratch(t *testing.T) {
 		t.Fatal(err)
 	}
 	var kept int
-	if err := g.KeepPrinted(scratch, func(Printed) (int64, error) { kept++; return 1, nil }); err != nil {
+	if err := g.KeepPrinted(scratch, func(Printed) (string, error) { kept++; return "1", nil }); err != nil {
 		t.Fatal(err)
 	}
 	secret := filepath.Join(p.root, "secret.txt")
@@ -516,6 +517,48 @@ func TestAPrintoutIsReadOnlyFromTheSessionsScratch(t *testing.T) {
 	}
 }
 
+// Between listing what ql-mcp printed and reading it, the agent beside a session's worker can swap a
+// file for a link or a pipe, so it is read as what the scratch holds when it is read.
+func TestAPrintoutIsReadAsTheFileTheScratchHoldsWhenRead(t *testing.T) {
+	scratch, err := realDir(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(t.TempDir(), "tls.key")
+	if err := os.WriteFile(secret, []byte("PRIVATE KEY"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(scratch, "query-logs", "query-run-1", "results.txt")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	tree := filepath.Join(root, "PrintAST.txt")
+	for what, swap := range map[string]func() error{
+		"link": func() error { return os.Symlink(secret, tree) },
+		"pipe": func() error { return syscall.Mkfifo(tree, 0o600) },
+	} {
+		_ = os.Remove(tree)
+		if err := swap(); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan error, 1)
+		var body string
+		go func() {
+			var err error
+			body, _, err = readPrintedFiles(scratch, root, []string{tree})
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			if err == nil || strings.Contains(body, "PRIVATE KEY") {
+				t.Errorf("a printout swapped for a %s read as %q, %v", what, body, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("reading a printout swapped for a %s waited on it", what)
+		}
+	}
+}
+
 func TestAnOversizedPrintoutIsKeptCutAndSaysSo(t *testing.T) {
 	g, _, p := newGate(t)
 	scratch := filepath.Join(p.root, "scratch")
@@ -523,7 +566,7 @@ func TestAnOversizedPrintoutIsKeptCutAndSaysSo(t *testing.T) {
 		t.Fatal(err)
 	}
 	var kept Printed
-	if err := g.KeepPrinted(scratch, func(pr Printed) (int64, error) { kept = pr; return 1, nil }); err != nil {
+	if err := g.KeepPrinted(scratch, func(pr Printed) (string, error) { kept = pr; return "1", nil }); err != nil {
 		t.Fatal(err)
 	}
 	printAST(g, p, printout(t, scratch, strings.Repeat("é", maxPrinted)))
@@ -554,7 +597,7 @@ func TestAPrintoutDirectoryIsKeptFileByFileAndTheAgentIsToldWhereTheTreeIs(t *te
 		t.Fatal(err)
 	}
 	var kept Printed
-	if err := g.KeepPrinted(scratch, func(pr Printed) (int64, error) { kept = pr; return 9, nil }); err != nil {
+	if err := g.KeepPrinted(scratch, func(pr Printed) (string, error) { kept = pr; return "9", nil }); err != nil {
 		t.Fatal(err)
 	}
 

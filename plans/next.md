@@ -68,9 +68,9 @@ authentication and authorization (7) needs [what is open](api/access.md).
 What follows, in order. The first is ranked above everything below by your decision: without it a
 hosted instance has no query authoring.
 
-1. **[Authoring sessions run as their own worker pool](api/authoring-workers.md)** — the last work
-   still inside the coordinator; in a cluster no session can start until it moves. What a session
-   writes while it runs, and why its events cannot be copied as they are, is measured in the plan.
+1. **[Authoring sessions run as their own worker pool](api/authoring-workers.md)** — built and
+   tested; what is left is the authoring image's lock, which waits on ql-mcp's release clearing the
+   npm age policy, and a drill on kind with a real Copilot session and a real draft.
 2. **[Who may use a hosted instance](api/access.md)** — what only a second account and an EKS
    cluster can show: a role removed within its window, and the KMS signer.
 3. **[ABOM on Kubernetes, past kind](tools/kubernetes.md)** — EKS end to end, scale on a large

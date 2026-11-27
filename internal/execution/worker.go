@@ -16,32 +16,58 @@ import (
 	"github.com/advanced-security/codeql-abom/internal/expand"
 )
 
-// Worker runs one granted attempt.
+// Worker runs one granted attempt, reading its grant and inputs and writing what it leaves only
+// through an attestor.
 type Worker struct {
+	// Attestor holds the worker's secrets for it, in a pod across a socket from another container; nil
+	// holds them in this process, from the fields below.
+	Attestor Attestor
 	// Bundle verifies the grant: the decision point's keys.
 	Bundle   authz.Bundle
 	Identity *Identity
-	Objects  ObjectStore
-	Analyze  AnalyzeFunc
+	// AttemptKey is the key the attempt's grant names, which signs everything the worker signs beside
+	// its identity.
+	AttemptKey *AttemptKey
+	// Renew reads the worker's identity again before each signature, since a session can outlast the
+	// certificate it began with; nil signs with Identity throughout.
+	Renew   func() (*Identity, error)
+	Objects ObjectStore
+	Analyze AnalyzeFunc
 	// Test runs a query's tests; a worker without one refuses a test grant.
 	Test TestFunc
+	// Session runs an authoring session; a worker without one refuses a session grant.
+	Session SessionFunc
 	// Pack prepares the operator's pack unpacked at root before anything runs from it.
 	Pack func(ctx context.Context, root string) error
 	Dir  string
-	Now  func() time.Time
+	// Private is a directory only this worker's container holds, for what the agent beside a session
+	// must not read; empty is the system's temporary directory, which in a session's pod is.
+	Private string
+	Now     func() time.Time
 }
 
-func (w *Worker) now() time.Time {
-	if w.Now != nil {
-		return w.Now()
+func (w *Worker) private() string {
+	if w.Private != "" {
+		return w.Private
 	}
-	return time.Now()
+	return os.TempDir()
+}
+
+// attestor is what holds the worker's secrets for the grant in env.
+func (w *Worker) attestor(env authz.Envelope) Attestor {
+	if w.Attestor != nil {
+		return w.Attestor
+	}
+	return Hold(env, Secrets{Bundle: w.Bundle, Identity: w.Identity, Renew: w.Renew, AttemptKey: w.AttemptKey,
+		Objects: w.Objects, Now: w.Now})
 }
 
 // Run verifies the grant and does exactly what it says. A grant that does not verify, has expired,
-// or names another identity is refused before anything is fetched, and nothing is written.
+// or names another identity or key is refused before anything is fetched, and nothing is written. An
+// attestor that is not in this process verifies the grant it holds, and env is not read.
 func (w *Worker) Run(ctx context.Context, env authz.Envelope) error {
-	g, grantDigest, err := w.open(env)
+	a := w.attestor(env)
+	g, _, err := a.Grant(ctx)
 	if err != nil {
 		return err
 	}
@@ -51,46 +77,31 @@ func (w *Worker) Run(ctx context.Context, env authz.Envelope) error {
 	}
 	defer os.RemoveAll(dir)
 
-	r := Result{Attempt: g.Attempt, Grant: grantDigest, Identity: w.Identity.ID, Chain: w.Identity.ChainPEM(), Outputs: []Output{}}
+	var r Result
 	run := w.runAnalysis
-	if g.Test != nil {
+	switch {
+	case g.Session != nil:
+		run = w.runSession
+	case g.Test != nil:
 		run = w.runTests
 	}
-	if err := run(ctx, g, dir, &r); err != nil {
+	if err := run(ctx, a, g, dir, &r); err != nil {
 		return err
 	}
-	return w.attest(ctx, g, r)
-}
-
-// open verifies the grant in env as this worker's, unexpired, and answers it with its digest.
-func (w *Worker) open(env authz.Envelope) (Grant, string, error) {
-	now := w.now()
-	st, err := w.Bundle.Open(env, now)
-	if err != nil {
-		return Grant{}, "", fmt.Errorf("worker: the grant does not verify: %w", err)
+	if g.Session != nil {
+		// A session stopped by its pod's SIGTERM still signs what it left, inside its grace period.
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), finishing)
+		defer cancel()
 	}
-	if st.PredicateType != authz.PredicateTaskGrant {
-		return Grant{}, "", fmt.Errorf("worker: %s is not a task grant", st.PredicateType)
-	}
-	var g Grant
-	if err := json.Unmarshal(st.Predicate, &g); err != nil {
-		return Grant{}, "", fmt.Errorf("worker: reading the grant: %w", err)
-	}
-	if g.Identity != w.Identity.ID {
-		return Grant{}, "", fmt.Errorf("worker: the grant is for %s, and this worker is %s", g.Identity, w.Identity.ID)
-	}
-	if until, err := time.Parse(time.RFC3339Nano, g.NotAfter); err != nil || !now.Before(until) {
-		return Grant{}, "", errors.New("worker: the grant has expired")
-	}
-	grantDigest, err := env.Digest()
-	return g, grantDigest, err
+	return a.Attest(ctx, r)
 }
 
 // runAnalysis runs an analysis grant, from the pack it binds when its findings queries live there.
-func (w *Worker) runAnalysis(ctx context.Context, g Grant, dir string, r *Result) error {
+func (w *Worker) runAnalysis(ctx context.Context, a Attestor, g Grant, dir string, r *Result) error {
 	task := g.Task
 	if g.PackSHA256 != "" {
-		root, why := w.unpack(ctx, g, g.PackSHA256, dir)
+		root, why := w.unpack(ctx, a, g.PackSHA256, dir)
 		if why != "" {
 			r.Failure = &Failure{Kind: FailedRetryable, Why: why}
 			return nil
@@ -106,12 +117,12 @@ func (w *Worker) runAnalysis(ctx context.Context, g Grant, dir string, r *Result
 		r.Failure = classify(err)
 		return nil
 	}
-	return w.upload(ctx, g, out, r)
+	return upload(ctx, a, out, r)
 }
 
 // runTests runs a test grant: on the pack it binds and no other, then uploads the result and what
 // the run left in each granted test's directory.
-func (w *Worker) runTests(ctx context.Context, g Grant, dir string, r *Result) error {
+func (w *Worker) runTests(ctx context.Context, a Attestor, g Grant, dir string, r *Result) error {
 	refuse := func(why string) error {
 		r.Failure = &Failure{Kind: FailedRetryable, Why: why}
 		return nil
@@ -124,7 +135,7 @@ func (w *Worker) runTests(ctx context.Context, g Grant, dir string, r *Result) e
 			return refuse(fmt.Sprintf("test %q is not a plain relative name", t))
 		}
 	}
-	root, why := w.unpack(ctx, g, g.Test.PackSHA256, dir)
+	root, why := w.unpack(ctx, a, g.Test.PackSHA256, dir)
 	if why != "" {
 		return refuse(why)
 	}
@@ -140,11 +151,16 @@ func (w *Worker) runTests(ctx context.Context, g Grant, dir string, r *Result) e
 	if err != nil {
 		return err
 	}
-	if err := w.putBytes(ctx, g, r, "test/result.json", KindTestResult, "", encoded); err != nil {
+	if err := a.Output(ctx, Output{Name: "test/result.json", Kind: KindTestResult}, encoded); err != nil {
 		return err
 	}
+	pack, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = pack.Close() }()
 	for _, d := range leftIn(root, g.Test.Tests) {
-		if err := w.putLeft(ctx, g, r, root, d); err != nil {
+		if err := putLeftIn(ctx, a, pack, d); err != nil {
 			return err
 		}
 	}
@@ -152,48 +168,43 @@ func (w *Worker) runTests(ctx context.Context, g Grant, dir string, r *Result) e
 }
 
 // unpack reads the pack a grant binds by digest and prepares it under dir, answering why not.
-func (w *Worker) unpack(ctx context.Context, g Grant, want, dir string) (string, string) {
-	body, err := w.Objects.Get(ctx, packKey(g.Prefix, want))
+func (w *Worker) unpack(ctx context.Context, a Attestor, want, dir string) (string, string) {
+	root := filepath.Join(dir, "pack")
+	return root, w.unpackAt(ctx, a, want, root)
+}
+
+// unpackAt reads the pack a grant binds by digest and prepares it at root, answering why not.
+func (w *Worker) unpackAt(ctx context.Context, a Attestor, want, root string) string {
+	body, err := a.Input(ctx, Input{Kind: InputPack, SHA256: want})
 	if err != nil {
-		return "", "reading the pack: " + err.Error()
+		return "reading the pack: " + err.Error()
 	}
 	if got := digest(body); got != want {
-		return "", "the pack read is not the pack granted"
+		return "the pack read is not the pack granted"
 	}
-	root := filepath.Join(dir, "pack")
 	if err := untarGz(body, root, packLimit); err != nil {
-		return "", "unpacking the pack: " + err.Error()
+		return "unpacking the pack: " + err.Error()
 	}
 	if w.Pack != nil {
 		if err := w.Pack(ctx, root); err != nil {
-			return "", "preparing the pack: " + err.Error()
+			return "preparing the pack: " + err.Error()
 		}
 	}
-	return root, ""
+	return ""
 }
 
-// put uploads the file at file as one output.
-func (w *Worker) put(ctx context.Context, g Grant, r *Result, name, kind, queryID, file string) error {
+// putFile uploads the file at file as one output.
+func putFile(ctx context.Context, a Attestor, name, kind, queryID, file string) error {
 	body, err := os.ReadFile(file)
 	if err != nil {
 		return err
 	}
-	return w.putBytes(ctx, g, r, name, kind, queryID, body)
+	return a.Output(ctx, Output{Name: name, Kind: kind, QueryID: queryID}, body)
 }
 
-// putBytes uploads one output and lists it in the result.
-func (w *Worker) putBytes(ctx context.Context, g Grant, r *Result, name, kind, queryID string, body []byte) error {
-	if err := w.Objects.Put(ctx, outputKey(g.Prefix, g.Attempt, name), body); err != nil {
-		return err
-	}
-	r.Outputs = append(r.Outputs, Output{Name: name, Kind: kind, QueryID: queryID,
-		SHA256: digest(body), Size: int64(len(body))})
-	return nil
-}
-
-func (w *Worker) upload(ctx context.Context, g Grant, out expand.RemoteOutput, r *Result) error {
+func upload(ctx context.Context, a Attestor, out expand.RemoteOutput, r *Result) error {
 	r.Commit, r.Ref, r.Digest = out.Commit, out.Ref, out.Digest
-	put := func(name, kind, queryID, file string) error { return w.put(ctx, g, r, name, kind, queryID, file) }
+	put := func(name, kind, queryID, file string) error { return putFile(ctx, a, name, kind, queryID, file) }
 	if out.ResultPath != "" {
 		if err := put("results/"+safe(out.ResultQueryID)+".json", KindEdges, out.ResultQueryID, out.ResultPath); err != nil {
 			return err
@@ -224,9 +235,10 @@ func (w *Worker) upload(ctx context.Context, g Grant, out expand.RemoteOutput, r
 	})
 }
 
-// putLeft uploads each .actual and test database a run left directly in one directory.
-func (w *Worker) putLeft(ctx context.Context, g Grant, r *Result, root, test string) error {
-	entries, err := os.ReadDir(filepath.Join(root, filepath.FromSlash(test)))
+// putLeftIn uploads each .actual and test database a run left directly in the directory test, a slash
+// path within pack, each read through no link and from nothing but a regular file.
+func putLeftIn(ctx context.Context, a Attestor, pack *os.Root, test string) error {
+	entries, err := fs.ReadDir(pack.FS(), test)
 	if err != nil {
 		return err
 	}
@@ -234,13 +246,16 @@ func (w *Worker) putLeft(ctx context.Context, g Grant, r *Result, root, test str
 		rel := test + "/" + e.Name()
 		switch {
 		case e.Type().IsRegular() && strings.HasSuffix(e.Name(), ".actual"):
-			if err := w.put(ctx, g, r, "actual/"+rel, KindActual, "", filepath.Join(root, filepath.FromSlash(rel))); err != nil {
+			body, err := readIn(pack, rel, maxObject)
+			if err != nil {
+				return err
+			}
+			if err := a.Output(ctx, Output{Name: "actual/" + rel, Kind: KindActual}, body); err != nil {
 				return err
 			}
 		case e.IsDir() && strings.HasSuffix(e.Name(), ".testproj"):
-			db := filepath.Join(root, filepath.FromSlash(rel))
 			var files []string
-			if err := filepath.WalkDir(db, func(p string, d fs.DirEntry, err error) error {
+			if err := fs.WalkDir(pack.FS(), rel, func(p string, d fs.DirEntry, err error) error {
 				if err == nil && d.Type().IsRegular() {
 					files = append(files, p)
 				}
@@ -248,38 +263,16 @@ func (w *Worker) putLeft(ctx context.Context, g Grant, r *Result, root, test str
 			}); err != nil {
 				return err
 			}
-			archive, err := tarGz(db, files, databaseLimit)
+			archive, err := archiveIn(pack, rel, files, databaseLimit)
 			if err != nil {
 				return err
 			}
-			if err := w.putBytes(ctx, g, r, "database/"+rel+".tgz", KindTestDatabase, "", archive); err != nil {
+			if err := a.Output(ctx, Output{Name: "database/" + rel + ".tgz", Kind: KindTestDatabase}, archive); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
-}
-
-// attest signs the result and writes it last: its presence is what says the outputs are complete.
-func (w *Worker) attest(ctx context.Context, g Grant, r Result) error {
-	body, err := json.Marshal(r)
-	if err != nil {
-		return err
-	}
-	subjects := []authz.Subject{{Name: g.Attempt, Digest: map[string]string{"sha256": r.Grant}}}
-	for _, o := range r.Outputs {
-		subjects = append(subjects, authz.Subject{Name: o.Name, Digest: map[string]string{"sha256": o.SHA256}})
-	}
-	env, err := authz.Seal(ctx, w.Identity, authz.Statement{Subject: subjects,
-		PredicateType: authz.PredicateResultAttestation, Predicate: body})
-	if err != nil {
-		return err
-	}
-	signed, err := json.Marshal(env)
-	if err != nil {
-		return err
-	}
-	return w.Objects.Put(ctx, attestationKey(g.Prefix, g.Attempt), signed)
 }
 
 func safe(id string) string {

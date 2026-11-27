@@ -88,6 +88,25 @@ func TestADiscoveryHoldingCodeQLIsReportedBeforeASessionIsRefused(t *testing.T) 
 	}
 }
 
+// In a cluster a session works in a Job whose image holds the Copilot CLI, ql-mcp and CodeQL, and
+// takes none of this process's, so what the coordinator itself runs says nothing about whether one
+// can begin: the pack it lands in and the credential its token is minted from do.
+func TestASessionElsewhereIsReadyOnThePackAndTheCredentialAlone(t *testing.T) {
+	s, _ := newServer(t)
+	s.Toolchain = &fakeToolchain{checks: []toolchain.Check{
+		{Key: toolchain.KeyPack, State: toolchain.Ready},
+		{Key: toolchain.KeyCodeQL, State: toolchain.Problem, Reason: "no CodeQL"},
+		{Key: toolchain.KeyCopilot, State: toolchain.Problem, Reason: "no Copilot CLI"},
+		{Key: toolchain.KeyQLMCP, State: toolchain.Problem, Reason: "no ql-mcp"},
+		{Key: toolchain.KeyToken, State: toolchain.Ready},
+	}}
+	s.Discovery, s.SessionsElsewhere = &crawling{state: supervisor.StateWorking}, true
+	got := readReadiness(t, s, "")
+	if !got.Ready || len(got.Checks) != 2 || got.Checks[0].Key != toolchain.KeyPack || got.Checks[1].Key != toolchain.KeyToken {
+		t.Errorf("a cluster's readiness answered %+v; want the pack and the credential, ready", got)
+	}
+}
+
 func setTool(s *Server, tool, body string, control bool) *httptest.ResponseRecorder {
 	r := localRequest("PUT", "/api/authoring/tools/"+tool, bytes.NewBufferString(body))
 	r.Host = "127.0.0.1:8080"

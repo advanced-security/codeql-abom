@@ -222,3 +222,60 @@ func TestAuditDownloadsRespectDemoProhibition(t *testing.T) {
 		}
 	}
 }
+
+// The downloaded guide links a printed tree by the digest its event names, which is where the
+// interface reads it; an event from before that names the row it kept.
+func TestTheGuideLinksAPrintedTreeByTheNameItsEventGives(t *testing.T) {
+	s, st, _, request := authoringServer(t)
+	session, err := st.StartAuthoringSession(request, "operator", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := store.TreeDigest("#1 Job a\n")
+	for _, c := range []store.AuditCapture{{Version: 1, ArtifactDigest: digest}, {Version: 1, ArtifactID: 7}} {
+		if _, err := st.RecordAuthoringEvent(store.AuthoringEvent{SessionID: session, At: "2026-10-01T00:00:00Z",
+			Hook: "artifact", Tool: "ql-mcp-codeql_query_run", Decision: "noted", Capture: c}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localRequest("GET", fmt.Sprintf("/api/authoring-sessions/%d/reproduction?download=1", session), nil))
+	body := w.Body.String()
+	for _, want := range []string{fmt.Sprintf("/api/authoring-sessions/%d/asts/%s", session, digest), "/api/authoring-asts/7"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the guide does not link %s", want)
+		}
+	}
+}
+
+// A store kept before events were refused for naming a printout by anything but its digest can still
+// hold one: the guide shows what it says, and links nothing to it.
+func TestTheGuideLinksAPrintedTreeOnlyByADigest(t *testing.T) {
+	s, st, _, request := authoringServer(t)
+	session, err := st.StartAuthoringSession(request, "operator", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.RecordAuthoringEvent(store.AuthoringEvent{SessionID: session, At: "2026-10-01T00:00:00Z",
+		Hook: "artifact", Tool: "ql-mcp-codeql_query_run", Decision: "noted",
+		Capture: store.AuditCapture{Version: 1, ArtifactDigest: store.TreeDigest("#1 Job a\n")}}); err != nil {
+		t.Fatal(err)
+	}
+	named := "x](https://attacker.example/p) [y"
+	if _, err := st.DB().Exec(`UPDATE abom_authoring_event SET capture=json_set(capture,'$.artifactDigest',?)
+		WHERE session_id=?`, named, session); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localRequest("GET", fmt.Sprintf("/api/authoring-sessions/%d/reproduction?download=1", session), nil))
+	body := w.Body.String()
+	if w.Code != http.StatusOK || strings.Contains(body, "https://attacker.example") {
+		t.Fatalf("the guide holds the name as Markdown:\n%s", body)
+	}
+	if strings.Contains(body, fmt.Sprintf("/api/authoring-sessions/%d/asts/", session)) {
+		t.Errorf("the guide links a printout by %q", named)
+	}
+	if !strings.Contains(rendered(body), "https://attacker.example/p") {
+		t.Errorf("the guide no longer shows what the event names:\n%s", rendered(body))
+	}
+}

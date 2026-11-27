@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/advanced-security/codeql-abom/internal/authz"
 	"github.com/advanced-security/codeql-abom/internal/harness"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
@@ -57,7 +58,11 @@ func (s *Server) startDraft(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, nil, err)
 		return
 	}
-	session, err := s.Authoring.Draft(run, body.QueryID, picked, body.By)
+	var decision string
+	if who, ok := authz.RequesterOf(r.Context()); ok {
+		decision = who.Route
+	}
+	session, err := s.Authoring.Draft(run, body.QueryID, picked, body.By, decision)
 	switch {
 	case errors.Is(err, store.ErrSessionUnderWay):
 		writeError(w, http.StatusConflict, err.Error())

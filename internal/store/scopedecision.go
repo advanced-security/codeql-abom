@@ -299,24 +299,13 @@ func (s *Store) judgeScope(accounts []DeclaredAccount) (ScopeVerdict, error) {
 	unverified := func(format string, args ...any) (ScopeVerdict, error) {
 		return ScopeVerdict{State: ScopeUnverified, Digest: digest, Reason: fmt.Sprintf(format, args...)}, nil
 	}
-	if s.decisions == nil || s.decisions.dir == "" {
-		return unverified("no decision key directory is configured to verify it with")
-	}
-	entry, ok, err := s.assertionByDigest(digest)
-	if err != nil {
-		return ScopeVerdict{}, err
-	}
-	if !ok {
-		return unverified("its decision is not in the authorization log")
-	}
-	bundle, err := authz.ReadBundle(s.decisions.dir)
-	if err != nil {
-		return unverified("the trust bundle cannot be read: %v", err)
-	}
-	d, err := bundle.DecisionOf(entry, s, &s.decisions.pins)
+	d, entry, err := s.verifiedDecision(digest)
+	var unchecked *uncheckedDecision
 	switch {
+	case errors.As(err, &unchecked):
+		return unverified("%s", unchecked.why)
 	case err != nil:
-		return unverified("its decision does not verify: %v", err)
+		return ScopeVerdict{}, err
 	case d.Operation() != authz.OpDeclareScope:
 		return unverified("its decision is about %s, not a declaration", d.Operation())
 	case !d.Allowed():
@@ -328,6 +317,47 @@ func (s *Store) judgeScope(accounts []DeclaredAccount) (ScopeVerdict, error) {
 	_ = json.Unmarshal(d.Evidence(), &evidence)
 	return ScopeVerdict{State: ScopeSigned, Digest: digest, DecidedAt: entry.RecordedAt, DecidedBy: d.Principal().Called(),
 		JudgedAs: evidence.JudgedAs}, nil
+}
+
+// uncheckedDecision is a decision that could not be verified, and why: as the store holds it, not a
+// failure to read it.
+type uncheckedDecision struct{ why string }
+
+func (e *uncheckedDecision) Error() string { return e.why }
+
+// VerifiedDecision is the decision the authorization log holds by digest, verified with the trust
+// bundle; one it does not hold, or that does not verify, is an error saying why.
+func (s *Store) VerifiedDecision(digest string) (authz.Decision, error) {
+	d, _, err := s.verifiedDecision(digest)
+	return d, err
+}
+
+func (s *Store) verifiedDecision(digest string) (authz.Decision, authz.Entry, error) {
+	unchecked := func(format string, args ...any) (authz.Decision, authz.Entry, error) {
+		return authz.Decision{}, authz.Entry{}, &uncheckedDecision{why: fmt.Sprintf(format, args...)}
+	}
+	if digest == "" {
+		return unchecked("no decision is named")
+	}
+	if s.decisions == nil || s.decisions.dir == "" {
+		return unchecked("no decision key directory is configured to verify it with")
+	}
+	entry, ok, err := s.assertionByDigest(digest)
+	if err != nil {
+		return authz.Decision{}, authz.Entry{}, err
+	}
+	if !ok {
+		return unchecked("its decision is not in the authorization log")
+	}
+	bundle, err := authz.ReadBundle(s.decisions.dir)
+	if err != nil {
+		return unchecked("the trust bundle cannot be read: %v", err)
+	}
+	d, err := bundle.DecisionOf(entry, s, &s.decisions.pins)
+	if err != nil {
+		return unchecked("its decision does not verify: %v", err)
+	}
+	return d, entry, nil
 }
 
 func (s *Store) assertionByDigest(digest string) (authz.Entry, bool, error) {

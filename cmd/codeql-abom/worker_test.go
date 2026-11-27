@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"io"
+	"os"
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
@@ -29,20 +31,50 @@ func TestAWorkerJobsCommandLineIsTheWorkersOwn(t *testing.T) {
 		t.Fatalf("jobs = %d, %v", len(jobs.Items), err)
 	}
 	pod := jobs.Items[0].Spec.Template.Spec
-	args := pod.Containers[0].Args
-	if len(args) == 0 || args[0] != "worker" {
-		t.Fatalf("the Job runs %v; want the worker command", args)
+	if len(pod.InitContainers) == 0 || len(pod.Containers) == 0 {
+		t.Fatalf("the Job runs %d sidecars and %d containers", len(pod.InitContainers), len(pod.Containers))
 	}
-	c, err := parseWorkerArgs(args[1:], io.Discard)
+	mounted := func(c corev1.Container) map[string]string {
+		out := map[string]string{}
+		for _, m := range c.VolumeMounts {
+			out[m.Name] = m.MountPath
+		}
+		return out
+	}
+	worker, attestor := pod.Containers[0], pod.InitContainers[0]
+	if len(worker.Args) == 0 || worker.Args[0] != "worker" || len(attestor.Args) == 0 || attestor.Args[0] != "attestor" {
+		t.Fatalf("the Job runs %v beside %v; want the worker and its attestor", worker.Args, attestor.Args)
+	}
+	c, err := parseWorkerArgs(worker.Args[1:], io.Discard)
 	if err != nil {
-		t.Fatalf("the worker cannot read the Job's arguments %v: %v", args[1:], err)
+		t.Fatalf("the worker cannot read the Job's arguments %v: %v", worker.Args[1:], err)
 	}
-	mounted := map[string]string{}
-	for _, m := range pod.Containers[0].VolumeMounts {
-		mounted[m.Name] = m.MountPath
+	if wm := mounted(worker); c.attestor != wm["attest"]+"/attestor.sock" || c.workDir != wm["scratch"] || c.threads != 2 || c.ram != 3072 {
+		t.Errorf("the worker reads %+v from a container that mounts %v", c, wm)
 	}
-	if c.grant != mounted["grant"]+"/grant.json" || c.trust != mounted["trust"] || c.svid != mounted["spiffe"] ||
-		c.workDir != mounted["scratch"] || c.threads != 2 || c.ram != 3072 {
-		t.Errorf("the worker reads %+v from a pod that mounts %v", c, mounted)
+	a, err := parseAttestorArgs(attestor.Args[1:], io.Discard)
+	if err != nil {
+		t.Fatalf("the attestor cannot read the Job's arguments %v: %v", attestor.Args[1:], err)
+	}
+	if am := mounted(attestor); a.grant != am["grant"]+"/grant.json" || a.trust != am["trust"] || a.svid != am["spiffe"] ||
+		a.socket != c.attestor {
+		t.Errorf("the attestor reads %+v from a container that mounts %v", a, am)
+	}
+}
+
+// An attempt's key reaches its attestor in the environment, which every process it starts would
+// inherit; it is read once and is gone after.
+func TestAnAttestorTakesItsAttemptsKeyOutOfItsEnvironment(t *testing.T) {
+	key, private, err := execution.NewAttemptKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(execution.AttemptKeySecret, private)
+	got, err := takeAttemptKey()
+	if err != nil || got.PublicPEM() != key.PublicPEM() {
+		t.Fatalf("the attestor took %v, %v", got, err)
+	}
+	if left, ok := os.LookupEnv(execution.AttemptKeySecret); ok {
+		t.Errorf("the attempt's key is still in the environment: %d bytes", len(left))
 	}
 }

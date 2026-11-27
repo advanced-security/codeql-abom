@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 	"time"
@@ -89,6 +90,27 @@ func (p PermissionSet) within(granted map[string]string) PermissionSet {
 // not approved refuses the call before GitHub is asked.
 func (a *App) TokenWith(ctx context.Context, owner string, perms PermissionSet, fresh bool) (string, time.Time, error) {
 	return a.tokenWith(ctx, owner, "", perms, fresh)
+}
+
+// Revoke ends token, an installation token this App minted, before it expires, as a session's is once
+// the session ends, and forgets it so it is never handed out again. A token GitHub no longer accepts
+// has already ended.
+func (a *App) Revoke(ctx context.Context, token string) error {
+	a.mu.Lock()
+	for key, t := range a.tokens {
+		if t.token == token {
+			delete(a.tokens, key)
+		}
+	}
+	a.mu.Unlock()
+	err := a.send(ctx, http.MethodDelete, "/installation/token", token, nil, nil)
+	if refused := new(statusError); errors.As(err, &refused) && refused.Status == http.StatusUnauthorized {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("revoking an installation token: %w", err)
+	}
+	return nil
 }
 
 // RepositoryTokenWith is TokenWith reaching only repo of owner's installation, as the publisher's

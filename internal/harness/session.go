@@ -26,7 +26,8 @@ var ErrBusy = errors.New("CodeQL is in use by a crawl, a run or a test on this m
 
 // Sessions starts authoring sessions, one per request, and keeps each one's timeline.
 type Sessions struct {
-	Store store.Backend
+	// Store is what sessions read and keep: the store itself, or a worker's snapshot and journal.
+	Store Records
 	// Workspace is the operator's pack, the only place a session writes.
 	Workspace string
 	// Libraries are read-only roots a query is written against: the CodeQL package cache.
@@ -44,10 +45,20 @@ type Sessions struct {
 	Limit time.Duration
 	// Wait is how long a start waits for CodeQL to be free before refusing.
 	Wait time.Duration
+	// ReportEvery is how often a worker's session reports what it kept between decisions; zero is
+	// every two seconds.
+	ReportEvery time.Duration
+	// Databases are where a worker unpacked what a draft reads of each picked repository's database,
+	// by repository; nil reads each where its run keeps it.
+	Databases map[string]string
 	// Version is the CodeQL ql-mcp and ABOM run, which every tree and test result names.
 	Version func(context.Context) (string, error)
 	// RunTests runs a query's own tests for a session, which already holds Lock.
 	RunTests authoring.Tests
+	// TestedAt is where RunTests runs them when it is not in Workspace: in a worker, a copy of the pack
+	// the agent beside it cannot write. A tree printed from a database built there names the copy, and
+	// is kept as the pack names it.
+	TestedAt string
 	// Prepare installs what the pack depends on wherever it has no lock, before the agent has
 	// control: ABOM's act and never the session's, which cannot install packs. Called holding Lock;
 	// nil installs nothing.
@@ -100,8 +111,9 @@ type startedAuthoring struct {
 }
 
 // Start begins a session on a request and answers once it is under way; the agent works on in
-// the background, and its timeline is the store's.
-func (s *Sessions) Start(request int64, by string) (store.AuthoringSession, error) {
+// the background, and its timeline is the store's. The single binary acts on the decision that asked
+// for it as that decision is made, so it keeps no digest of it.
+func (s *Sessions) Start(request int64, by, _ string) (store.AuthoringSession, error) {
 	session, _, err := s.start(request, by)
 	return session, err
 }
@@ -394,11 +406,11 @@ func (s *Sessions) observedVersion(request int64) (string, string, error) {
 
 // keeper keeps a printout against the request's query as it stands, the fixtures it was printed
 // from and the CodeQL that printed it, so a tree printed before either changed reads as old.
-func (s *Sessions) keeper(session, request int64) func(Printed) (int64, error) {
-	return func(p Printed) (int64, error) {
+func (s *Sessions) keeper(session, request int64) func(Printed) (string, error) {
+	return func(p Printed) (string, error) {
 		req, err := s.requestNamed(request)
 		if err != nil {
-			return 0, err
+			return "", err
 		}
 		var digest string
 		if req.QueryID != "" {
@@ -408,13 +420,20 @@ func (s *Sessions) keeper(session, request int64) func(Printed) (int64, error) {
 		}
 		cli, err := s.codeQL(context.Background())
 		if err != nil {
-			return 0, err
+			return "", err
 		}
-		return s.Store.RecordAuthoringAST(store.AuthoringAST{
+		if s.TestedAt != "" {
+			p.Body = strings.ReplaceAll(p.Body, s.TestedAt+string(filepath.Separator), s.Workspace+string(filepath.Separator))
+		}
+		named := store.TreeDigest(p.Body)
+		if _, err := s.Store.RecordAuthoringAST(store.AuthoringAST{
 			SessionID: session, QueryID: req.QueryID, PrintedAt: p.At.UTC().Format(time.RFC3339Nano),
 			Query: p.Query, Database: p.Database, SourceFiles: p.SourceFiles, TestDigest: digest,
-			Body: p.Body, Truncated: p.Truncated, CLIVersion: cli,
-		})
+			Body: p.Body, Truncated: p.Truncated, CLIVersion: cli, Digest: named,
+		}); err != nil {
+			return "", err
+		}
+		return named, nil
 	}
 }
 
@@ -746,8 +765,28 @@ func requested(r store.QueryRequest) customql.Requested {
 
 // locate finds a query in the pack by id, and the one test directory that is its alone, laying
 // one out if it has none.
-func (s *Sessions) locate(id string) (string, string, error) {
-	queries, err := authoring.Workspace(s.Workspace)
+func (s *Sessions) locate(id string) (string, string, error) { return bindIn(s.Workspace, id) }
+
+// bindIn is locate in the pack at workspace.
+func bindIn(workspace, id string) (string, string, error) {
+	query, tests, err := boundTo(workspace, id)
+	if err != nil || tests != "" {
+		return query, tests, err
+	}
+	rel, _ := filepath.Rel(workspace, query)
+	name := strings.TrimSuffix(filepath.Base(query), ".ql")
+	if filepath.Dir(rel) != "src" || !customql.ValidQueryName(name) {
+		return "", "", fmt.Errorf("%s has no test, and one is laid out only for a query directly "+
+			"under src/ with a plain name", filepath.ToSlash(rel))
+	}
+	tests, err = customql.ScaffoldTest(workspace, name)
+	return query, tests, err
+}
+
+// boundTo finds a query in the pack at workspace by id, and the one test directory that is its alone,
+// or none where it has no test: the query and test a session working on id is bound to.
+func boundTo(workspace, id string) (string, string, error) {
+	queries, err := authoring.Workspace(workspace)
 	if err != nil {
 		return "", "", err
 	}
@@ -760,7 +799,7 @@ func (s *Sessions) locate(id string) (string, string, error) {
 	switch len(found) {
 	case 0:
 		return "", "", fmt.Errorf("%s is not a query in the pack at %s, and a session writes nowhere else",
-			id, s.Workspace)
+			id, workspace)
 	case 1:
 	default:
 		return "", "", fmt.Errorf("%s is declared by both %s and %s", id, found[0].Rel, found[1].Rel)
@@ -772,15 +811,9 @@ func (s *Sessions) locate(id string) (string, string, error) {
 			dirs = append(dirs, dir)
 		}
 	}
-	name := strings.TrimSuffix(filepath.Base(q.Path), ".ql")
 	switch len(dirs) {
 	case 0:
-		if filepath.Dir(filepath.FromSlash(q.Rel)) != "src" || !customql.ValidQueryName(name) {
-			return "", "", fmt.Errorf("%s has no test, and one is laid out only for a query directly "+
-				"under src/ with a plain name", q.Rel)
-		}
-		tests, err := customql.ScaffoldTest(s.Workspace, name)
-		return q.Path, tests, err
+		return q.Path, "", nil
 	case 1:
 	default:
 		return "", "", fmt.Errorf("%s is tested in %d directories, and a session writes one", q.Rel, len(dirs))

@@ -24,11 +24,24 @@ import (
 // credentials can confine a pool's workers to their own attempts.
 const Prefix = "attempts/"
 
-// ObjectStore holds an attempt's outputs: immutable once written, and never the database.
+// ObjectStore holds an attempt's outputs: immutable once written, and never the database. Get answers
+// ErrNotFound for a key nothing has written yet.
 type ObjectStore interface {
 	Put(ctx context.Context, key string, body []byte) error
-	Get(ctx context.Context, key string) ([]byte, error)
+	// Get reads what is at key, refusing it with ErrTooLarge if it is longer than limit, which is never
+	// more than maxObject: every read is bounded by what it reads.
+	Get(ctx context.Context, key string, limit int64) ([]byte, error)
 }
+
+// ErrNotFound is a key nothing has written yet: a report a worker has not got to, as against one the
+// store could not read.
+var ErrNotFound = errors.New("nothing is written there yet")
+
+// ErrTooLarge is an object longer than its reader takes, which reading again will not change.
+var ErrTooLarge = errors.New("it is longer than may be read")
+
+// ErrStopped is a worker that stopped when asked to, rather than finishing or failing.
+var ErrStopped = errors.New("the worker was stopped")
 
 // Grant is what a TaskGrant binds: one attempt, its pool and identity, the task, where its outputs
 // go, and until when.
@@ -40,8 +53,12 @@ type Grant struct {
 	Task     expand.RemoteTask `json:"task"`
 	// Test is a query's tests to run instead of an analysis.
 	Test *TestTask `json:"test,omitempty"`
+	// Session is an authoring session to run instead of either.
+	Session *SessionTask `json:"session,omitempty"`
 	// PackSHA256 binds the operator's pack an analysis's PackFindings run from.
 	PackSHA256 string `json:"packSha256,omitempty"`
+	// AttemptKey is the public half of the key this attempt alone signs with, as PEM.
+	AttemptKey string `json:"attemptKey"`
 	IssuedAt   string `json:"issuedAt"`
 	NotAfter   string `json:"notAfter"`
 }
@@ -113,7 +130,9 @@ type Receipt struct {
 	Attestation string `json:"attestation"`
 	Repository  string `json:"repository,omitempty"`
 	// Tests are the test directories a test attempt ran, comma-separated.
-	Tests   string `json:"tests,omitempty"`
+	Tests string `json:"tests,omitempty"`
+	// Session is the authoring session a session attempt ran.
+	Session int64  `json:"session,omitempty"`
 	Commit  string `json:"commit,omitempty"`
 	Verdict string `json:"verdict"`
 	// Outcome is the failure the worker reported, for a result that verified and analyzed nothing.
@@ -129,6 +148,10 @@ const (
 )
 
 func attestationKey(prefix, attempt string) string { return prefix + attempt + "/attestation.json" }
+
+// grantKey is where the coordinator keeps the grant it signed for an attempt, which a coordinator
+// started since reads its attempt's key from, by the digest it kept.
+func grantKey(prefix, attempt string) string { return prefix + attempt + "/grant.json" }
 
 func outputKey(prefix, attempt, name string) string { return prefix + attempt + "/out/" + name }
 
@@ -180,12 +203,17 @@ type Launch struct {
 	Attempt string
 	Grant   authz.Envelope
 	Secrets map[string]string
+	// Sealed is a session whose agent is offered ABOM's tools and nothing else, a draft's: its agent
+	// reads the pack and writes nowhere the worker reads.
+	Sealed bool
 }
 
-// Launcher starts a worker for an attempt and says when it has finished.
+// Launcher starts a worker for an attempt and says when it has finished. Stop asks the worker to stop,
+// giving it time to report what it did; Wait then answers ErrStopped once it has.
 type Launcher interface {
 	Start(ctx context.Context, l Launch) error
 	Wait(ctx context.Context, attempt string) error
+	Stop(ctx context.Context, attempt string) error
 	Cleanup(ctx context.Context, attempt string)
 }
 

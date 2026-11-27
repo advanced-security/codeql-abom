@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/advanced-security/codeql-abom/internal/regular"
 )
 
 // printers are the tool queries whose output is kept: how the fixtures read to CodeQL.
@@ -33,8 +35,9 @@ type Printed struct {
 	Truncated   bool
 }
 
-// KeepPrinted keeps what ql-mcp prints into scratch, which is scrubbed with the session.
-func (g *Gate) KeepPrinted(scratch string, keep func(Printed) (int64, error)) error {
+// KeepPrinted keeps what ql-mcp prints into scratch, which is scrubbed with the session. keep answers
+// with the digest the tree is named by.
+func (g *Gate) KeepPrinted(scratch string, keep func(Printed) (string, error)) error {
 	dir, err := realDir(scratch)
 	if err != nil {
 		return fmt.Errorf("the session's scratch: %w", err)
@@ -68,16 +71,17 @@ func (g *Gate) print(tool string, args any, result string) string {
 	var context string
 	if err == nil {
 		sourceFiles, _ := fields["sourceFiles"].(string)
-		var id int64
-		id, err = keep(Printed{At: g.Now(), Query: name, Database: b.rel(b.database()),
+		var digest string
+		digest, err = keep(Printed{At: g.Now(), Query: name, Database: b.rel(b.database()),
 			SourceFiles: sourceFiles, Body: body, Truncated: truncated})
 		if err != nil {
 			_ = g.fail(err)
 			return "ABOM could not retain the printed evidence; the session is stopping."
 		}
 		if err == nil {
-			e.Capture.ArtifactID = id
-			e.Detail = fmt.Sprintf("kept %d bytes of what %s printed, as printout %d", len(body), name, id)
+			e.Capture.ArtifactDigest = digest
+			e.Detail = fmt.Sprintf("kept %d bytes of what %s printed, as printout %s", len(body), name,
+				digest[:min(12, len(digest))])
 			context = fmt.Sprintf("ABOM kept what %s printed. Read the tree in %s.", name,
 				strings.Join(files, " and "))
 		}
@@ -100,7 +104,7 @@ func readPrinted(scratch, result string) (string, []string, bool, error) {
 	if err != nil {
 		return "", nil, false, err
 	}
-	body, truncated, err := readPrintedFiles(root, files)
+	body, truncated, err := readPrintedFiles(scratch, root, files)
 	if err != nil {
 		return "", nil, false, err
 	}
@@ -147,14 +151,25 @@ func printedFiles(scratch, root, result string) ([]string, error) {
 	return files, nil
 }
 
-func readPrintedFiles(root string, files []string) (string, bool, error) {
+// readPrintedFiles reads each of files, paths within scratch, as the scratch holds it when it is read:
+// the agent shares the scratch, and a file listed as regular can be a link or a pipe by then.
+func readPrintedFiles(scratch, root string, files []string) (string, bool, error) {
+	within, err := os.OpenRoot(scratch)
+	if err != nil {
+		return "", false, err
+	}
+	defer func() { _ = within.Close() }()
 	var buf []byte
 	for _, file := range files {
 		if len(files) > 1 {
 			rel, _ := filepath.Rel(root, file)
 			buf = append(buf, "== "+filepath.ToSlash(rel)+" ==\n"...)
 		}
-		f, err := os.Open(file)
+		rel, err := filepath.Rel(scratch, file)
+		if err != nil {
+			return "", false, err
+		}
+		f, err := regular.OpenIn(within, rel)
 		if err != nil {
 			return "", false, err
 		}

@@ -82,10 +82,17 @@
                                        aria-label="@($"Link to event #{e.RowId}")" data-abom-audit-event-link />
                     </Tip>
                     <span>Policy @(e.PolicyId == 0 ? "not recorded" : $"event #{e.PolicyId}")</span>
-                    @if (e.Capture.ArtifactId > 0)
+                    @if (e.Capture.ArtifactDigest.Length > 0)
+                    {
+                        <Tip Text="Open the printed tree this event kept, named by the digest of what it says.">
+                            <MudLink Href="@($"api/authoring-sessions/{e.SessionId}/asts/{e.Capture.ArtifactDigest}")"
+                                     data-abom-printed-tree>Printed tree @e.Capture.ArtifactDigest[..Math.Min(12, e.Capture.ArtifactDigest.Length)]</MudLink>
+                        </Tip>
+                    }
+                    else if (e.Capture.ArtifactId > 0)
                     {
                         <Tip Text="Open the existing printed tree linked to this event.">
-                            <MudLink Href="@($"api/authoring-asts/{e.Capture.ArtifactId}")">Printed tree #@e.Capture.ArtifactId</MudLink>
+                            <MudLink Href="@($"api/authoring-asts/{e.Capture.ArtifactId}")" data-abom-printed-tree>Printed tree #@e.Capture.ArtifactId</MudLink>
                         </Tip>
                     }
                 </div>

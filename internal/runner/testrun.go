@@ -98,16 +98,22 @@ func (t testOutcome) reason() string {
 // compiles the query, runs it against a database the CLI builds from the fixture tree, and
 // compares the output to the checked-in `.expected`. ABOM never forms that opinion itself.
 func (r *Runner) RunTests(ctx context.Context, dirs []string) (TestResult, error) {
-	return r.runTests(ctx, dirs, true)
+	return r.runTests(ctx, dirs, localPackArgs(), true)
 }
 
 // RunTestsHeld is RunTests for a caller already holding the lock: an authoring session holds it
 // for its whole life, and would otherwise wait on itself.
 func (r *Runner) RunTestsHeld(ctx context.Context, dirs []string) (TestResult, error) {
-	return r.runTests(ctx, dirs, false)
+	return r.runTests(ctx, dirs, localPackArgs(), false)
 }
 
-func (r *Runner) runTests(ctx context.Context, dirs []string, lock bool) (TestResult, error) {
+// RunTestsHeldIn is RunTestsHeld over the operator's pack at pack, whichever this process was
+// configured with: a copy of it, which is then the only operator pack the run resolves.
+func (r *Runner) RunTestsHeldIn(ctx context.Context, pack string, dirs []string) (TestResult, error) {
+	return r.runTests(ctx, dirs, packArgs(pack), false)
+}
+
+func (r *Runner) runTests(ctx context.Context, dirs, packs []string, lock bool) (TestResult, error) {
 	if len(dirs) == 0 {
 		return TestResult{}, fmt.Errorf("runner: test run needs a directory")
 	}
@@ -117,7 +123,7 @@ func (r *Runner) runTests(ctx context.Context, dirs []string, lock bool) (TestRe
 		}
 	}
 	args := append([]string{"test", "run"}, dirs...)
-	args = append(args, localPackArgs()...)
+	args = append(args, packs...)
 	// The CLI deletes a passing test's database, and the AST step is read from it.
 	args = append(args, "--format=json", "--keep-databases")
 	if r.Threads > 0 {

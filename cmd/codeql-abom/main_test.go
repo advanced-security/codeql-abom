@@ -2,10 +2,40 @@ package main
 
 import (
 	"context"
+	"flag"
 	"os"
 	"strings"
 	"testing"
 )
+
+// -h prints each flag's default, and a PostgreSQL URL carries its password: inside the coordinator,
+// `own -h` printed DATABASE_URL whole. The environment still supplies the value a flag was not given.
+func TestHelpPrintsNoDefaultTheEnvironmentSupplies(t *testing.T) {
+	const password = "hunter2-in-the-environment"
+	for _, env := range []string{"ABOM_DB", "ABOM_READ_REPLICA"} {
+		t.Setenv(env, "postgres://abom:"+password+"@127.0.0.1:1/abom")
+	}
+	commands := [][]string{{"audit", "verify"}, {"audit", "rotate-key"}}
+	for _, action := range []string{"create", "status", "installations", "rotate-key"} {
+		commands = append(commands, []string{"app", action})
+	}
+	for _, sc := range subcommands {
+		commands = append(commands, []string{sc.name})
+	}
+	for _, c := range commands {
+		var out strings.Builder
+		_ = run(context.Background(), append(c, "-h"), &out, &out)
+		if strings.Contains(out.String(), password) {
+			t.Errorf("%s -h printed the password the environment holds", strings.Join(c, " "))
+		}
+	}
+
+	fs := flag.NewFlagSet("own", flag.ContinueOnError)
+	db := databaseFlag(fs)
+	if err := fs.Parse(nil); err != nil || *db != os.Getenv("ABOM_DB") {
+		t.Errorf("--db = %q (%v), want ABOM_DB when the flag is not given", *db, err)
+	}
+}
 
 // A typo in a subcommand name must be rejected, not silently ignored, since a run that does
 // nothing looks identical to a run that succeeded.

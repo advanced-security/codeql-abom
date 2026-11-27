@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -127,6 +128,21 @@ func TestQLMCPResolvesPacksAndWritesScratchWhereABOMSays(t *testing.T) {
 	} {
 		if got := server.Env[key]; got != want {
 			t.Errorf("%s = %q, want %q", key, got, want)
+		}
+	}
+}
+
+// The CLI hands every MCP server it starts its own environment, the session's token among it, and a
+// name given in the server's configuration wins. So ql-mcp, and every CodeQL it runs, is given each
+// GitHub credential blank: it needs none, and what it runs reads what the agent wrote.
+func TestQLMCPHoldsNoGitHubCredential(t *testing.T) {
+	server, ok := aCopilot().config(aSetup(t)).MCPServers[Server].(copilot.MCPStdioServerConfig)
+	if !ok {
+		t.Fatal("ql-mcp is not a stdio server")
+	}
+	for _, name := range gitHubTokenVariables {
+		if value, given := server.Env[name]; !given || value != "" {
+			t.Errorf("ql-mcp is given %s as %q (given: %v), want it blank", name, value, given)
 		}
 	}
 }
@@ -261,5 +277,28 @@ func TestASessionTheRuntimeBlockedAtItsCreditLimitRemembersWhatItSpent(t *testin
 	var spent *CreditLimitError
 	if err := limit.reached(); !errors.As(err, &spent) || spent.Limit != 30 || spent.Spent != 33.07655 {
 		t.Errorf("remembered %v", err)
+	}
+}
+
+// In a cluster the CLI already serves in the session pod's agent container, which alone holds the
+// session's token: the harness connects to it with the pod's connection token, and starts and
+// authenticates nothing itself.
+func TestASessionReachesACLIServingBesideIt(t *testing.T) {
+	c := aCopilot()
+	c.CLI, c.Token, c.Mint = "", nil, nil
+	c.Remote = &RemoteCLI{URL: "127.0.0.1:7777", Token: "pod-secret"}
+	opts := c.clientOptions(aSetup(t), "")
+	conn, ok := opts.Connection.(copilot.URIConnection)
+	if !ok || conn.URL != "127.0.0.1:7777" || conn.ConnectionToken != "pod-secret" {
+		t.Errorf("the session connects over %#v", opts.Connection)
+	}
+	if opts.GitHubToken != "" || opts.UseLoggedInUser != nil || opts.BaseDirectory != "" {
+		t.Errorf("a session connecting to a CLI beside it authenticates it itself: %+v", opts)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c.Remote.URL = "127.0.0.1:1"
+	if _, err := c.Run(ctx, aSetup(t)); errors.Is(err, ErrNoAgent) {
+		t.Error("a session with a CLI beside it and no credential of its own was refused as having no agent")
 	}
 }

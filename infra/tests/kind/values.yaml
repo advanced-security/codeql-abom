@@ -17,3 +17,5 @@ workers:
   discovery: {cpu: "1", memory: 2Gi, timeout: 1h}
   qlaasTest: {cpu: "1", memory: 2Gi, timeout: 30m}
   qlaasRun: {cpu: "1", memory: 2Gi, timeout: 1h}
+  # One session at a time, each its worker and its agent at half a CPU.
+  authoring: {cpu: 500m, memory: 2Gi, timeout: 1h}

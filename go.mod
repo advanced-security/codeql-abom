@@ -20,6 +20,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.50
 	github.com/spdx/tools-golang v0.5.7
 	golang.org/x/oauth2 v0.36.0
+	golang.org/x/sync v0.12.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.34.2
 	k8s.io/apimachinery v0.34.2

@@ -1,3 +1,6 @@
+{{- if semverCompare "<1.29.0-0" .Capabilities.KubeVersion.Version }}
+{{- fail "every worker runs beside its attestor, and an authoring session's beside the Copilot CLI, as native sidecars, which need Kubernetes 1.29 or later" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -85,6 +88,21 @@ spec:
             {{- end }}
             - --{{ $pool.flags }}-memory={{ $size.memory }}
             - --{{ $pool.flags }}-timeout={{ $size.timeout }}
+            {{- if include "abom.egressAllow" (dict "pool" $pool "root" $) }}
+            - --{{ $pool.proxyFlag }}=http://{{ include "abom.name" $ }}-egress-proxy:{{ $pool.port }}
+            {{- end }}
+            {{- end }}
+            {{- with include "abom.egressDirect" . }}
+            - --worker-no-proxy={{ . }}
+            {{- end }}
+            - --authoring-agent-image={{ include "abom.agentImage" . }}
+            # Installed in the agent's image, so nothing is fetched when a session starts.
+            - --ql-mcp=codeql-development-mcp-server
+            {{- with .Values.workers.authoring.concurrency }}
+            - --authoring-concurrency={{ . }}
+            {{- end }}
+            {{- if ne (toString .Values.workers.authoring.credits) "" }}
+            - --authoring-credits={{ .Values.workers.authoring.credits }}
             {{- end }}
             - --expand-concurrency={{ .Values.coordinator.concurrency }}
             - --max-depth={{ .Values.coordinator.maxDepth }}

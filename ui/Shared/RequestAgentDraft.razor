@@ -8,14 +8,23 @@
    and saving is still theirs. *@
 <div class="abom-agent-draft mb-3" data-abom-agent-draft>
     <div class="d-flex align-center flex-wrap gap-2">
-        @if (Live is not null)
+        @if (Live is { State: "queued" } waiting)
+        {
+            <MudText Typo="Typo.caption" data-abom-draft-waiting>
+                Your draft is waiting its turn since @TimeText.DayAndTime(waiting.QueuedAt, "HH:mm:ss"): @WaitingText(waiting).
+            </MudText>
+        }
+        else if (Live is not null)
         {
             <MudText Typo="Typo.caption" data-abom-draft-live>
                 An agent is drafting from what you picked, since @TimeText.DayAndTime(Live.StartedAt, "HH:mm:ss").
             </MudText>
-            <Guarded Operation="abom/authoring" Context="denied" Tip="End the drafting agent. Nothing is filed.">
+        }
+        @if (Live is not null)
+        {
+            <Guarded Operation="abom/authoring" Context="denied" Tip="@StopTip">
                 <MudButton Size="Size.Small" Variant="Variant.Text" Class="abom-plain-button" Disabled="@(_busy || denied is not null)"
-                           OnClick="Stop" data-abom-draft-stop>Stop drafting</MudButton>
+                           OnClick="Stop" data-abom-draft-stop>@(Live.State == "queued" ? "Stop waiting" : "Stop drafting")</MudButton>
             </Guarded>
         }
         else
@@ -48,7 +57,7 @@
             </Tip>
         </div>
     }
-    else if (Newest is { } ended && ended.State != "running")
+    else if (Newest is { } ended && ended.State is not ("running" or "queued"))
     {
         <MudText Typo="Typo.caption" Class="d-block mud-text-secondary mt-1" data-abom-draft-ended>
             The last drafting session @ended.State without a draft@(ended.Detail.Length > 0 ? $": {ended.Detail}" : ".")
@@ -75,7 +84,16 @@
     // Only this request's picks: a run's earlier drafts answered other picks.
     private DraftSession? Newest => _drafts?.Drafts.FirstOrDefault(d => d.RowId >= _since);
 
-    private DraftSession? Live => Newest is { State: "running" } live ? live : null;
+    // A draft waiting its turn is as live as one working: it can be stopped, and is followed until it ends.
+    private DraftSession? Live => Newest is { State: "running" or "queued" } live ? live : null;
+
+    private string StopTip => Live is { State: "queued" }
+        ? "Stop this draft before it begins. Nothing is filed."
+        : "End the drafting agent. Nothing is filed.";
+
+    private static string WaitingText(DraftSession d) => d.Ahead > 0
+        ? CountText.Of(d.Ahead, "session ahead", "sessions ahead")
+        : "next to begin";
 
     private long _since = long.MaxValue;
 

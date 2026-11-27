@@ -102,7 +102,7 @@ type Gate struct {
 
 	// scratch is where ql-mcp prints, and keepPrinted keeps what it printed there.
 	scratch     string
-	keepPrinted func(Printed) (int64, error)
+	keepPrinted func(Printed) (string, error)
 
 	// keepSpend keeps what each model call cost.
 	keepSpend func(Spend) error

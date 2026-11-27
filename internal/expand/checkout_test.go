@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -415,6 +416,74 @@ func TestFetchReportsMissingRepository(t *testing.T) {
 		"", "does-not-exist", "")
 	if !IsUnavailable(err) {
 		t.Fatalf("err = %v, want an unavailable error", err)
+	}
+}
+
+// git writes a repository's links as links, and the extractor follows one wherever it points, so a
+// link could put any file the worker can read into the database it builds, and a link to a directory
+// holding it makes a walk that doubles at every level. One naming a file inside is kept: a composite
+// action may link its manifest to another on purpose.
+func TestACheckoutKeepsOnlyLinksToFilesInsideIt(t *testing.T) {
+	origin := originRepo(t, map[string]string{
+		".github/workflows/ci.yml": "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n",
+		"actions/real/action.yml":  "name: real\nruns:\n  using: node20\n  main: index.js\n",
+	})
+	secret := filepath.Join(t.TempDir(), "secret.yml")
+	if err := os.WriteFile(secret, []byte("token: hunter2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	links := map[string]string{
+		".github/workflows/absolute.yml": secret,
+		".github/workflows/climbs.yml":   strings.Repeat("../", 40) + secret,
+		".github/workflows/chained.yml":  "absolute.yml",
+		".github/workflows/git.yml":      "../../.git/config",
+		".github/workflows/dangling.yml": "missing.yml",
+		".github/workflows/loop":         "../..",
+		"actions/linked/action.yml":      "../real/action.yml",
+		".github/workflows/again.yml":    "ci.yml",
+	}
+	for link, target := range links {
+		path := filepath.Join(origin, link)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, args := range [][]string{{"add", "-A"}, {"commit", "-m", "links"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = origin
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	tree := fetch(t, origin)
+
+	var kept []string
+	err := filepath.WalkDir(tree.Dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() && d.Name() == ".git" {
+			return filepath.SkipDir
+		}
+		rel, _ := filepath.Rel(tree.Dir, path)
+		if d.Type()&os.ModeSymlink != 0 {
+			kept = append(kept, filepath.ToSlash(rel))
+		}
+		if body, err := os.ReadFile(path); err == nil && strings.Contains(string(body), "hunter2") {
+			t.Errorf("%s reads a file outside the checkout", rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(kept)
+	if want := []string{".github/workflows/again.yml", "actions/linked/action.yml"}; !slices.Equal(kept, want) {
+		t.Errorf("links kept = %v, want only %v", kept, want)
 	}
 }
 

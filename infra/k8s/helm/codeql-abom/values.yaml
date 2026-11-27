@@ -32,6 +32,7 @@ serviceAccounts:
   discovery: {annotations: {}}
   qlaasTest: {annotations: {}}
   qlaasRun: {annotations: {}}
+  authoring: {annotations: {}}
 
 # Reach the interface through an Ingress, such as an AWS Application Load Balancer. Refused unless
 # people sign in, and the host must be the sign-in redirect's: nothing else is admitted.
@@ -106,8 +107,8 @@ networkPolicy:
   # NetworkPolicy peers that may read the probe port's metrics, such as Prometheus's namespace.
   # Empty leaves the scrape refused, which the ABOMMetricsAbsent alert reports.
   scrapeFrom: []
-  # A worker reaches DNS, and HTTPS anywhere outside these ranges: the cluster, its database and
-  # the instance metadata service sit inside them.
+  # A worker reaches DNS and its pool's listener of the egress proxy, which reaches HTTPS anywhere
+  # outside these ranges: the cluster, its database and the instance metadata service sit inside them.
   workerEgressExcept: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16]
   # NetworkPolicy egress rules added for workers, such as an object store inside the cluster or
   # reached at private addresses.
@@ -142,3 +143,38 @@ workers:
     cpu: "2"
     memory: 4Gi
     timeout: 1h
+  # An authoring session, one Job per session: the worker, and the Copilot CLI beside it, each
+  # requesting and limited to what is given here. A session begins only with a GitHub App able to
+  # mint its Copilot token, and needs Kubernetes 1.29 or later.
+  authoring:
+    cpu: "1"
+    memory: 3Gi
+    timeout: 1h
+    # The image the Copilot CLI runs in, built with --target authoring; empty is image's, tagged
+    # with -authoring.
+    image: ""
+    # Sessions that work at once; the rest wait their turn. Empty is one.
+    concurrency: ""
+    # AI credits one session may spend, 30 or more, or 0 for no limit. Empty is 500.
+    credits: ""
+
+# The only way out of a worker's pod: a proxy with a listener for each pool, which tunnels to the
+# hosts that pool names, at public addresses, and refuses and logs everything else. A pool naming
+# none has no listener, and reaches nothing outside but workerEgress. A leading dot allows a suffix.
+egressProxy:
+  allow:
+    # The host a repository is cloned from.
+    discovery: [github.com]
+    qlaasTest: []
+    qlaasRun: [github.com]
+    # The hosts Copilot needs.
+    authoring: [api.githubcopilot.com, .githubcopilot.com, copilot-proxy.githubusercontent.com]
+  # Hosts every pool's listener admits beside its own. With no objectStore.endpoint, the bucket's
+  # own host is one already.
+  everyPool: []
+  # Hosts every worker reaches directly rather than through the proxy, which workerEgress then
+  # admits, such as a credential agent on the node. An objectStore.endpoint's host is one already.
+  direct: []
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {memory: 128Mi}

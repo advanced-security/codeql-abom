@@ -9,7 +9,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -68,9 +70,14 @@ type fixture struct {
 	// objects is where attempts put what they produce; lent is each launch's secrets.
 	objects DirStore
 	lent    []map[string]string
+	// private is the directory each worker keeps from the agent beside it.
+	private string
+	// keys are the decision point's, which every worker's bundle trusts.
+	keys string
 	// identity is who each worker runs as, and test the tests it runs.
 	identity string
 	test     TestFunc
+	session  SessionFunc
 }
 
 func newFixture(t *testing.T, analyze AnalyzeFunc) *fixture {
@@ -86,7 +93,7 @@ func newFixture(t *testing.T, analyze AnalyzeFunc) *fixture {
 	}
 	objects := DirStore(t.TempDir())
 	ledger := &memLedger{}
-	f := &fixture{ledger: ledger, ca: ca, identity: discovery, objects: objects}
+	f := &fixture{ledger: ledger, ca: ca, keys: keys, identity: discovery, objects: objects, private: t.TempDir()}
 	f.launch = &InProcess{Worker: func(secrets map[string]string) (*Worker, error) {
 		f.lent = append(f.lent, secrets)
 		id, err := ca.Issue(f.identity, time.Hour)
@@ -97,11 +104,53 @@ func newFixture(t *testing.T, analyze AnalyzeFunc) *fixture {
 		if err != nil {
 			return nil, err
 		}
-		return &Worker{Bundle: trust, Identity: id, Objects: objects, Analyze: analyze, Test: f.test, Dir: t.TempDir()}, nil
+		key, err := ParseAttemptKey(secrets[AttemptKeySecret])
+		if err != nil {
+			return nil, err
+		}
+		return &Worker{Bundle: trust, Identity: id, AttemptKey: key, Objects: objects, Analyze: analyze, Test: f.test,
+			Session: f.session, Dir: t.TempDir(), Private: f.private}, nil
 	}}
 	f.runner = &Runner{Point: &authz.Point{Signer: signer, Ledger: ledger}, Objects: objects, Launch: f.launch,
 		Roots: ca.Pool(), Pool: "discovery", Identity: discovery, Timeout: time.Minute}
 	return f
+}
+
+// keyOf is the key attempt was lent, found by the public half the grant the coordinator kept names.
+func (f *fixture) keyOf(t *testing.T, attempt string) *AttemptKey {
+	t.Helper()
+	signed, err := f.objects.Get(context.Background(), grantKey(f.runner.prefix(), attempt), maxSigned)
+	if err != nil {
+		t.Fatalf("the grant of %s: %v", attempt, err)
+	}
+	g := grantIn(t, signed)
+	for _, secrets := range f.lent {
+		if key, err := ParseAttemptKey(secrets[AttemptKeySecret]); err == nil && key.PublicPEM() == g.AttemptKey {
+			return key
+		}
+	}
+	t.Fatalf("no attempt was lent the key %s's grant names", attempt)
+	return nil
+}
+
+// grantIn is the grant a signed envelope holds, unverified.
+func grantIn(t *testing.T, signed []byte) Grant {
+	t.Helper()
+	var env authz.Envelope
+	if err := json.Unmarshal(signed, &env); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := base64.StdEncoding.DecodeString(env.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var st struct {
+		Predicate Grant `json:"predicate"`
+	}
+	if err := json.Unmarshal(payload, &st); err != nil {
+		t.Fatal(err)
+	}
+	return st.Predicate
 }
 
 func task() expand.RemoteTask {
@@ -199,6 +248,22 @@ func TestAResultIsAcceptedOnlyAsSignedByThePoolsIdentity(t *testing.T) {
 			t.Error("a result signed under an untrusted CA was accepted")
 		}
 	})
+	t.Run("an output longer than signed", func(t *testing.T) {
+		f := newFixture(t, analysis)
+		f.launch.After = func(objects ObjectStore, attempt string) {
+			key := outputKey(f.runner.prefix(), attempt, "results/abom_edges.json")
+			body, err := objects.Get(context.Background(), key, maxObject)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			_ = objects.Put(context.Background(), key, append(body, make([]byte, 1<<20)...))
+		}
+		// Read no further than the length signed, which is all a coordinator holds room for.
+		if _, err := f.runner.Run(context.Background(), task(), t.TempDir()); !errors.Is(err, ErrTooLarge) {
+			t.Errorf("an output longer than signed answered %v; want it refused at the length signed", err)
+		}
+	})
 	t.Run("an output changed after signing", func(t *testing.T) {
 		f := newFixture(t, analysis)
 		f.launch.After = func(objects ObjectStore, attempt string) {
@@ -213,6 +278,96 @@ func TestAResultIsAcceptedOnlyAsSignedByThePoolsIdentity(t *testing.T) {
 			t.Errorf("receipt = %+v; want the result refused naming the changed output", r)
 		}
 	})
+}
+
+// Every worker of a pool signs as the pool's one identity, and every result names its grant where any
+// of them can read it, so each attempt is lent a key of its own, named in its grant: a result is
+// accepted only signed by both the pool's identity and that key, and never by another attempt's.
+func TestAResultIsAcceptedOnlySignedByItsPoolAndItsAttemptsOwnKey(t *testing.T) {
+	other, _, err := NewAttemptKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, signers := range map[string]func(f *fixture, attempt string) *AttemptKey{
+		"its own key, as a control":     func(f *fixture, attempt string) *AttemptKey { return f.keyOf(t, attempt) },
+		"the pool's identity alone":     func(*fixture, string) *AttemptKey { return nil },
+		"another attempt's key instead": func(*fixture, string) *AttemptKey { return other },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, analysis)
+			f.launch.After = func(objects ObjectStore, attempt string) {
+				resignWith(t, f, objects, attempt, signers(f, attempt))
+			}
+			_, err := f.runner.Run(context.Background(), task(), t.TempDir())
+			if control := name == "its own key, as a control"; control != (err == nil) {
+				t.Errorf("a result signed with %s answered %v", name, err)
+			}
+		})
+	}
+}
+
+// Each attempt is lent a key no other attempt holds, named by its public half in the grant, and its
+// private half reaches the worker in the attempt's secrets and is never written where the pool reads.
+func TestEveryAttemptIsLentAKeyOfItsOwn(t *testing.T) {
+	f := newFixture(t, analysis)
+	var grants []Grant
+	f.launch.After = func(objects ObjectStore, attempt string) {
+		signed, err := objects.Get(context.Background(), grantKey(f.runner.prefix(), attempt), maxSigned)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		grants = append(grants, grantIn(t, signed))
+	}
+	for range 2 {
+		if _, err := f.runner.Run(context.Background(), task(), t.TempDir()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(grants) != 2 || grants[0].AttemptKey == "" || grants[0].AttemptKey == grants[1].AttemptKey {
+		t.Fatalf("the grants are %+v; want each to name a key of its own", grants)
+	}
+	for i, g := range grants {
+		key, err := ParseAttemptKey(f.lent[i][AttemptKeySecret])
+		if err != nil || key.PublicPEM() != g.AttemptKey {
+			t.Errorf("attempt %d was lent a key its grant does not name: %v", i, err)
+		}
+	}
+	if err := filepath.WalkDir(string(f.objects), func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		body, err := os.ReadFile(p)
+		for _, secrets := range f.lent {
+			if err == nil && strings.Contains(string(body), strings.TrimSpace(secrets[AttemptKeySecret])) {
+				t.Errorf("%s holds an attempt's private key", p)
+			}
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A grant names the key its attempt signs with, so a worker lent another refuses it and does nothing:
+// what it signed would be refused anyway.
+func TestAWorkerLentAnotherKeyThanItsGrantNamesDoesNothing(t *testing.T) {
+	ran := false
+	f := newFixture(t, func(ctx context.Context, tk expand.RemoteTask, dir string) (expand.RemoteOutput, error) {
+		ran = true
+		return analysis(ctx, tk, dir)
+	})
+	worker := f.launch.Worker
+	f.launch.Worker = func(secrets map[string]string) (*Worker, error) {
+		w, err := worker(secrets)
+		if w != nil {
+			w.AttemptKey, _, err = NewAttemptKey()
+		}
+		return w, err
+	}
+	if _, err := f.runner.Run(context.Background(), task(), t.TempDir()); err == nil || ran {
+		t.Errorf("a worker lent another key answered %v, ran: %v", err, ran)
+	}
 }
 
 // A worker's identity may sign anything, so an analysis brings back only what an analysis leaves,
@@ -335,5 +490,95 @@ func TestAnAttemptsObjectsLiveUnderItsPoolsPrefix(t *testing.T) {
 		if !strings.HasPrefix(key, "attempts/discovery/") {
 			t.Errorf("%s is outside the discovery pool's prefix", key)
 		}
+	}
+}
+
+// reads counts what a coordinator reads of the outputs results name.
+type reads struct {
+	ObjectStore
+	mu      sync.Mutex
+	outputs []string
+}
+
+func (r *reads) Get(ctx context.Context, key string, limit int64) ([]byte, error) {
+	if _, name, ok := strings.Cut(key, "/out/"); ok {
+		r.mu.Lock()
+		r.outputs = append(r.outputs, name)
+		r.mu.Unlock()
+	}
+	return r.ObjectStore.Get(ctx, key, limit)
+}
+
+func (r *reads) read() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.outputs)
+}
+
+// A worker signs for whatever it likes, and a coordinator holds every output of a result before any of
+// it lands, so a result naming more than may be held is refused before any output is read.
+func TestAResultNamingMoreThanMayBeHeldIsRefusedBeforeAnyOfItIsRead(t *testing.T) {
+	for name, change := range map[string]func(*Result){
+		"an output longer than any may be": func(r *Result) { r.Outputs[0].Size = maxObject + 1 },
+		"an output shorter than nothing":   func(r *Result) { r.Outputs[0].Size = -1 },
+		"outputs longer together than may be held": func(r *Result) {
+			for i := range 3 {
+				r.Outputs = append(r.Outputs, Output{Name: fmt.Sprintf("lock/%d", i), Kind: KindLock, Size: maxObject})
+			}
+		},
+		"more outputs than a result names": func(r *Result) {
+			for len(r.Outputs) <= maxOutputs {
+				r.Outputs = append(r.Outputs, Output{Name: fmt.Sprintf("lock/%d", len(r.Outputs)), Kind: KindLock})
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, analysis)
+			f.launch.After = func(objects ObjectStore, attempt string) { resign(t, f, objects, attempt, change) }
+			counted := &reads{ObjectStore: f.objects}
+			f.runner.Objects = counted
+			if _, err := f.runner.Run(context.Background(), task(), t.TempDir()); err == nil {
+				t.Errorf("a result with %s was accepted", name)
+			}
+			if read := counted.read(); len(read) != 0 {
+				t.Errorf("read %v of a result with %s", read, name)
+			}
+			if r := receiptOf(t, f.ledger.entries[len(f.ledger.entries)-1]); r.Verdict != ReceiptRefused {
+				t.Errorf("receipt = %+v; want it refused", r)
+			}
+		})
+	}
+}
+
+// Results settling together, in whichever pools, hold no more than a coordinator may: one waits for
+// room, and nothing of it is read until there is.
+func TestResultsSettlingTogetherHoldNoMoreThanMayBeHeld(t *testing.T) {
+	f := newFixture(t, analysis)
+	counted := &reads{ObjectStore: f.objects}
+	f.runner.Objects = counted
+	if err := holding.Acquire(context.Background(), maxHeld); err != nil {
+		t.Fatal(err)
+	}
+	held := true
+	t.Cleanup(func() {
+		if held {
+			holding.Release(maxHeld)
+		}
+	})
+	waiting, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := f.runner.Run(waiting, task(), t.TempDir()); err == nil {
+		t.Fatal("a result was read while there was no room to hold it")
+	}
+	if read := counted.read(); len(read) != 0 {
+		t.Errorf("read %v while there was no room", read)
+	}
+	if r := receiptOf(t, f.ledger.entries[len(f.ledger.entries)-1]); !strings.Contains(r.Reason, "deadline") {
+		t.Errorf("receipt = %+v; want the result given up while it waited for room", r)
+	}
+	holding.Release(maxHeld)
+	held = false
+	if _, err := f.runner.Run(context.Background(), task(), t.TempDir()); err != nil {
+		t.Errorf("once there was room the result answered %v", err)
 	}
 }

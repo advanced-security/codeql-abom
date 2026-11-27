@@ -43,10 +43,12 @@ var commandDecisions = map[string]commandDecision{
 	"serve":         {exempt: "decides each control it serves"},
 	"code-scanning": {exempt: "asks the running server, which decides each change"},
 	"worker":        {exempt: "acts only under a grant the coordinator signed"},
+	"attestor":      {exempt: "signs only what its worker leaves under a grant the coordinator signed"},
 	"check":         {exempt: "compares on copies of the database and writes only its own report"},
 	"demo":          {exempt: "a Demo database is practice data no declaration or analysis depends on"},
 	"selfcheck":     {exempt: "analyzes a source tree and writes no database"},
 	"serialize-mcp": {exempt: "relays tool calls for a session the server decided"},
+	"egress-proxy":  {exempt: "forwards tunnels to the hosts it is told and writes nothing"},
 	"app": {exempt: "manages the read-only App's own credentials through GitHub, which records them; " +
 		"ABOM decides nothing with them"},
 }

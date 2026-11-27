@@ -171,6 +171,46 @@ public class RequestSessionsTests : AbomTestContext
             && r.Url.EndsWith("api/query-requests/7/sessions/stop", StringComparison.Ordinal)));
     }
 
+    private const string Waiting = """
+        {"sessions":[{"rowId":3,"requestId":7,"state":"queued","startedBy":"operator",
+          "model":"claude-opus-5","startedAt":"","endedAt":"","detail":"","events":0,"refused":0,
+          "queuedAt":"2026-09-24T02:20:25Z","ahead":2}],
+         "inFlight":[]}
+        """;
+
+    /// <summary>
+    /// A session past the limit of sessions at once waits its turn: it says so, how many wait ahead of
+    /// it and since when, and not that it started; it can be stopped while it waits, and the list is
+    /// read again as closely as for one working.
+    /// </summary>
+    [Fact]
+    public void AWaitingSessionSaysItWaitsAndHowManyAreAheadOfIt()
+    {
+        Answer("api/query-requests/7/sessions/stop", Finished);
+        var cut = Render(Waiting);
+
+        cut.WaitForAssertion(() => cut.Find("[data-abom-session-waiting]"));
+        var waiting = cut.Find("[data-abom-session-waiting]").TextContent;
+        Assert.Contains("Waiting its turn", waiting);
+        Assert.Contains("2 sessions ahead", waiting);
+        Assert.DoesNotContain("Started by", cut.Find("[data-abom-session=\"3\"]").TextContent);
+        Assert.Empty(cut.FindAll("[data-abom-session-start]"));
+        Assert.Equal(TimeSpan.FromSeconds(3), cut.Instance.Beat);
+
+        cut.Find("[data-abom-session-stop]").Click();
+        cut.WaitForAssertion(() => Assert.Contains(Sent, r => r.Method == "POST"
+            && r.Url.EndsWith("api/query-requests/7/sessions/stop", StringComparison.Ordinal)));
+    }
+
+    /// <summary>The next session to begin says it is next rather than that none waits ahead of it.</summary>
+    [Fact]
+    public void TheNextSessionToBeginSaysSo()
+    {
+        var cut = Render(Waiting.Replace("\"ahead\":2", "\"ahead\":0"));
+
+        cut.WaitForAssertion(() => Assert.Contains("next to begin", cut.Find("[data-abom-session-waiting]").TextContent));
+    }
+
     // Every call the agent makes is followed now, not only CodeQL's, so the line names the tool
     // rather than saying CodeQL is running a file read.
     [Fact]

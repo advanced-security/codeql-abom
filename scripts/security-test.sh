@@ -8,7 +8,7 @@ set -uo pipefail
 
 cd "$(dirname "$0")/.."
 
-packages=(./internal/serve ./internal/customql ./internal/store ./cmd/codeql-abom)
+packages=(./internal/serve ./internal/customql ./internal/store ./cmd/codeql-abom ./internal/execution ./internal/harness)
 prefixes=(
 	TestHTTPBoundary
 	TestQueryLifecycle
@@ -20,6 +20,17 @@ prefixes=(
 	TestEveryCommand
 	TestEveryDecidingCommand
 	TestEveryEntryPoint
+	TestAnEventNamesAPrintedTreeOnlyByItsDigest
+	TestTheGuideLinksAPrintedTreeOnlyByADigest
+	TestOnlyASessionsAgentHoldsItsCopilotToken
+	TestASealedSessionsAgentWritesNothingTheWorkerReads
+	TestAReportThatIsNotTheNextOfThisAttemptsChainIsRefused
+	TestWhatASessionLeftIsReadOnlyAsItLeftIt
+	TestASessionsPackIsPreparedWhereTheAgentCannotWrite
+	TestASessionsTestsRunOnACopyOfThePackTheAgentCannotWrite
+	TestASessionsTestsRefuseALinkOrAPipeInThePack
+	TestWhatASessionsTestsLeftGoesBackThroughNoLink
+	TestTheHarnessReadsOnlyRegularFiles
 )
 
 pattern="^($(IFS='|'; echo "${prefixes[*]}"))"

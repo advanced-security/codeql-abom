@@ -11,9 +11,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -223,6 +225,9 @@ func (c *Checkout) Fetch(ctx context.Context, dest, owner, repo, ref string) (Tr
 	if err := c.checkout(ctx, dest, repo, ref); err != nil {
 		return Tree{}, err
 	}
+	if err := unlinkEscapes(dest); err != nil {
+		return Tree{}, fmt.Errorf("removing links out of %s: %w", repo, err)
+	}
 
 	sha, err := c.run(ctx, dest, "rev-parse", "HEAD")
 	if err != nil {
@@ -251,6 +256,41 @@ func prepareCheckoutDir(dest string) error {
 		return fmt.Errorf("creating %s: %w", dest, err)
 	}
 	return nil
+}
+
+// unlinkEscapes removes every link in a checkout but those naming a regular file inside it and
+// outside its .git. git writes a repository's links as links and the extractor follows one wherever
+// it points, so a link out puts whatever file the worker can read into the database it builds, and
+// a link to a directory holding it makes a walk that doubles at every level. A composite action may
+// link its manifest to another file on purpose, so that kind stays.
+func unlinkEscapes(dir string) error {
+	root, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return err
+	}
+	return filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.Type()&fs.ModeSymlink == 0 || namesFileInside(root, path) {
+			return err
+		}
+		return os.Remove(path)
+	})
+}
+
+// namesFileInside reports whether link resolves to a regular file under root and outside its .git.
+func namesFileInside(root, link string) bool {
+	target, err := filepath.EvalSymlinks(link)
+	if err != nil {
+		return false
+	}
+	info, err := os.Stat(target)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	rel, err := filepath.Rel(root, target)
+	if err != nil || !filepath.IsLocal(rel) {
+		return false
+	}
+	return rel != ".git" && !strings.HasPrefix(rel, ".git"+string(filepath.Separator))
 }
 
 func (c *Checkout) clone(ctx context.Context, dest, url, ref string) (string, error) {

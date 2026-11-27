@@ -3,8 +3,9 @@
 **Status:** Built and drilled from zero on a three-node kind cluster: a coordinator and three worker
 pools of Jobs, each its own ServiceAccount and SPIFFE identity, under Pod Security `restricted`,
 enforced NetworkPolicies and signed task grants, with sign-in and a read-only root filesystem on every
-pod; stopping, rolling out, rolling back and uninstalling were drilled with Jobs running. The EKS
-profile renders once filled in; nothing here has run on a cloud.
+pod; each attempt signs with its own key through an attestor beside its worker, and each pool reaches
+out through its own proxy listener. Stopping, rolling out, rolling back and uninstalling were drilled
+with Jobs running. The EKS profile renders once filled in; nothing here has run on a cloud.
 
 ## Why this exists
 
@@ -34,6 +35,13 @@ results reach it as signed attestations through the object store.
 **A pool's identity confines it.** Each pool's ServiceAccount, SPIFFE identity, object-store prefix
 and cloud role reach its own attempts and nothing else, so one pool's worker cannot read or forge
 another's.
+
+**An attempt's key confines it.** A report or a result is accepted only signed by both its pool's
+identity and the key its grant names, so one attempt's worker cannot forge another's.
+
+**A worker holds nothing that signs.** The attestor beside it alone holds the identity, the attempt's
+key and the object-store credential, and reads only what the grant binds; a worker reads what a
+repository or an agent wrote, so whatever it can be made to read must not be able to sign.
 
 **Nothing is exposed without sign-in.** Without it the coordinator listens on loopback and only a
 port-forward reaches it; the chart refuses an ingress otherwise.

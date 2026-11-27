@@ -5,6 +5,7 @@ namespace Abom.WebAssembly.Models;
 public sealed record AuditCapture
 {
     public long ArtifactId { get; init; }
+    public string ArtifactDigest { get; init; } = "";
     public int Version { get; init; }
     public string RuntimeSessionId { get; init; } = "";
     public string CallId { get; init; } = "";

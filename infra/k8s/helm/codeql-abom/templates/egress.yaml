@@ -1,0 +1,57 @@
+# The one way out of a worker's pod: a listener for each pool, tunnelling to a host that pool names,
+# reached at a public address. It writes nothing and holds no credential, and NetworkPolicy admits each
+# pool's pods to its own listener alone.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "abom.name" . }}-egress-proxy
+  labels: {{- include "abom.labels" . | nindent 4 }}
+    app.kubernetes.io/component: egress-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {{ include "abom.egressSelector" . }}
+  template:
+    metadata:
+      labels: {{- include "abom.labels" . | nindent 8 }}
+        app.kubernetes.io/component: egress-proxy
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        {{- range $pool := fromYamlArray (include "abom.pools" .) }}
+        {{- with include "abom.egressAllow" (dict "pool" $pool "root" $) }}
+        - name: {{ $pool.name }}
+          image: {{ include "abom.image" $ }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          args:
+            - egress-proxy
+            - --addr=0.0.0.0:{{ $pool.port }}
+            - --allow={{ . }}
+          ports: [{name: {{ $pool.name }}, containerPort: {{ $pool.port }}}]
+          readinessProbe: {tcpSocket: {port: {{ $pool.port }}}, periodSeconds: 5}
+          resources: {{- toYaml $.Values.egressProxy.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+        {{- end }}
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "abom.name" . }}-egress-proxy
+  labels: {{- include "abom.labels" . | nindent 4 }}
+spec:
+  selector: {{ include "abom.egressSelector" . }}
+  ports:
+    {{- range $pool := fromYamlArray (include "abom.pools" .) }}
+    {{- if include "abom.egressAllow" (dict "pool" $pool "root" $) }}
+    - {name: {{ $pool.name }}, port: {{ $pool.port }}, targetPort: {{ $pool.port }}}
+    {{- end }}
+    {{- end }}

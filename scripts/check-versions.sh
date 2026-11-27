@@ -104,12 +104,32 @@ if [ -z "$toolchain" ]; then
 elif [ "$image_go" != "$toolchain" ]; then
 	note "infra/docker/Dockerfile builds with Go ${image_go:-unpinned}, but go.mod's toolchain is go$toolchain"
 fi
+# A stage built from an earlier stage of the file is pinned by that stage's base.
 while read -r base; do
 	case "$base" in
 	*@sha256:*) ;;
 	*) note "infra/docker/Dockerfile starts from $base, which is not pinned by digest" ;;
 	esac
-done < <(awk '$1 == "FROM" {for (i = 2; i <= NF; i++) if ($i !~ /^--/) {print $i; break}}' infra/docker/Dockerfile 2>/dev/null)
+done < <(awk '$1 == "FROM" {for (i = 2; i <= NF; i++) if ($i !~ /^--/) {if (!($i in stage)) print $i; break}}
+              $1 == "FROM" && toupper($(NF-1)) == "AS" {stage[$NF] = 1}' infra/docker/Dockerfile 2>/dev/null)
+
+# An authoring session's agent runs the Copilot CLI the docs install and the ql-mcp sessions start,
+# and the image installs both from its lock, as resolved.
+agent=infra/docker/authoring
+copilot=$(sed -n 's/.*@github\/copilot@\([0-9][0-9.]*\).*/\1/p' docs/demo.md | sed -n 1p)
+for want in "@github/copilot $copilot" "codeql-development-mcp-server $cli"; do
+	read -r name version <<<"$want"
+	declared=$(sed -n "s|.*\"$name\": \"\([^\"]*\)\".*|\1|p" "$agent/package.json" | sed -n 1p)
+	if [ "$declared" != "$version" ]; then
+		note "$agent/package.json installs $name ${declared:-nothing}, but ABOM runs $version"
+	fi
+	if [ -f "$agent/package-lock.json" ]; then
+		locked=$(awk -v key="\"node_modules/$name\": {" '$0 ~ key {found=1; next} found && /"version":/ {gsub(/[",]/, "", $2); print $2; exit}' "$agent/package-lock.json")
+		if [ "$locked" != "$version" ]; then
+			note "$agent/package-lock.json resolved $name ${locked:-nothing}, but ABOM runs $version"
+		fi
+	fi
+done
 
 # The query repository's workflows are copied out and locked there, so nothing here verifies them;
 # each action they use is the one this repository's lock holds, so a copy starts from audited tags.

@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 
+	"github.com/advanced-security/codeql-abom/internal/authz"
 	"github.com/advanced-security/codeql-abom/internal/harness"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
@@ -16,10 +18,13 @@ import (
 // An interface so the server does not need a Copilot CLI to start, and so a test can drive the
 // handlers without one. Nil answers that this server has no pack to author in.
 type Authoring interface {
-	Start(request int64, by string) (store.AuthoringSession, error)
+	// Start asks for a session on a request; decision is the digest of the signed decision that
+	// asked, which a session that waits its turn is checked against as it begins.
+	Start(request int64, by, decision string) (store.AuthoringSession, error)
 	Stop(request int64) bool
 	InFlight(request int64) []harness.Flight
-	Draft(run int64, queryID string, picked []harness.Picked, by string) (store.AuthoringSession, error)
+	// Draft asks for a session drafting a request from a run's picked results, decided as Start is.
+	Draft(run int64, queryID string, picked []harness.Picked, by, decision string) (store.AuthoringSession, error)
 	StopDraft(run int64) bool
 }
 
@@ -37,8 +42,9 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 			"start it with --custom-ql-dir")
 		return
 	}
-	// A session holds CodeQL for its whole length, so a crawl that is on would stall under it.
-	if state := s.crawlHoldingCodeQL(); state != "" {
+	// A session holds CodeQL for its whole length, so a crawl that is on would stall under it, unless
+	// sessions work elsewhere, each in its own Job.
+	if state := s.crawlHoldingCodeQL(); state != "" && !s.SessionsElsewhere {
 		writeError(w, http.StatusConflict, fmt.Sprintf("discovery is %s, and a session holds CodeQL "+
 			"for as long as it works; pause discovery first", state))
 		return
@@ -51,7 +57,11 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.By = s.actor(r, body.By)
-	session, err := s.Authoring.Start(id, body.By)
+	var decision string
+	if who, ok := authz.RequesterOf(r.Context()); ok {
+		decision = who.Route
+	}
+	session, err := s.Authoring.Start(id, body.By, decision)
 	switch {
 	case errors.Is(err, store.ErrNoQueryRequest):
 		writeError(w, http.StatusNotFound, err.Error())
@@ -123,6 +133,33 @@ func (s *Server) authoringAST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ast, err := s.Store.AuthoringAST(id)
+	switch {
+	case errors.Is(err, store.ErrNoAuthoringAST):
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	case err != nil:
+		writeJSON(w, nil, err)
+		return
+	}
+	writeJSON(w, ast, nil)
+}
+
+// sha256Hex is a digest as an event names a printed tree.
+var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// authoringASTByDigest sends the tree a session printed that one of its events names by digest.
+func (s *Server) authoringASTByDigest(w http.ResponseWriter, r *http.Request) {
+	session, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || session <= 0 {
+		writeError(w, http.StatusBadRequest, "a session is named by a number")
+		return
+	}
+	digest := r.PathValue("digest")
+	if !sha256Hex.MatchString(digest) {
+		writeError(w, http.StatusBadRequest, "a printed tree is named by the SHA-256 of what it says, in 64 hex digits")
+		return
+	}
+	ast, err := s.Store.AuthoringASTByDigest(session, digest)
 	switch {
 	case errors.Is(err, store.ErrNoAuthoringAST):
 		writeError(w, http.StatusNotFound, err.Error())

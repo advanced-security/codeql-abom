@@ -197,6 +197,7 @@ func (c githubCredentials) copilot(o *authoringOptions) {
 		}
 		return app.TokenWith(ctx, org, ghapp.CopilotPermissions, refresh)
 	}
+	o.revoke = app.Revoke
 }
 
 // verify establishes which accounts may be declared: where the App is installed, or what gh reports.

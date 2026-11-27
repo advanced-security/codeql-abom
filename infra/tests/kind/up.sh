@@ -34,11 +34,19 @@ secret=$(k -n abom-deps get secret postgres -o jsonpath='{.data.POSTGRES_PASSWOR
   openssl base64 -d -A || true)
 [ -n "$secret" ] || secret=$(openssl rand -hex 24)
 
-# Tagged by content, so the chart rolls the coordinator when the image changed and only then.
+# Tagged by content, so the chart rolls the coordinator when the image changed and only then. The
+# image an authoring session's agent runs is the same build with its tools, and the chart names it
+# by the same tag with -authoring.
 docker build -f infra/docker/Dockerfile -t codeql-abom:build .
 tag=dev-$(docker image inspect -f '{{.Id}}' codeql-abom:build | cut -d: -f2 | cut -c1-12)
 docker tag codeql-abom:build "codeql-abom:$tag"
 kind load docker-image "codeql-abom:$tag" --name "$cluster"
+if [ -f infra/docker/authoring/package-lock.json ]; then
+  docker build -f infra/docker/Dockerfile --target authoring -t "codeql-abom:$tag-authoring" .
+  kind load docker-image "codeql-abom:$tag-authoring" --name "$cluster"
+else
+  echo "up: infra/docker/authoring has no package-lock.json yet, so no authoring session can start here" >&2
+fi
 
 helm repo add jetstack https://charts.jetstack.io --force-update >/dev/null
 helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/ --force-update >/dev/null

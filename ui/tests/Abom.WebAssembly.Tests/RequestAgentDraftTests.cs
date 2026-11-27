@@ -51,6 +51,30 @@ public class RequestAgentDraftTests : AbomTestContext
             && r.Body.Contains("\"findingRowId\":41", StringComparison.Ordinal)));
     }
 
+    private const string Waiting = """
+        {"drafts":[{"rowId":6,"runId":9,"queryId":"acme/pin","state":"queued","startedBy":"operator",
+          "startedAt":"","queuedAt":"2026-09-24T03:00:00Z","ahead":1,"detail":"","events":0,"draft":null}]}
+        """;
+
+    /// <summary>
+    /// Where sessions are limited, a draft waits its turn: it reads as waiting with what is ahead of it,
+    /// it can be stopped before it begins, and it is neither offered again nor read as ended.
+    /// </summary>
+    [Fact]
+    public void ADraftWaitingItsTurnSaysSoAndCanBeStopped()
+    {
+        Answer("api/runs/9/drafts", Waiting);
+        var cut = Render();
+
+        cut.Find("[data-abom-draft-start]").Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("1 session ahead", cut.Find("[data-abom-draft-waiting]").TextContent));
+        Assert.Empty(cut.FindAll("[data-abom-draft-start]"));
+        Assert.Empty(cut.FindAll("[data-abom-draft-ended]"));
+        Assert.Empty(cut.FindAll("[data-abom-draft-live]"));
+        Assert.Contains("Stop waiting", cut.Find("[data-abom-draft-stop]").TextContent);
+    }
+
     /// <summary>A draft fills nothing by arriving: the operator chooses to use it, then saves.</summary>
     [Fact]
     public void ADraftIsOfferedAndUsedOnlyWhenChosen()

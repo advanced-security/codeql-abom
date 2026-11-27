@@ -17,7 +17,7 @@ tree="$scratch/tree"
 
 # The working tree, not HEAD, and whatever check-versions reads beyond scripts/ and ql/, found
 # rather than listed so the copy keeps up with it.
-read_by_check=$(grep -oE '(\.github|infra|internal)/[A-Za-z0-9_./*-]*[A-Za-z0-9_*]|go\.mod' scripts/check-versions.sh | sort -u)
+read_by_check=$(grep -oE '(\.github|docs|infra|internal)/[A-Za-z0-9_./*-]*[A-Za-z0-9_*]|go\.mod' scripts/check-versions.sh | sort -u)
 # shellcheck disable=SC2086 # each path is a pathspec, globs included
 git ls-files --cached --others --exclude-standard -- scripts ql .codeql-version $read_by_check |
 	sort -u | while IFS= read -r file; do

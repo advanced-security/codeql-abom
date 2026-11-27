@@ -1,7 +1,9 @@
 package store
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -23,12 +25,14 @@ const authoringASTTable = `(
   body         TEXT NOT NULL,
   truncated    INTEGER NOT NULL DEFAULT 0,
   -- The CodeQL whose extractor built the database the tree reads; NULL from before it was kept.
-  cli_version  TEXT
+  cli_version  TEXT,
+  -- The SHA-256 of the body, which events name the tree by; empty for a tree kept before they did.
+  digest       TEXT NOT NULL DEFAULT ''
 )`
 
 // astCopyColumns are the columns a rebuild carries forward.
 const astCopyColumns = `row_id, session_id, printed_by, query_id, printed_at, query, database, source_files,
-  test_digest, body, truncated, cli_version`
+  test_digest, body, truncated, cli_version, digest`
 
 // authoringASTDDL keeps what a tool query printed over a target's test database: the tree the agent
 // read the fixtures as, which the session's scratch does not outlive, or one ABOM printed itself.
@@ -60,28 +64,53 @@ type AuthoringAST struct {
 	CLIVersion string `json:"cliVersion"`
 	Size       int    `json:"size"`
 	Truncated  bool   `json:"truncated"`
+	// Digest names the tree by what it says, as an event that printed it does; empty for a tree kept
+	// before events named trees that way.
+	Digest string `json:"digest"`
 	// Body is the tree itself, left out of a listing.
 	Body string `json:"body,omitempty"`
 }
 
+// TreeDigest names a printed tree by what it says: the SHA-256 of its body, in hex.
+func TreeDigest(body string) string {
+	sum := sha256.Sum256([]byte(body))
+	return hex.EncodeToString(sum[:])
+}
+
 // RecordAuthoringAST keeps a printed tree against the session that printed it, or who asked ABOM to.
 func (s *Store) RecordAuthoringAST(a AuthoringAST) (int64, error) {
+	return recordAuthoringAST(s.db, a)
+}
+
+// CheckAuthoringAST refuses a printed tree the store would not keep.
+func CheckAuthoringAST(a AuthoringAST) error {
 	if (a.SessionID == 0) == (strings.TrimSpace(a.PrintedBy) == "") || a.PrintedAt == "" ||
 		strings.TrimSpace(a.Query) == "" || strings.TrimSpace(a.Database) == "" || a.CLIVersion == "" {
-		return 0, errors.New("a printed tree names its session or who asked ABOM to print it, when, the " +
+		return errors.New("a printed tree names its session or who asked ABOM to print it, when, the " +
 			"query that printed it, the database and the CodeQL that printed it")
 	}
+	if a.Digest != "" && a.Digest != TreeDigest(a.Body) {
+		return fmt.Errorf("what %s printed is not the tree named %s", a.Query, a.Digest)
+	}
+	return nil
+}
+
+func recordAuthoringAST(w authoringWriter, a AuthoringAST) (int64, error) {
+	if err := CheckAuthoringAST(a); err != nil {
+		return 0, err
+	}
+	digest := TreeDigest(a.Body)
 	var session any
 	if a.SessionID != 0 {
 		session = a.SessionID
 	}
-	res, err := s.db.Exec(`
+	res, err := w.Exec(`
 		INSERT INTO abom_authoring_ast
 		  (session_id, printed_by, query_id, printed_at, query, database, source_files, test_digest, body,
-		   truncated, cli_version)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		   truncated, cli_version, digest)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		session, strings.TrimSpace(a.PrintedBy), a.QueryID, a.PrintedAt, a.Query, a.Database, a.SourceFiles,
-		a.TestDigest, a.Body, a.Truncated, a.CLIVersion)
+		a.TestDigest, a.Body, a.Truncated, a.CLIVersion, digest)
 	if err != nil {
 		return 0, fmt.Errorf("keeping what %s printed: %w", a.Query, err)
 	}
@@ -91,7 +120,7 @@ func (s *Store) RecordAuthoringAST(a AuthoringAST) (int64, error) {
 
 const astColumns = `a.row_id, COALESCE(a.session_id, 0), COALESCE(s.request_id, 0), a.printed_by, a.query_id,
 	a.printed_at, a.query, a.database, a.source_files, a.test_digest, COALESCE(a.cli_version, ''),
-	LENGTH(CAST(a.body AS BLOB)), a.truncated`
+	LENGTH(CAST(a.body AS BLOB)), a.truncated, a.digest`
 
 // astFrom reaches a tree's request through its session, which a tree ABOM printed does not have.
 const astFrom = `FROM abom_authoring_ast a LEFT JOIN abom_authoring_session s ON s.row_id = a.session_id`
@@ -99,7 +128,7 @@ const astFrom = `FROM abom_authoring_ast a LEFT JOIN abom_authoring_session s ON
 func scanAST(row interface{ Scan(...any) error }, body *string) (AuthoringAST, error) {
 	var a AuthoringAST
 	dest := []any{&a.RowID, &a.SessionID, &a.RequestID, &a.PrintedBy, &a.QueryID, &a.PrintedAt, &a.Query,
-		&a.Database, &a.SourceFiles, &a.TestDigest, &a.CLIVersion, &a.Size, &a.Truncated}
+		&a.Database, &a.SourceFiles, &a.TestDigest, &a.CLIVersion, &a.Size, &a.Truncated, &a.Digest}
 	if body != nil {
 		dest = append(dest, body)
 	}
@@ -141,6 +170,21 @@ func (s *Store) AuthoringAST(id int64) (AuthoringAST, error) {
 		return AuthoringAST{}, fmt.Errorf("printed tree %d: %w", id, ErrNoAuthoringAST)
 	case err != nil:
 		return AuthoringAST{}, fmt.Errorf("reading printed tree %d: %w", id, err)
+	}
+	a.Body = body
+	return a, nil
+}
+
+// AuthoringASTByDigest reads, with its body, the tree a session printed that an event names by digest.
+func (s *Store) AuthoringASTByDigest(session int64, digest string) (AuthoringAST, error) {
+	var body string
+	a, err := scanAST(s.db.QueryRow(`SELECT `+astColumns+`, a.body `+astFrom+`
+		WHERE a.session_id = ? AND a.digest = ? ORDER BY a.row_id LIMIT 1`, session, digest), &body)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return AuthoringAST{}, fmt.Errorf("session %d printed no tree %s: %w", session, digest, ErrNoAuthoringAST)
+	case err != nil:
+		return AuthoringAST{}, fmt.Errorf("reading a tree session %d printed: %w", session, err)
 	}
 	a.Body = body
 	return a, nil

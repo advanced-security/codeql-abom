@@ -247,6 +247,17 @@ func (f *fakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"id": p.ID, "login": p.Login, "name": p.Name})
 	})
+	mux.HandleFunc("DELETE /installation/token", func(w http.ResponseWriter, r *http.Request) {
+		bearer, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if _, ok := f.tokens[bearer]; !ok {
+			f.fail(w, r, http.StatusUnauthorized, "Bad credentials")
+			return
+		}
+		delete(f.tokens, bearer)
+		delete(f.carries, bearer)
+		f.revoked = append(f.revoked, bearer)
+		w.WriteHeader(http.StatusNoContent)
+	})
 	mux.HandleFunc("DELETE /applications/{client}/token", func(w http.ResponseWriter, r *http.Request) {
 		id, secret, ok := r.BasicAuth()
 		var body struct {

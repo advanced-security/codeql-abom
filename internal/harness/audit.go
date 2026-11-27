@@ -8,7 +8,6 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -17,10 +16,12 @@ import (
 	"strings"
 	"time"
 
+	copilot "github.com/github/copilot-sdk/go"
+
 	"github.com/advanced-security/codeql-abom/internal/audit"
 	"github.com/advanced-security/codeql-abom/internal/authoring"
+	"github.com/advanced-security/codeql-abom/internal/regular"
 	"github.com/advanced-security/codeql-abom/internal/store"
-	copilot "github.com/github/copilot-sdk/go"
 )
 
 var hookNames = []string{HookPreToolUse, HookPermission, HookPostToolUse, HookPostToolUseFailure,
@@ -102,7 +103,7 @@ func permittedInputDigest(b Bounds, path string) string {
 	if err != nil || b.readable(real) != nil || !within(b.Workspace(), real) {
 		return "unavailable: outside permitted roots or unresolved path"
 	}
-	f, err := os.Open(real)
+	f, err := regular.Open(real)
 	if err != nil {
 		return "unavailable: input not readable"
 	}

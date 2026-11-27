@@ -774,6 +774,18 @@ var droppedColumns = []struct{ table, column string }{
 
 var addedColumns = []struct{ table, column, decl string }{
 	{"abom_query_request", "source_draft_id", "INTEGER"},
+	// Empty for a tree or a draft kept before events and agents named them by digest.
+	{"abom_authoring_ast", "digest", "TEXT NOT NULL DEFAULT ''"},
+	{"abom_request_draft", "digest", "TEXT NOT NULL DEFAULT ''"},
+	// Zero and empty where no worker's journal was replayed, as for every session before one could be.
+	{"abom_authoring_session", "journal_seq", "INTEGER NOT NULL DEFAULT 0"},
+	{"abom_authoring_session", "journal_head", "TEXT NOT NULL DEFAULT ''"},
+	// NULL and empty for every session before sessions waited, none of which did.
+	{"abom_authoring_session", "queued_at", "TEXT"},
+	{"abom_authoring_session", "decision", "TEXT NOT NULL DEFAULT ''"},
+	{"abom_authoring_session", "attempt", "TEXT NOT NULL DEFAULT ''"},
+	{"abom_authoring_session", "grant_digest", "TEXT NOT NULL DEFAULT ''"},
+	{"abom_authoring_session", "draft_picks", "TEXT NOT NULL DEFAULT ''"},
 	{"abom_authoring_event", "source", "TEXT NOT NULL DEFAULT ''"},
 	{"abom_authoring_event", "source_id", "TEXT NOT NULL DEFAULT ''"},
 	{"abom_authoring_event", "received_at", "TEXT NOT NULL DEFAULT ''"},
@@ -991,6 +1003,12 @@ const indexDDL = `
 CREATE INDEX IF NOT EXISTS idx_authoring_event_source ON abom_authoring_event(session_id,source_id);
 CREATE INDEX IF NOT EXISTS idx_authoring_event_version ON abom_authoring_event(query_id,query_version,session_id,row_id);
 CREATE INDEX IF NOT EXISTS idx_authoring_session_run ON abom_authoring_session(run_id,row_id);
+-- A run has one draft waiting or working at a time, as a request has one session. Here rather than
+-- beside the table, since run_id and queued_at are columns an older store gains in migrating.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_authoring_draft_waiting
+  ON abom_authoring_session(run_id) WHERE request_id IS NULL AND state IN ('queued', 'running');
+-- The queue in the order it is served, read without sorting however many sessions have been kept.
+CREATE INDEX IF NOT EXISTS idx_authoring_session_queue ON abom_authoring_session(state, queued_at, row_id);
 CREATE INDEX IF NOT EXISTS idx_authoring_session_request ON abom_authoring_session(request_id,row_id);
 CREATE INDEX IF NOT EXISTS idx_authoring_event_kind ON abom_authoring_event(hook,row_id);
 CREATE INDEX IF NOT EXISTS idx_edge_src        ON abom_edge(src_node_row_id);

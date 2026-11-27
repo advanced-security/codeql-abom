@@ -226,6 +226,10 @@ repository settles with one read and no clone, carrying lock coverage only where
 the workflows that hold the locks. A truncated or failed listing, or an empty tree, settles nothing,
 and each cycle records the tree reads it spent.
 
+**A checkout keeps a link only when it names a file inside the checkout.** The extractor follows a
+link wherever it points, so any other link, out of the repository, into its `.git` or to a
+directory, is removed before anything reads the tree.
+
 **A result names the CodeQL that produced it, extraction included, and nothing recorded under one
 CodeQL answers for another.** Test results are kept per CLI, a printed tree and a run name theirs,
 and a held database is reused only by the CodeQL that built it, read from its
@@ -415,6 +419,32 @@ The session holds the machine-wide CodeQL lock for its lifetime, and is refused 
 crawls. Its timeline, what it spent and every tree `PrintAST` printed are kept, append-only, and
 shown on the request. What the agent says it did is never a mark. Every step is re-derived from the
 files and from ABOM's own records.
+
+**In a cluster a session is a Job of the `authoring` pool, and the coordinator still decides what
+is kept.** The worker runs the same session code against a snapshot of what the session reads, and
+the Copilot CLI runs beside it as a native sidecar holding only a Copilot token the App minted for
+that session, revoked once the worker is done. The agent reaches the network only through ABOM's
+egress proxy, which tunnels to the hosts Copilot needs at public addresses and refuses everything
+else. Sessions beyond `--authoring-concurrency` wait their turn, and each is checked again against
+the decision that asked for it as it begins.
+
+- The worker reports what the session keeps as it keeps it, in reports it signs and chains, and a
+  call is answered only once the decision on it is written. The coordinator keeps each report as it
+  verifies and stops the worker at the first that does not.
+- A session's changes land only once its signed result verifies, every report it says it made is
+  kept, and each change passes the gate's rules again against the pack as it is. A stopped session
+  lands what it changed; a killed one lands nothing.
+- What the session left is read from the pack the agent still shares only through no link, from
+  regular files, and as exactly what the session left. What a coordinator reads of any worker is
+  bounded before it is read.
+- The CLI never runs over the pack the agent shares: the worker prepares the pack before sharing it,
+  and runs a session's tests on a copy of its regular files that only it writes, since a run follows a
+  link in a test's code into the database the agent reads. Nothing the worker reads there is read
+  through a pipe, and no pack is on the CLI's search path, where a directory can supply an extractor.
+- A draft is handed what its tools read of each picked database, by digest, where only the worker
+  container reads it, and lands no file. Its agent reads the pack and writes nowhere its worker reads.
+- A coordinator that restarts keeps what workers reported since it last read, then marks their
+  sessions interrupted; waiting sessions stay waiting.
 
 **The CodeQL Audit log is an evidence trail, not a transcript or an authorship verdict.** Requests
 and Runs link to the same paged event reader. All ten pinned SDK hooks are registered, and the
@@ -639,6 +669,9 @@ answers `defaultBranchRef: null`.
   whole instead (`enumerate.sweepWorthIt`), which costs less and still sees deletions; the saving
   starts at three pages. A full listing still comes round on its period, a day by default, whatever
   the sweeps found.
+- **A declaration saved since an account's last full listing has it listed whole**, on the next
+  discovery cycle whichever process saved it: a repository it newly includes need not have moved,
+  so no sweep would name it.
 - **A walk ordered by activity is unstable.** A push landing mid-walk reorders the pages still to
   come, so a sweep may see one repository twice and miss another; the next full listing repairs it.
 - **A GraphQL query is bounded, and the bounds bite quietly.** `first` is capped at 100, a query
@@ -764,6 +797,15 @@ a test returns lands only as what a run of the granted tests writes, each `.actu
 directory's database, beside those tests. What a run member returns is ingested or held exactly as
 a member analyzed here. The coordinator still installs the pack's dependencies and reads what a
 query declares, and analyzes a member whose database it already holds.
+
+**A Job's worker holds none of its attempt's secrets.** An attestor beside every worker holds the
+grant, the decision bundle, the pool's SPIFFE identity, a key lent to that attempt alone and named in
+its grant, and the object store's credentials. It reads only what the grant binds, signs each report
+and the result itself, lists only what was written through it, and reads nothing the worker wrote,
+since a worker reads what a repository or an agent wrote and the CLI follows a link in what it
+extracts. A report or result is accepted only signed by both the pool's identity and the attempt's
+key, so no worker signs for another attempt beside it. Each pool reaches out only through its own
+listener of the egress proxy, which admits the hosts that pool needs by name.
 
 ### The queue
 

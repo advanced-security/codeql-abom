@@ -1,26 +1,54 @@
 {{- if .Values.networkPolicy.enabled }}
 # Nothing connects to a worker: it fetches, analyzes and uploads, and the coordinator learns the
-# outcome from the object store and the Job's status. A worker reaches only DNS and HTTPS outside
-# the ranges that hold the cluster, its database and the instance metadata service, because what
-# it analyzes was written elsewhere.
+# outcome from the object store and the Job's status. A worker's pod reaches DNS and its own pool's
+# listener of the egress proxy, and whatever workerEgress adds, and nothing directly: what it analyzes
+# was written elsewhere, and an authoring pod shares its network with an agent.
+{{- range $pool := fromYamlArray (include "abom.pools" .) }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "abom.name" . }}-workers
-  labels: {{- include "abom.labels" . | nindent 4 }}
+  name: {{ include "abom.name" $ }}-{{ $pool.account }}
+  labels: {{- include "abom.labels" $ | nindent 4 }}
 spec:
   podSelector:
-    matchLabels: {app.kubernetes.io/name: codeql-abom, app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: worker}
+    matchLabels: {app.kubernetes.io/name: codeql-abom, app.kubernetes.io/instance: {{ $.Release.Name }}, app.kubernetes.io/component: worker, abom.github.com/pool: {{ $pool.name }}}
   policyTypes: [Ingress, Egress]
   ingress: []
   egress:
     - to: [{namespaceSelector: {}, podSelector: {matchLabels: {k8s-app: kube-dns}}}]
       ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
-    - to: [{ipBlock: {cidr: 0.0.0.0/0, except: {{ toJson .Values.networkPolicy.workerEgressExcept }}}}]
-      ports: [{port: 443, protocol: TCP}]
-    {{- with .Values.networkPolicy.workerEgress }}
+    {{- if include "abom.egressAllow" (dict "pool" $pool "root" $) }}
+    - to: [{podSelector: {matchLabels: {{ include "abom.egressSelector" $ }}}}]
+      ports: [{port: {{ $pool.port }}, protocol: TCP}]
+    {{- end }}
+    {{- with $.Values.networkPolicy.workerEgress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
+---
+{{- end }}
+# Each pool's listener is reached only from that pool's pods, and the proxy reaches DNS and HTTPS
+# outside the ranges that hold the cluster.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "abom.name" . }}-egress-proxy
+  labels: {{- include "abom.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{ include "abom.egressSelector" . }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    {{- range $pool := fromYamlArray (include "abom.pools" .) }}
+    {{- if include "abom.egressAllow" (dict "pool" $pool "root" $) }}
+    - from: [{podSelector: {matchLabels: {app.kubernetes.io/instance: {{ $.Release.Name }}, abom.github.com/pool: {{ $pool.name }}}}}]
+      ports: [{port: {{ $pool.port }}, protocol: TCP}]
+    {{- end }}
+    {{- end }}
+  egress:
+    - to: [{namespaceSelector: {}, podSelector: {matchLabels: {k8s-app: kube-dns}}}]
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+    - to: [{ipBlock: {cidr: 0.0.0.0/0, except: {{ toJson .Values.networkPolicy.workerEgressExcept }}}}]
+      ports: [{port: 443, protocol: TCP}]
 ---
 # The coordinator's interface is reached only from where sign-in guards it, and its probe port only
 # from what scrapes it. A port-forward and the kubelet's probes arrive from the node, which this does

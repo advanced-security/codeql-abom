@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/advanced-security/codeql-abom/internal/authoringpool"
 	"github.com/advanced-security/codeql-abom/internal/authz"
 	"github.com/advanced-security/codeql-abom/internal/catalog"
 	"github.com/advanced-security/codeql-abom/internal/compare"
@@ -65,6 +66,18 @@ func wireEnumeration(
 		return
 	}
 	loop.EnumerateEvery = every
+	loop.Declared = func() (string, []string, error) {
+		accounts, err := s.OwnedScope()
+		if err != nil {
+			return "", nil, err
+		}
+		// Every save is a new decision, so the digests its rows name identify the declaration.
+		digests, owners := make([]string, 0, len(accounts)), make([]string, 0, len(accounts))
+		for _, a := range accounts {
+			digests, owners = append(digests, a.DecisionDigest), append(owners, a.Owner)
+		}
+		return strings.Join(digests, ","), owners, nil
+	}
 	loop.Enumerate = func(ctx context.Context, ask supervisor.Ask) (int, error) {
 		report, err := enumerate.Run(ctx, enumerate.Options{
 			Store:            s,
@@ -435,6 +448,9 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) (res
 	if err != nil {
 		return err
 	}
+	if jobs.authoring != nil {
+		recoverSessions(ctx, s, jobs.authoring, stdout, stderr)
+	}
 	if err := primeServedStore(s, loop.Queue, stdout, stderr); err != nil {
 		return err
 	}
@@ -491,7 +507,7 @@ func parseServeArgs(args []string, stderr io.Writer) (serveConfig, error) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dbPath := databaseFlag(fs)
-	readReplica := fs.String("read-replica", os.Getenv("ABOM_READ_REPLICA"),
+	readReplica := envFlag(fs, "read-replica", "ABOM_READ_REPLICA",
 		"PostgreSQL standby URL for pure API reads (defaults to ABOM_READ_REPLICA)")
 	replicaMaxLag := fs.Duration("replica-max-lag", 0,
 		"maximum measured standby lag for ordinary reads; zero requires catch-up, writes read back from primary")
@@ -595,6 +611,11 @@ func parseServeArgs(args []string, stderr io.Writer) (serveConfig, error) {
 	if err := fs.Parse(args); err != nil {
 		return serveConfig{}, err
 	}
+	fs.Visit(func(f *flag.Flag) { authoring.creditsGiven = authoring.creditsGiven || f.Name == "authoring-credits" })
+	executor.qlmcp = authoring.qlmcp
+	if err := authoring.check(executor.mode == "kubernetes"); err != nil {
+		return serveConfig{}, fmt.Errorf("serve: %w", err)
+	}
 	if *dbPath == "" {
 		fs.Usage()
 		return serveConfig{}, errors.New("serve: --db is required")
@@ -682,6 +703,18 @@ func openServeStore(cfg serveConfig, stdout, stderr io.Writer) (store.Backend, e
 	return s, nil
 }
 
+// recoverSessions keeps what workers reported for the sessions this server was running when it last
+// stopped and had not yet read, before those sessions are marked interrupted.
+func recoverSessions(ctx context.Context, s store.Backend, reports authoringpool.Reader, stdout, stderr io.Writer) {
+	kept, err := authoringpool.Recover(ctx, s, reports)
+	if err != nil {
+		fmt.Fprintf(stderr, "serve: reading what interrupted authoring sessions reported: %v\n", err)
+	}
+	if kept > 0 {
+		fmt.Fprintf(stdout, "serve: kept %d reports from authoring sessions this server was running when it last stopped\n", kept)
+	}
+}
+
 func primeServedStore(s store.Backend, queue *frontier.Queue, stdout, stderr io.Writer) error {
 	if _, err := s.LinkFindingsToNodes(); err != nil {
 		fmt.Fprintf(stderr, "serve: attributing findings: %v\n", err)
@@ -752,7 +785,19 @@ func newConfiguredServer(
 			return expand.ReadDeclarations(ctx, s, resolver, unread)
 		}
 	}
-	if sessions, agentFor := newAuthoring(s, cfg.authoring, loop.Expander, loop.Options.WorkDir, stderr); sessions != nil {
+	if jobs.authoring != nil {
+		pool := &authoringpool.Pool{Store: s, Workers: jobs.authoring, Workspace: runner.CustomPackRoot(),
+			Model: cfg.authoring.model, Limit: cfg.authoring.limit, Credits: cfg.authoring.credits,
+			Concurrency: cfg.authoring.concurrency, Mint: sessionMint(cfg.authoring.mint), Revoke: cfg.authoring.revoke}
+		srv.Authoring, srv.SessionsElsewhere = pool, true
+		fmt.Fprintf(stderr, "serve: %d authoring session(s) work at once, each for up to %s and %s\n",
+			cfg.authoring.concurrency, cfg.authoring.limit, creditLimit(cfg.authoring.credits))
+		if cfg.authoring.mint == nil {
+			fmt.Fprintln(stderr, "serve: no GitHub App is configured, so no authoring session can begin: "+
+				"in a cluster a session works on a token the App mints for it, never a person's")
+		}
+		pool.Resume()
+	} else if sessions, agentFor := newAuthoring(s, cfg.authoring, loop.Expander, loop.Options.WorkDir, stderr); sessions != nil {
 		srv.Authoring = sessions
 		if cfg.toolchain != nil {
 			cfg.toolchain.ApplyCopilot = func(cli string) { sessions.SetAgent(agentFor(cli)) }

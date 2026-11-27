@@ -32,7 +32,7 @@ func runAudit(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 func auditRotateKey(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("audit rotate-key", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", os.Getenv("ABOM_DB"), "SQLite database path or PostgreSQL URL (defaults to ABOM_DB)")
+	dbPath := envFlag(fs, "db", "ABOM_DB", "SQLite database path or PostgreSQL URL (defaults to ABOM_DB)")
 	dir := fs.String("authz-dir", "", "directory holding the decision key and trust bundle (default: authz beside --db)")
 	overlap := fs.Duration("overlap", 7*24*time.Hour, "how long the old key stays trusted after the rotation")
 	if err := fs.Parse(args); err != nil {
@@ -88,7 +88,7 @@ func auditRotateKey(ctx context.Context, args []string, stdout, stderr io.Writer
 func auditVerify(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("audit verify", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", os.Getenv("ABOM_DB"), "SQLite database path or PostgreSQL URL (defaults to ABOM_DB)")
+	dbPath := envFlag(fs, "db", "ABOM_DB", "SQLite database path or PostgreSQL URL (defaults to ABOM_DB)")
 	dir := fs.String("authz-dir", "", "directory holding the trust bundle (default: authz beside --db)")
 	if err := fs.Parse(args); err != nil {
 		return err

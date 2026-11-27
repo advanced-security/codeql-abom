@@ -6,7 +6,9 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/advanced-security/codeql-abom/internal/customql"
 	"github.com/advanced-security/codeql-abom/internal/runner"
@@ -67,6 +69,31 @@ func TestAQueryIsFoundByTheIDItDeclares(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("found\n\t%+v\nwant\n\t%+v", got, want)
+	}
+}
+
+// In a cluster the agent beside a session's worker can leave a pipe where the pack holds a query or a
+// test, and Find reads each of them for every event the session records: it says what is there rather
+// than waiting for a writer.
+func TestFindingAQueryDoesNotWaitOnAPipe(t *testing.T) {
+	for _, planted := range []string{"src/B.ql", "test/B/B.qlref"} {
+		root := workspace(t, map[string]string{"A": "acme/a"})
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, planted)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := syscall.Mkfifo(filepath.Join(root, filepath.FromSlash(planted)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan error, 1)
+		go func() { _, _, err := Find(root, "acme/a"); done <- err }()
+		select {
+		case err := <-done:
+			if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+				t.Errorf("with a pipe at %s, Find answered %v", planted, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("Find waited on the pipe at %s", planted)
+		}
 	}
 }
 

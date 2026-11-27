@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/advanced-security/codeql-abom/internal/authz"
 	"github.com/advanced-security/codeql-abom/internal/harness"
 	"github.com/advanced-security/codeql-abom/internal/store"
 	"github.com/advanced-security/codeql-abom/internal/supervisor"
@@ -21,13 +22,18 @@ type fakeAuthoring struct {
 	store   *store.Store
 	refuse  error
 	started []int64
-	stopped []int64
-	flights []harness.Flight
-	drafted [][]harness.Picked
+	// decisions are the digests each start was handed, of the decision that asked for it.
+	decisions []string
+	stopped   []int64
+	flights   []harness.Flight
+	drafted   [][]harness.Picked
+	// draftDecisions are the digests each draft was handed, of the decision that asked for it.
+	draftDecisions []string
 }
 
-func (f *fakeAuthoring) Draft(run int64, queryID string, picked []harness.Picked, by string) (store.AuthoringSession, error) {
+func (f *fakeAuthoring) Draft(run int64, queryID string, picked []harness.Picked, by, decision string) (store.AuthoringSession, error) {
 	f.drafted = append(f.drafted, picked)
+	f.draftDecisions = append(f.draftDecisions, decision)
 	if _, err := f.store.StartDraftSession(run, queryID, by, "claude-opus-5"); err != nil {
 		return store.AuthoringSession{}, err
 	}
@@ -40,11 +46,11 @@ func (f *fakeAuthoring) Draft(run int64, queryID string, picked []harness.Picked
 
 func (f *fakeAuthoring) StopDraft(int64) bool { return len(f.drafted) > 0 }
 
-func (f *fakeAuthoring) Start(request int64, by string) (store.AuthoringSession, error) {
+func (f *fakeAuthoring) Start(request int64, by, decision string) (store.AuthoringSession, error) {
 	if f.refuse != nil {
 		return store.AuthoringSession{}, f.refuse
 	}
-	f.started = append(f.started, request)
+	f.started, f.decisions = append(f.started, request), append(f.decisions, decision)
 	if _, err := f.store.StartAuthoringSession(request, by, "claude-opus-5"); err != nil {
 		return store.AuthoringSession{}, err
 	}
@@ -162,6 +168,34 @@ func TestASessionIsRefusedWhileDiscoveryIsOn(t *testing.T) {
 			true); w.Code != http.StatusOK {
 			t.Errorf("discovery %s: answered %d %s", state, w.Code, w.Body.String())
 		}
+	}
+}
+
+// In a cluster a session works in its own Job and takes none of this process's CodeQL, so discovery
+// working is no reason to refuse one.
+func TestASessionElsewhereStartsWhileDiscoveryWorks(t *testing.T) {
+	s, _, f, id := authoringServer(t)
+	s.Discovery, s.SessionsElsewhere = &crawling{state: supervisor.StateWorking}, true
+	if w := sessionPost(t, s, fmt.Sprintf("/api/query-requests/%d/sessions", id), `{"by":"operator"}`,
+		true); w.Code != http.StatusOK || len(f.started) != 1 {
+		t.Errorf("answered %d %s with %d started; want the session asked for", w.Code, w.Body.String(), len(f.started))
+	}
+}
+
+// A session that waits its turn is checked again as it begins against the decision that asked for
+// it, so the route hands that decision over with the request.
+func TestStartingASessionHandsOverTheDecisionThatAskedForIt(t *testing.T) {
+	s, st, f, id := authoringServer(t)
+	if w := sessionPost(t, s, fmt.Sprintf("/api/query-requests/%d/sessions", id), `{"by":"operator"}`,
+		true); w.Code != http.StatusOK {
+		t.Fatalf("start answered %d: %s", w.Code, w.Body.String())
+	}
+	if len(f.decisions) != 1 || f.decisions[0] == "" {
+		t.Fatalf("the session was handed decisions %q", f.decisions)
+	}
+	d, err := st.VerifiedDecision(f.decisions[0])
+	if err != nil || d.Operation() != authz.OpAuthoring || !d.Allowed() {
+		t.Errorf("the decision handed over verifies as %v, %v", d.Operation(), err)
 	}
 }
 
@@ -298,5 +332,35 @@ func TestThePrintedTreesOfARequestAreListedAndReadOneAtATime(t *testing.T) {
 	}
 	if sessionGet(t, s, "/api/query-requests/999/asts", &none); none.ASTs == nil {
 		t.Error("no trees answered null rather than an empty list")
+	}
+}
+
+// An event names the tree it printed by digest, within its session, and a reader following that name
+// is sent the tree; a name that is not a digest is refused, and one nobody printed is not found.
+func TestAPrintedTreeIsReadByTheDigestItsEventNames(t *testing.T) {
+	s, st, _, id := authoringServer(t)
+	session, err := st.StartAuthoringSession(id, "operator", "claude-opus-5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree := "#10000 UsesStep\n"
+	if _, err := st.RecordAuthoringAST(store.AuthoringAST{SessionID: session, QueryID: "acme/a",
+		PrintedAt: "2026-09-23T12:00:00Z", Query: "PrintAST", Database: "test/A/A.testproj", Body: tree,
+		CLIVersion: "2.27.1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var one store.AuthoringAST
+	digest := store.TreeDigest(tree)
+	if code := sessionGet(t, s, fmt.Sprintf("/api/authoring-sessions/%d/asts/%s", session, digest), &one); code != http.StatusOK ||
+		one.Body != tree || one.Digest != digest {
+		t.Errorf("read %d %+v", code, one)
+	}
+	if code := sessionGet(t, s, fmt.Sprintf("/api/authoring-sessions/%d/asts/%s", session,
+		store.TreeDigest("another tree")), nil); code != http.StatusNotFound {
+		t.Errorf("a tree nobody printed answered %d", code)
+	}
+	if code := sessionGet(t, s, fmt.Sprintf("/api/authoring-sessions/%d/asts/12", session), nil); code != http.StatusBadRequest {
+		t.Errorf("a name that is not a digest answered %d", code)
 	}
 }

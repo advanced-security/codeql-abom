@@ -3,6 +3,11 @@
 # query packs with their dependencies installed, and the CodeQL CLI for the target platform, checked
 # against the checksum its release publishes. Every base is pinned by digest, and the Go one is the
 # toolchain go.mod names; scripts/check-versions.sh holds both.
+#
+# `--target authoring` is that image with what an authoring session's agent runs beside it: Node at
+# .node-version, checked against the checksums its release publishes, and the Copilot CLI and ql-mcp
+# from infra/docker/authoring's lock, installed without running their scripts and run directly, so
+# nothing is fetched when a session starts.
 
 FROM --platform=$BUILDPLATFORM golang:1.26.0-bookworm@sha256:2a0ba12e116687098780d3ce700f9ce3cb340783779646aafbabed748fa6677c AS binary
 ARG TARGETOS TARGETARCH
@@ -37,7 +42,21 @@ RUN set -eu; version="$(cat /tmp/.codeql-version)"; \
     echo "$(cut -d' ' -f1 /tmp/codeql.sha)  /tmp/codeql.zip" | sha256sum -c -; \
     unzip -q /tmp/codeql.zip -d /opt; rm /tmp/codeql.zip
 
-FROM debian:bookworm-slim@sha256:e67eeead736ff7bbe258ef088bff683635c561b1fcfefad0806c1df4ab49ce0e
+FROM debian:bookworm-slim@sha256:e67eeead736ff7bbe258ef088bff683635c561b1fcfefad0806c1df4ab49ce0e AS node
+ARG TARGETARCH
+COPY .node-version /tmp/.node-version
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl xz-utils && rm -rf /var/lib/apt/lists/*
+RUN set -eu; version="$(cat /tmp/.node-version)"; \
+    case "$TARGETARCH" in amd64) arch=x64 ;; arm64) arch=arm64 ;; *) exit 1 ;; esac; \
+    asset="node-${version}-linux-${arch}.tar.xz"; base="https://nodejs.org/dist/${version}"; \
+    curl -fsSL -o "/tmp/$asset" "$base/$asset"; \
+    curl -fsSL -o /tmp/SHASUMS256.txt "$base/SHASUMS256.txt"; \
+    (cd /tmp && grep " $asset\$" SHASUMS256.txt | sha256sum -c -); \
+    mkdir -p /opt/node && tar -xJf "/tmp/$asset" -C /opt/node --strip-components=1; rm "/tmp/$asset"
+COPY infra/docker/authoring/package.json infra/docker/authoring/package-lock.json /opt/authoring/
+RUN cd /opt/authoring && PATH=/opt/node/bin:$PATH npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+
+FROM debian:bookworm-slim@sha256:e67eeead736ff7bbe258ef088bff683635c561b1fcfefad0806c1df4ab49ce0e AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git graphviz \
       && rm -rf /var/lib/apt/lists/* \
       && groupadd --gid 10001 abom && useradd --uid 10001 --gid 10001 --create-home --home-dir /home/abom abom
@@ -56,3 +75,11 @@ COPY --from=binary /out/codeql-abom /usr/local/bin/codeql-abom
 COPY --from=interface /out/ui/wwwroot /opt/abom/ui
 ENTRYPOINT ["codeql-abom"]
 CMD ["serve", "--help"]
+
+FROM runtime AS authoring
+COPY --from=node /opt/node /opt/node
+COPY --from=node /opt/authoring /opt/authoring
+ENV PATH=/opt/authoring/node_modules/.bin:/opt/node/bin:$PATH
+
+# Last, so a build that names no target is the image without the agent's tools.
+FROM runtime

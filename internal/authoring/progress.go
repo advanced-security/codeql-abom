@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/advanced-security/codeql-abom/internal/customql"
+	"github.com/advanced-security/codeql-abom/internal/regular"
 	"github.com/advanced-security/codeql-abom/internal/runner"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
@@ -176,7 +177,7 @@ type LockedPack struct {
 // Locked is every pack a lock file resolved, codeql/actions-all first and the rest by name; none
 // where no lock has been written yet.
 func Locked(lock string) ([]LockedPack, error) {
-	body, err := os.ReadFile(lock)
+	body, err := regular.ReadFile(lock)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		return nil, nil
@@ -283,7 +284,7 @@ func failedFirstStep(q Query, passed Step, first, stale *store.QueryTest) Step {
 // # $ Alert markers; without one a test can fail only for want of its .expected.
 func markedInline(tests []string) bool {
 	for _, test := range tests {
-		body, err := os.ReadFile(test)
+		body, err := regular.ReadFile(test)
 		if err != nil {
 			continue
 		}
@@ -407,7 +408,7 @@ func worst(steps []Step) Step {
 func helpStep(root string, q Query) (Step, error) {
 	base := strings.TrimSuffix(q.Path, ".ql")
 	for _, ext := range []string{".md", ".qhelp"} {
-		body, err := os.ReadFile(base + ext)
+		body, err := regular.ReadFile(base + ext)
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
 			continue
@@ -433,7 +434,7 @@ func expectedStep(root string, q Query) (Step, error) {
 	for _, test := range q.Tests {
 		path := strings.TrimSuffix(test, ".qlref") + ".expected"
 		rel := relTo(root, path)
-		body, err := os.ReadFile(path)
+		body, err := regular.ReadFile(path)
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
 			steps = append(steps, Step{Step: "expected", State: Pending,
@@ -537,7 +538,7 @@ func testDatabaseStep(root, dir string, current *store.QueryTest, digest, cli st
 // databaseMetadata reads whether the CLI finalized a database and which CodeQL built it, both of
 // which it records in the database's metadata.
 func databaseMetadata(yml string) (finished bool, cli string, err error) {
-	f, err := os.Open(yml)
+	f, err := regular.Open(yml)
 	if err != nil {
 		return false, "", err
 	}

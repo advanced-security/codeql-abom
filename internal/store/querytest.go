@@ -100,11 +100,23 @@ func scanQueryTest(row interface{ Scan(...any) error }) (QueryTest, error) {
 // Replacing rather than appending: this is the current state of one version, and a version's
 // tests can only be passing or failing now. What changed over time is in the ledger of runs.
 func (s *Store) RecordQueryTest(t QueryTest) error {
+	return recordQueryTest(s.db, t)
+}
+
+// CheckQueryTest refuses a test result the store would not keep.
+func CheckQueryTest(t QueryTest) error {
 	switch {
 	case t.QueryID == "" || t.QueryVersion == "":
 		return fmt.Errorf("recording a test: a result belongs to a query version, not a query")
 	case t.CLIVersion == "":
 		return fmt.Errorf("recording the tests of %s: a result names the CodeQL that ran it", t.QueryID)
+	}
+	return nil
+}
+
+func recordQueryTest(w authoringWriter, t QueryTest) error {
+	if err := CheckQueryTest(t); err != nil {
+		return err
 	}
 	var marked any
 	if t.MarkedFixtures != nil {
@@ -114,7 +126,11 @@ func (s *Store) RecordQueryTest(t QueryTest) error {
 		}
 		marked = string(body)
 	}
-	_, err := s.db.Exec(`
+	ranAt := t.RanAt
+	if ranAt == "" {
+		ranAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	_, err := w.Exec(`
 INSERT INTO abom_query_test (query_id, query_version, cli_version, passed, total, failed, detail,
                              ran_at, failure_stage, test_digest, fixtures_digest, missing, unexpected,
                              marked_fixtures)
@@ -126,7 +142,7 @@ ON CONFLICT(query_id, query_version, cli_version) DO UPDATE SET
   fixtures_digest = excluded.fixtures_digest, missing = excluded.missing,
   unexpected = excluded.unexpected, marked_fixtures = excluded.marked_fixtures`,
 		t.QueryID, t.QueryVersion, t.CLIVersion, t.Passed, t.Total, t.Failed, t.Detail,
-		time.Now().UTC().Format(time.RFC3339), nullable(t.FailureStage), nullable(t.TestDigest),
+		ranAt, nullable(t.FailureStage), nullable(t.TestDigest),
 		nullable(t.FixturesDigest), t.Missing, t.Unexpected, marked)
 	if err != nil {
 		return fmt.Errorf("recording the tests of %s: %w", t.QueryID, err)
@@ -151,6 +167,22 @@ func (s *Store) QueryTestFor(queryID, version, cli string) (QueryTest, bool, err
 }
 
 // QueryTestsOf reads what is on record for every version of one query, under every CodeQL.
+// allQueryTests is every test on record, each query's in the order QueryTestsOf reads them.
+func (s *Store) allQueryTests() ([]QueryTest, error) {
+	rows, err := s.db.Query(`SELECT ` + queryTestColumns + ` FROM abom_query_test
+		ORDER BY query_id, ran_at, query_version, cli_version`)
+	if err != nil {
+		return nil, fmt.Errorf("reading the tests on record: %w", err)
+	}
+	return collectRows(rows, func(rows *sql.Rows) (QueryTest, error) {
+		t, err := scanQueryTest(rows)
+		if err != nil {
+			return QueryTest{}, fmt.Errorf("scanning a test: %w", err)
+		}
+		return t, nil
+	})
+}
+
 func (s *Store) QueryTestsOf(queryID string) ([]QueryTest, error) {
 	rows, err := s.db.Query(`SELECT `+queryTestColumns+` FROM abom_query_test
 		WHERE query_id = ? ORDER BY ran_at, query_version, cli_version`, queryID)

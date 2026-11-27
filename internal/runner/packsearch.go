@@ -41,9 +41,12 @@ func CustomPackRoot() string {
 // A configured directory that does not exist is skipped rather than refused: it is created when
 // the operator first writes a query, and refusing every CLI call until then would make naming the
 // directory an act that breaks the crawl.
-func packSearchPath() []string {
+func packSearchPath() []string { return searchPath(CustomPackRoot()) }
+
+// searchPath is packSearchPath with the operator's pack directory at custom.
+func searchPath(custom string) []string {
 	out := []string{}
-	for _, dir := range []string{PackRoot, CustomPackRoot()} {
+	for _, dir := range []string{PackRoot, custom} {
 		if dir == "" {
 			continue
 		}
@@ -93,9 +96,13 @@ func BindableSuites() ([]string, error) {
 // A `<pack>:<suite>` reference is looked up in the package cache, which a pack that has never
 // been published is not in. Without this the CLI reports it as misspelled rather than as local.
 // Omitted when no directory is there, so a build running against installed packs alone is not
-// handed a search path that does not exist.
-func localPackArgs() []string {
-	dirs := packSearchPath()
+// handed a search path that does not exist. Never `--search-path`: a directory there can supply an
+// extractor, which the CLI runs, and the operator's pack is one an authoring session writes.
+func localPackArgs() []string { return packArgs(CustomPackRoot()) }
+
+// packArgs is localPackArgs with the operator's pack directory at custom.
+func packArgs(custom string) []string {
+	dirs := searchPath(custom)
 	if len(dirs) == 0 {
 		return nil
 	}

@@ -83,15 +83,26 @@ type Copilot struct {
 	Packs []string
 	// Credits bounds what one session may spend, in AI credits; zero sets no bound.
 	Credits float64
+	// Remote is a CLI already serving beside the session, in a cluster the session pod's agent
+	// container, which alone holds the session's token. The session connects to it, and starts and
+	// authenticates nothing itself.
+	Remote *RemoteCLI
+}
+
+// RemoteCLI is where a CLI serving beside a session listens, and the token it admits connections with.
+type RemoteCLI struct {
+	URL, Token string
 }
 
 // Run starts the CLI, works the session until the agent goes idle or ctx ends, and stops the CLI.
 func (c *Copilot) Run(ctx context.Context, s Setup) (string, error) {
-	if c.CLI == "" || len(c.QLMCP) == 0 || (c.Token == nil && c.Mint == nil) {
+	if len(c.QLMCP) == 0 || c.Remote == nil && (c.CLI == "" || (c.Token == nil && c.Mint == nil)) {
 		return "", ErrNoAgent
 	}
 	var token string
-	if c.Mint != nil {
+	switch {
+	case c.Remote != nil:
+	case c.Mint != nil:
 		// Minted before the CLI starts, so a missing grant refuses the session rather than its first
 		// turn, and minted fresh, so the session has the token's whole hour rather than a cached remainder.
 		minted, expires, err := c.Mint(ctx, true)
@@ -102,7 +113,7 @@ func (c *Copilot) Run(ctx context.Context, s Setup) (string, error) {
 		var cancel context.CancelFunc
 		ctx, cancel = untilExpiry(ctx, expires)
 		defer cancel()
-	} else {
+	default:
 		var err error
 		if token, err = c.Token(ctx); err != nil {
 			return "", fmt.Errorf("reading the GitHub credential: %w", err)
@@ -196,6 +207,13 @@ func (c *Copilot) Run(ctx context.Context, s Setup) (string, error) {
 // minted for the session, no logged-in user and an environment holding no GitHub credential, so the
 // minted token is the only one the child can find.
 func (c *Copilot) clientOptions(s Setup, token string) *copilot.ClientOptions {
+	if c.Remote != nil {
+		return &copilot.ClientOptions{
+			Connection: copilot.URIConnection{URL: c.Remote.URL, ConnectionToken: c.Remote.Token},
+			Mode:       copilot.ModeEmpty,
+			ClientInfo: &copilot.ClientInfo{ApplicationName: "codeql-abom"},
+		}
+	}
 	opts := &copilot.ClientOptions{
 		Connection:       copilot.StdioConnection{Path: c.CLI, Env: withoutServerSecrets(os.Environ())},
 		Mode:             copilot.ModeEmpty,
@@ -212,14 +230,14 @@ func (c *Copilot) clientOptions(s Setup, token string) *copilot.ClientOptions {
 	return opts
 }
 
-// tokenMargin is how long before an installation token ends that a session working on it stops. The
+// TokenMargin is how long before an installation token ends that a session working on it stops. The
 // CLI takes no refresh for a client token, and its token provider refuses an installation token for
 // naming no account, so a session lives inside the one hour the token minted for it is good.
-const tokenMargin = 5 * time.Minute
+const TokenMargin = 5 * time.Minute
 
 // untilExpiry ends ctx a margin before the token the session started on expires.
 func untilExpiry(ctx context.Context, expires time.Time) (context.Context, context.CancelFunc) {
-	return context.WithDeadline(ctx, expires.Add(-tokenMargin))
+	return context.WithDeadline(ctx, expires.Add(-TokenMargin))
 }
 
 // modelFor is the model a session runs on, from the list the runtime offers its credential. A list
@@ -317,6 +335,11 @@ func (c *Copilot) config(s Setup) *copilot.SessionConfig {
 	}
 	if c.CodeQL != "" {
 		env["CODEQL_PATH"] = c.CodeQL
+	}
+	// The CLI hands every MCP server its own environment, the session's token among it, and a name
+	// given here wins, so each credential is given blank.
+	for _, name := range gitHubTokenVariables {
+		env[name] = ""
 	}
 	var command string
 	var args []string

@@ -161,6 +161,9 @@
         },
         "qlaasRun": {
           "$ref": "#/$defs/account"
+        },
+        "authoring": {
+          "$ref": "#/$defs/account"
         }
       }
     },
@@ -361,6 +364,99 @@
         },
         "qlaasRun": {
           "$ref": "#/$defs/pool"
+        },
+        "authoring": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cpu": {
+              "type": [
+                "string",
+                "number"
+              ]
+            },
+            "memory": {
+              "type": "string"
+            },
+            "timeout": {
+              "$ref": "#/$defs/duration"
+            },
+            "image": {
+              "$ref": "#/$defs/named"
+            },
+            "concurrency": {
+              "type": [
+                "string",
+                "integer"
+              ],
+              "pattern": "^([1-9][0-9]*)?$",
+              "minimum": 1
+            },
+            "credits": {
+              "type": [
+                "string",
+                "number"
+              ],
+              "pattern": "^(0|[0-9]+(\\.[0-9]+)?)?$"
+            }
+          }
+        }
+      }
+    },
+    "egressProxy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allow": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "discovery": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^\\.?[A-Za-z0-9.-]+$"
+              }
+            },
+            "qlaasTest": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^\\.?[A-Za-z0-9.-]+$"
+              }
+            },
+            "qlaasRun": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^\\.?[A-Za-z0-9.-]+$"
+              }
+            },
+            "authoring": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^\\.?[A-Za-z0-9.-]+$"
+              }
+            }
+          }
+        },
+        "resources": {
+          "type": "object"
+        },
+        "everyPool": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^\\.?[A-Za-z0-9.-]+$"
+          }
+        },
+        "direct": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9.:-]+$"
+          }
         }
       }
     }

@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/advanced-security/codeql-abom/internal/demo"
+	"github.com/advanced-security/codeql-abom/internal/egress"
 	"github.com/advanced-security/codeql-abom/internal/expand"
 	"github.com/advanced-security/codeql-abom/internal/runner"
 	"github.com/advanced-security/codeql-abom/internal/serve"
@@ -222,7 +223,7 @@ func TestDemoAuthoringNeedsTheEgressProxy(t *testing.T) {
 func TestDemoChildrenTrustTheEgressAuthorityOnlyThroughTheProxy(t *testing.T) {
 	root := demoWorkspace(t)
 	ca := filepath.Join(t.TempDir(), "egress-ca.pem")
-	authority, err := demo.NewAuthority([]string{"api.github.com"})
+	authority, err := egress.NewAuthority([]string{"api.github.com"})
 	if err != nil {
 		t.Fatal(err)
 	}

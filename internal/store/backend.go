@@ -320,6 +320,7 @@ type QueryStore interface {
 	AuthoringASTs(request int64) ([]AuthoringAST, error)
 	QueryASTs(queryID string) ([]AuthoringAST, error)
 	AuthoringAST(id int64) (AuthoringAST, error)
+	AuthoringASTByDigest(session int64, digest string) (AuthoringAST, error)
 	NewestASTs() (map[string]AuthoringAST, error)
 	StartDraftSession(run int64, queryID, startedBy, model string) (int64, error)
 	RecordRequestDraft(d RequestDraft) (int64, error)
@@ -330,6 +331,16 @@ type QueryStore interface {
 	StartAuthoringSession(request int64, startedBy, model string) (int64, error)
 	EndAuthoringSession(session int64, state, detail string) error
 	InterruptAuthoringSessions() (int, error)
+	QueueAuthoringSession(request int64, startedBy, model, decision string) (int64, error)
+	QueueDraftSession(run int64, queryID, startedBy, model, decision string, picks []DraftPick) (int64, error)
+	QueuedAuthoringSessions() ([]QueuedSession, error)
+	BeginQueuedSession(session int64) error
+	SessionDecision(session int64) (string, error)
+	SetSessionAttempt(session int64, attempt, grant string) error
+	RunningRemoteSessions() ([]RemoteSession, error)
+	VerifiedDecision(digest string) (authz.Decision, error)
+	AuthoringSnapshot(session int64) (AuthoringSnapshot, error)
+	IngestAuthoringReport(session int64, r AuthoringReport) (*SessionEnd, error)
 	AuthoringSessions(request int64) ([]AuthoringSession, error)
 	RunningAuthoringSessions() (map[int64]int64, error)
 	AddAuthoringSpend(session int64, spent AuthoringSpend) error

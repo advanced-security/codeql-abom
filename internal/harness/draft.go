@@ -17,6 +17,7 @@ import (
 	copilot "github.com/github/copilot-sdk/go"
 
 	"github.com/advanced-security/codeql-abom/internal/authoring"
+	"github.com/advanced-security/codeql-abom/internal/regular"
 	"github.com/advanced-security/codeql-abom/internal/store"
 )
 
@@ -42,8 +43,9 @@ type Picked struct {
 const maxSourceLines = 400
 
 // Draft starts a session drafting a request about a query from results an operator picked out of
-// a run. It reads nothing but what ABOM's tools hand it, runs no CodeQL, and files nothing.
-func (s *Sessions) Draft(run int64, queryID string, picked []Picked, by string) (store.AuthoringSession, error) {
+// a run. It reads nothing but what ABOM's tools hand it, runs no CodeQL, and files nothing. The single
+// binary acts on the decision that asked for it as that decision is made, so it keeps no digest of it.
+func (s *Sessions) Draft(run int64, queryID string, picked []Picked, by, _ string) (store.AuthoringSession, error) {
 	session, _, err := s.draft(run, queryID, picked, by)
 	return session, err
 }
@@ -124,6 +126,9 @@ func (s *Sessions) draftDatabases(run int64, picked []Picked) (map[string]string
 	databases := map[string]string{}
 	for _, m := range record.Members {
 		databases[m.Repository] = m.DatabasePath
+		if s.Databases != nil {
+			databases[m.Repository] = s.Databases[m.Repository]
+		}
 	}
 	for _, p := range picked {
 		if _, ok := databases[p.Repository]; !ok {
@@ -197,7 +202,7 @@ func (s *Sessions) StopDraft(run int64) bool {
 
 // drafter is what a drafting session may read and keep: the picks, and their repositories' source.
 type drafter struct {
-	store     store.Backend
+	store     Records
 	workspace string
 	session   int64
 	run       int64
@@ -290,7 +295,7 @@ func (d drafter) results() string {
 			ToolSource)
 	}
 	if q, found, err := authoring.Find(d.workspace, d.query); err == nil && found {
-		if body, err := os.ReadFile(q.Path); err == nil {
+		if body, err := regular.ReadFile(q.Path); err == nil {
 			fmt.Fprintf(&out, "\nThe query, %s in your pack:\n%s\n", q.Rel, fence(string(body), "ql"))
 		}
 	} else {
@@ -323,14 +328,13 @@ func (d drafter) excerpt(repository, rel string, line int) (string, error) {
 }
 
 func (d drafter) keep(a draftArgs) (string, error) {
-	id, err := d.store.RecordRequestDraft(store.RequestDraft{SessionID: d.session,
-		Description: a.Description, Compliant: a.Compliant, NonCompliant: a.NonCompliant,
-		Rationale: a.Rationale})
-	if err != nil {
+	draft := store.RequestDraft{SessionID: d.session, Description: a.Description, Compliant: a.Compliant,
+		NonCompliant: a.NonCompliant, Rationale: a.Rationale}
+	if _, err := d.store.RecordRequestDraft(draft); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("Kept as draft %d. The operator reads it, and files it, edits it or discards "+
-		"it. Stop now, and say in a sentence what you drafted.", id), nil
+	return fmt.Sprintf("Kept as draft %s. The operator reads it, and files it, edits it or discards "+
+		"it. Stop now, and say in a sentence what you drafted.", store.DraftDigest(draft)[:12]), nil
 }
 
 // numbered is count lines of body from line from, each with its number, as a reviewer cites them.
@@ -363,7 +367,7 @@ func sourceArchive(db string) (*zip.ReadCloser, string, error) {
 	if db == "" {
 		return nil, "", errors.New("the run holds no database for it, so its source is not at hand")
 	}
-	manifest, err := os.Open(filepath.Join(db, "codeql-database.yml"))
+	manifest, err := regular.Open(filepath.Join(db, "codeql-database.yml"))
 	if err != nil {
 		return nil, "", err
 	}

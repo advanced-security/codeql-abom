@@ -42,11 +42,13 @@ var subcommands = []subcommand{
 	{"verify-lock", runVerifyLock, "Run GitHub's no-fix lock verification of one repository's current commit."},
 	{"check", runCheck, "Compare what ABOM claims with independent readings, on copies of the database."},
 	{"worker", runWorker, "Run one granted attempt, an analysis or a query's tests, as a Kubernetes Job does."},
+	{"attestor", runAttestor, "Hold one attempt's grant, identity and object store beside its worker, and sign what it leaves."},
 	{"audit", runAudit, "Verify the signed authorization log offline, or rotate the key decisions are signed with."},
 	{"app", runApp, "Create and check the GitHub Apps ABOM reads and publishes as, rotate their keys, and record installations."},
 	{"selfcheck", runSelfcheck, "Analyze a source tree with a CodeQL suite as a smoke test."},
 	{"version", runVersion, "Print which build this is and the CodeQL version it was made for."},
 	{"serialize-mcp", runSerializeMCP, "Start an MCP stdio server and hand it one tool call at a time, as authoring sessions start ql-mcp."},
+	{"egress-proxy", runEgressProxy, "Forward an authoring pod's tunnels to the hosts Copilot needs, and refuse everything else."},
 }
 
 func main() {

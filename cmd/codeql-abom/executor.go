@@ -40,24 +40,32 @@ type executorConfig struct {
 	priorityClass  string
 	// analysis is the crawl's pool; tests and runs are the pools a query's own tests and requested
 	// runs use, sized apart from it. Neither of those has a limit flag: each Job may use what it
-	// requests.
-	analysis, tests, runs poolFlags
+	// requests. authoring runs sessions, each a Job whose pod runs the Copilot CLI beside the worker.
+	analysis, tests, runs, authoring poolFlags
+	// agentCommand starts the Copilot CLI in a session's pod, from agentImage; qlmcp is the command line
+	// that starts ql-mcp there.
+	agentCommand, agentImage, qlmcp string
+	// noProxy are the hosts every pool's workers reach directly rather than through their proxy.
+	noProxy string
 }
 
-// poolFlags size one pool's Jobs, as the flags named with prefix set them.
+// poolFlags size one pool's Jobs, as the flags named with prefix set them, and name the proxy they
+// reach out through.
 type poolFlags struct {
 	name, prefix   string
 	serviceAccount string
 	cpu, cpuLimit  string
 	memory         string
 	timeout        time.Duration
+	proxy          string
 }
 
 func addExecutorFlags(fs *flag.FlagSet) *executorConfig {
 	c := &executorConfig{
-		analysis: poolFlags{prefix: "worker-"},
-		tests:    poolFlags{name: "qlaas-test", prefix: "test-worker-"},
-		runs:     poolFlags{name: "qlaas-run", prefix: "run-worker-"},
+		analysis:  poolFlags{prefix: "worker-"},
+		tests:     poolFlags{name: "qlaas-test", prefix: "test-worker-"},
+		runs:      poolFlags{name: "qlaas-run", prefix: "run-worker-"},
+		authoring: poolFlags{name: "authoring", prefix: "authoring-worker-"},
 	}
 	fs.StringVar(&c.mode, "executor", "local", "where analysis runs: local, in this process, or kubernetes, as one Job per repository")
 	fs.StringVar(&c.namespace, "worker-namespace", "", "namespace analysis Jobs run in (default: this pod's)")
@@ -84,11 +92,31 @@ func addExecutorFlags(fs *flag.FlagSet) *executorConfig {
 	fs.StringVar(&c.runs.cpu, "run-worker-cpu", "2", "CPU each run Job requests and may use")
 	fs.StringVar(&c.runs.memory, "run-worker-memory", "4Gi", "memory each run Job requests and is limited to")
 	fs.DurationVar(&c.runs.timeout, "run-worker-timeout", time.Hour, "longest a run Job may take, and its grant lasts")
+	fs.StringVar(&c.authoring.serviceAccount, "authoring-worker-service-account", "abom-worker-authoring",
+		"ServiceAccount the Jobs running authoring sessions run as")
+	fs.StringVar(&c.authoring.cpu, "authoring-worker-cpu", "1",
+		"CPU a session's worker, and its agent beside it, each request and may use")
+	fs.StringVar(&c.authoring.memory, "authoring-worker-memory", "3Gi",
+		"memory a session's worker, and its agent beside it, each request and are limited to")
+	fs.DurationVar(&c.authoring.timeout, "authoring-worker-timeout", time.Hour,
+		"longest a session's Job may take, and its grant lasts; a session also ends before its Copilot token")
+	fs.StringVar(&c.agentCommand, "authoring-agent-command", "copilot",
+		"command that starts the Copilot CLI in a session's pod")
+	fs.StringVar(&c.agentImage, "authoring-agent-image", "",
+		"image the Copilot CLI runs from in a session's pod (default: --worker-image)")
+	fs.StringVar(&c.authoring.proxy, "authoring-egress-proxy", "",
+		"proxy, as a URL, a session's agent reaches Copilot through; the only way out of its pod")
+	fs.StringVar(&c.analysis.proxy, "worker-egress-proxy", "",
+		"proxy, as a URL, analysis Jobs reach out through (default: none, and each reaches out directly)")
+	fs.StringVar(&c.tests.proxy, "test-worker-egress-proxy", "", "proxy, as a URL, the Jobs running a query's tests reach out through")
+	fs.StringVar(&c.runs.proxy, "run-worker-egress-proxy", "", "proxy, as a URL, the Jobs analyzing a requested run reach out through")
+	fs.StringVar(&c.noProxy, "worker-no-proxy", "",
+		"comma-separated hosts every Job reaches directly rather than through its proxy, such as an object store in the cluster")
 	return c
 }
 
-// pools are the Runners beside the crawl's: a query's tests, and requested runs.
-type pools struct{ tests, runs *execution.Runner }
+// pools are the Runners beside the crawl's: a query's tests, requested runs, and authoring sessions.
+type pools struct{ tests, runs, authoring *execution.Runner }
 
 // workerTokens lends each worker a read of its own repository through the App. Without an App there
 // is nothing to lend: a person's token never leaves this process.
@@ -133,20 +161,29 @@ func wireExecutor(ctx context.Context, c executorConfig, loop *supervisor.Superv
 	}
 	k.env, k.envFrom = objectStoreEnv(c.s3Secret)
 
-	analysis, err := k.newPool(ctx, c.analysis)
+	analysis, err := k.newPool(ctx, c.analysis, nil)
 	if err != nil {
 		return pools{}, err
 	}
 	analysis.Tokens = tokens
 	loop.Expander.Remote = analysis
 	var out pools
-	if out.tests, err = k.newPool(ctx, c.tests); err != nil {
+	if out.tests, err = k.newPool(ctx, c.tests, nil); err != nil {
 		return pools{}, err
 	}
-	if out.runs, err = k.newPool(ctx, c.runs); err != nil {
+	if out.runs, err = k.newPool(ctx, c.runs, nil); err != nil {
 		return pools{}, err
 	}
 	out.runs.Tokens = tokens
+	if pack := runner.CustomPackRoot(); pack != "" {
+		agent := &execution.Agent{Workspace: pack, Command: strings.Fields(c.agentCommand), Image: c.agentImage,
+			Proxy: c.authoring.proxy}
+		if out.authoring, err = k.newPool(ctx, c.authoring, agent); err != nil {
+			return pools{}, err
+		}
+		fmt.Fprintf(stdout, "serve: authoring sessions run as Jobs as %s, the Copilot CLI beside each\n",
+			out.authoring.Identity)
+	}
 	fmt.Fprintf(stdout, "serve: analysis runs as Jobs in %s, each as %s under a grant this server signs\n",
 		k.namespace, analysis.Identity)
 	fmt.Fprintf(stdout, "serve: a query's tests run as Jobs as %s, and requested runs as %s\n",
@@ -161,6 +198,10 @@ func inCluster(namespace string) (kubernetes.Interface, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("serve: reaching the Kubernetes API: %w", err)
 	}
+	// Every attempt's Job is made, read every few seconds and deleted through this one client, whose
+	// default of 5 requests a second would hold back every pool past about ten attempts at once. The
+	// API server's own fairness bounds what this costs it.
+	cfg.QPS, cfg.Burst = 50, 100
 	client, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
 		return nil, "", err
@@ -218,16 +259,21 @@ type cluster struct {
 }
 
 // newPool is the Runner for one pool's Jobs, once the Jobs a previous server left running in it
-// are stopped.
-func (k cluster) newPool(ctx context.Context, p poolFlags) (*execution.Runner, error) {
+// are stopped. A pool given an agent runs sessions, the Copilot CLI beside each worker on its budget.
+func (k cluster) newPool(ctx context.Context, p poolFlags, agent *execution.Agent) (*execution.Runner, error) {
 	budget, codeqlArgs, err := p.budget()
 	if err != nil {
 		return nil, fmt.Errorf("serve: %w", err)
 	}
+	if agent != nil {
+		agent.Resources = budget
+		codeqlArgs = append(codeqlArgs, "--ql-mcp", k.c.qlmcp)
+	}
 	identity := fmt.Sprintf("spiffe://%s/ns/%s/sa/%s", k.c.trustDomain, k.namespace, p.serviceAccount)
 	launcher := &execution.Kubernetes{Client: k.client, Namespace: k.namespace, Instance: k.c.instance, Image: k.c.image, Pool: p.name,
 		ServiceAccount: p.serviceAccount, TrustConfigMap: k.c.trustConfigMap, Env: k.env, EnvFrom: k.envFrom,
-		Deadline: p.timeout, Args: codeqlArgs, Resources: budget, PriorityClass: k.c.priorityClass}
+		Deadline: p.timeout, Args: codeqlArgs, Resources: budget, PriorityClass: k.c.priorityClass, Agent: agent,
+		Proxy: p.proxy, NoProxy: splitList(k.c.noProxy)}
 	reaped, err := launcher.Reap(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("serve: %w", err)

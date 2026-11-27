@@ -44,6 +44,9 @@ type AuditCapture struct {
 	Test             *QueryTest        `json:"test,omitempty"`
 	Inputs           map[string]string `json:"inputs,omitempty"`
 	ArtifactID       int64             `json:"artifactId,omitempty"`
+	// ArtifactDigest names a printed tree by what it says, as every event since does; ArtifactID is
+	// the row of a tree an event kept before.
+	ArtifactDigest string `json:"artifactDigest,omitempty"`
 }
 
 type AuditFilter struct {

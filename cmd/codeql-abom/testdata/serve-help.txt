@@ -23,14 +23,30 @@ Usage of serve:
     	account whose installation reads owners the App is not installed on (default: the earliest installation)
   -auth string
     	who may use ABOM: none, only you at this machine; oidc, people signed in through an identity provider such as Entra ID; or github, people signed in with GitHub through the reading App (default "none")
+  -authoring-agent-command string
+    	command that starts the Copilot CLI in a session's pod (default "copilot")
+  -authoring-agent-image string
+    	image the Copilot CLI runs from in a session's pod (default: --worker-image)
+  -authoring-concurrency int
+    	authoring sessions that work at once in a cluster; the rest wait their turn (default 1)
   -authoring-credits float
-    	AI credits one authoring session may spend (0: no limit)
+    	AI credits one authoring session may spend, 30 or more (0: no limit; in a cluster 500 unless given)
+  -authoring-egress-proxy string
+    	proxy, as a URL, a session's agent reaches Copilot through; the only way out of its pod
   -authoring-limit duration
     	longest one authoring session may run (default 45m0s)
   -authoring-model string
     	model authoring sessions run (default "claude-opus-5")
   -authoring-org string
     	organization a GitHub App's Copilot requests are billed to (default: the App's owner)
+  -authoring-worker-cpu string
+    	CPU a session's worker, and its agent beside it, each request and may use (default "1")
+  -authoring-worker-memory string
+    	memory a session's worker, and its agent beside it, each request and are limited to (default "3Gi")
+  -authoring-worker-service-account string
+    	ServiceAccount the Jobs running authoring sessions run as (default "abom-worker-authoring")
+  -authoring-worker-timeout duration
+    	longest a session's Job may take, and its grant lasts; a session also ends before its Copilot token (default 1h0m0s)
   -authz-dir string
     	directory holding the key decisions are signed with and the bundle that verifies them (default: authz beside --db)
   -cache-dir string
@@ -133,6 +149,8 @@ Usage of serve:
     	maximum measured standby lag for ordinary reads; zero requires catch-up, writes read back from primary
   -run-worker-cpu string
     	CPU each run Job requests and may use (default "2")
+  -run-worker-egress-proxy string
+    	proxy, as a URL, the Jobs analyzing a requested run reach out through
   -run-worker-memory string
     	memory each run Job requests and is limited to (default "4Gi")
   -run-worker-service-account string
@@ -147,6 +165,8 @@ Usage of serve:
     	comma-separated repositories that may receive dependency snapshots
   -test-worker-cpu string
     	CPU each test Job requests and may use (default "1")
+  -test-worker-egress-proxy string
+    	proxy, as a URL, the Jobs running a query's tests reach out through
   -test-worker-memory string
     	memory each test Job requests and is limited to (default "2Gi")
   -test-worker-service-account string
@@ -165,6 +185,8 @@ Usage of serve:
     	CPU each analysis Job requests (default "2")
   -worker-cpu-limit string
     	CPU each analysis Job may use (default: --worker-cpu; 0 for no limit)
+  -worker-egress-proxy string
+    	proxy, as a URL, analysis Jobs reach out through (default: none, and each reaches out directly)
   -worker-image string
     	image analysis Jobs run (default: $ABOM_WORKER_IMAGE)
   -worker-instance string
@@ -173,6 +195,8 @@ Usage of serve:
     	memory each analysis Job requests and is limited to (default "4Gi")
   -worker-namespace string
     	namespace analysis Jobs run in (default: this pod's)
+  -worker-no-proxy string
+    	comma-separated hosts every Job reaches directly rather than through its proxy, such as an object store in the cluster
   -worker-pool string
     	the worker pool analysis Jobs belong to (default "discovery")
   -worker-priority-class string

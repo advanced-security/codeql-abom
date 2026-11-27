@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/advanced-security/codeql-abom/internal/expand"
 	"github.com/advanced-security/codeql-abom/internal/layout"
+	"github.com/advanced-security/codeql-abom/internal/serve"
 	"github.com/advanced-security/codeql-abom/internal/store"
 	"github.com/advanced-security/codeql-abom/internal/supervisor"
 )
@@ -104,6 +106,38 @@ func TestExpandStartsDiscoveryWhateverIsRecorded(t *testing.T) {
 	var out bytes.Buffer
 	if !shouldResume(s, true, &out, &out) {
 		t.Error("--expand did not start discovery")
+	}
+}
+
+// The loop learns of a declaration from the store every writer shares, so one saved in Settings,
+// with `own`, or by another replica is read on the next cycle rather than when the period comes round.
+func TestTheLoopTellsOneDeclarationFromTheNext(t *testing.T) {
+	s := openStore(t)
+	loop := &supervisor.Supervisor{}
+	wireEnumeration(loop, &serve.Server{}, s, time.Hour)
+	declare := func(accounts ...store.DeclaredAccount) (string, []string) {
+		t.Helper()
+		if err := s.SetOwnedScope(accounts, store.DeclaredByCLI); err != nil {
+			t.Fatal(err)
+		}
+		version, owners, err := loop.Declared()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return version, owners
+	}
+	whole := store.DeclaredAccount{Owner: "has-ghas", Kind: store.AccountOrganization, Enabled: true}
+	narrowed := whole
+	narrowed.IncludesOnly, narrowed.Includes = true, []string{"one"}
+
+	before, _ := declare(whole)
+	after, owners := declare(narrowed, store.DeclaredAccount{Owner: "octo", Kind: store.AccountUser, Enabled: true})
+
+	if before == "" || before == after {
+		t.Errorf("the two declarations read as %q and %q, which the loop cannot tell apart", before, after)
+	}
+	if slices.Sort(owners); strings.Join(owners, ",") != "has-ghas,octo" {
+		t.Errorf("owners = %v, want both accounts the declaration names", owners)
 	}
 }
 

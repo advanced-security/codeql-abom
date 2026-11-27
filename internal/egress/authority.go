@@ -1,4 +1,4 @@
-package demo
+package egress
 
 import (
 	"crypto/ecdsa"
@@ -38,7 +38,7 @@ func NewAuthority(hosts []string) (*Authority, error) {
 	now := time.Now()
 	template := &x509.Certificate{
 		SerialNumber:                serial(),
-		Subject:                     pkix.Name{CommonName: "ABOM Demo egress, " + strings.Join(hosts, ", ")},
+		Subject:                     pkix.Name{CommonName: "ABOM egress, " + strings.Join(hosts, ", ")},
 		NotBefore:                   now.Add(-time.Minute),
 		NotAfter:                    now.Add(24 * time.Hour),
 		IsCA:                        true,
@@ -63,7 +63,7 @@ func NewAuthority(hosts []string) (*Authority, error) {
 	}, nil
 }
 
-// CertPEM is the authority's certificate, which Demo's children are told to trust.
+// CertPEM is the authority's certificate, which the proxy's clients are told to trust.
 func (a *Authority) CertPEM() []byte { return slices.Clone(a.pem) }
 
 func (a *Authority) leaf(host string) (*tls.Certificate, error) {

@@ -13,6 +13,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 )
@@ -30,6 +31,7 @@ const (
 	PredicateTaskGrant         = predicateBase + "TaskGrant/v1"
 	PredicateResultAttestation = predicateBase + "ResultAttestation/v1"
 	PredicateIngestionReceipt  = predicateBase + "IngestionReceipt/v1"
+	PredicateSessionReport     = predicateBase + "SessionReport/v1"
 	PredicateCheckpoint        = predicateBase + "Checkpoint/v1"
 )
 
@@ -79,17 +81,29 @@ func (e Envelope) Digest() (string, error) {
 
 // Seal signs a statement into an envelope.
 func Seal(ctx context.Context, s Signer, st Statement) (Envelope, error) {
+	return SealBy(ctx, st, s)
+}
+
+// SealBy signs a statement into an envelope with every one of signers, in order, so it verifies as
+// signed by each.
+func SealBy(ctx context.Context, st Statement, signers ...Signer) (Envelope, error) {
+	if len(signers) == 0 {
+		return Envelope{}, errors.New("authz: a statement is sealed by at least one signer")
+	}
 	st.Type = StatementType
 	payload, err := json.Marshal(st)
 	if err != nil {
 		return Envelope{}, fmt.Errorf("authz: encoding a statement: %w", err)
 	}
-	sig, err := s.Sign(ctx, PAE(PayloadType, payload))
-	if err != nil {
-		return Envelope{}, fmt.Errorf("authz: signing a statement: %w", err)
+	env := Envelope{PayloadType: PayloadType, Payload: base64.StdEncoding.EncodeToString(payload)}
+	for _, s := range signers {
+		sig, err := s.Sign(ctx, PAE(PayloadType, payload))
+		if err != nil {
+			return Envelope{}, fmt.Errorf("authz: signing a statement: %w", err)
+		}
+		env.Signatures = append(env.Signatures, Signature{KeyID: s.KeyID(), Sig: base64.StdEncoding.EncodeToString(sig)})
 	}
-	return Envelope{PayloadType: PayloadType, Payload: base64.StdEncoding.EncodeToString(payload),
-		Signatures: []Signature{{KeyID: s.KeyID(), Sig: base64.StdEncoding.EncodeToString(sig)}}}, nil
+	return env, nil
 }
 
 func sha256Hex(b []byte) string {

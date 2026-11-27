@@ -1,7 +1,10 @@
 package store
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -18,7 +21,9 @@ CREATE TABLE IF NOT EXISTS abom_request_draft (
   description   TEXT NOT NULL,
   compliant     TEXT NOT NULL,
   non_compliant TEXT NOT NULL,
-  rationale     TEXT NOT NULL DEFAULT ''
+  rationale     TEXT NOT NULL DEFAULT '',
+  -- What the agent was told it kept: the draft named by what it proposes. Empty from before.
+  digest        TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_request_draft_session ON abom_request_draft(session_id, row_id);`
@@ -38,6 +43,15 @@ type RequestDraft struct {
 	Compliant    string `json:"compliant"`
 	NonCompliant string `json:"nonCompliant"`
 	Rationale    string `json:"rationale"`
+	// Digest names the draft by what it proposes; empty for a draft kept before drafts were named so.
+	Digest string `json:"digest"`
+}
+
+// DraftDigest names a draft by what it proposes: the SHA-256, in hex, of its four parts.
+func DraftDigest(d RequestDraft) string {
+	body, _ := json.Marshal([]string{d.Description, d.Compliant, d.NonCompliant, d.Rationale})
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])
 }
 
 // DraftSession is a session drafting a request from a run's results, and the newest draft it
@@ -64,8 +78,8 @@ func (s *Store) StartDraftSession(run int64, queryID, startedBy, model string) (
 	if err := tx.QueryRow(`
 		SELECT (SELECT COUNT(*) FROM abom_analysis_run WHERE row_id = ?),
 		       (SELECT COUNT(*) FROM abom_authoring_session
-		        WHERE run_id = ? AND request_id IS NULL AND state = ?)`,
-		run, run, SessionRunning).Scan(&exists, &running); err != nil {
+		        WHERE run_id = ? AND request_id IS NULL AND state IN (?, ?))`,
+		run, run, SessionRunning, SessionQueued).Scan(&exists, &running); err != nil {
 		return 0, fmt.Errorf("reading run %d: %w", run, err)
 	}
 	switch {
@@ -91,16 +105,32 @@ func (s *Store) StartDraftSession(run int64, queryID, startedBy, model string) (
 
 // RecordRequestDraft keeps a draft a session proposed.
 func (s *Store) RecordRequestDraft(d RequestDraft) (int64, error) {
+	return recordRequestDraft(s.db, d)
+}
+
+// CheckRequestDraft refuses a draft the store would not keep.
+func CheckRequestDraft(d RequestDraft) error {
 	if strings.TrimSpace(d.Description) == "" || strings.TrimSpace(d.Compliant) == "" ||
 		strings.TrimSpace(d.NonCompliant) == "" {
-		return 0, errors.New("a draft says what to detect, with a COMPLIANT and a NON_COMPLIANT example, " +
+		return errors.New("a draft says what to detect, with a COMPLIANT and a NON_COMPLIANT example, " +
 			"as a request must")
 	}
-	res, err := s.db.Exec(`
-		INSERT INTO abom_request_draft (session_id, drafted_at, description, compliant, non_compliant, rationale)
-		SELECT row_id, ?, ?, ?, ?, ? FROM abom_authoring_session WHERE row_id = ? AND request_id IS NULL`,
-		time.Now().UTC().Format(time.RFC3339), d.Description, d.Compliant, d.NonCompliant, d.Rationale,
-		d.SessionID)
+	return nil
+}
+
+func recordRequestDraft(w authoringWriter, d RequestDraft) (int64, error) {
+	if err := CheckRequestDraft(d); err != nil {
+		return 0, err
+	}
+	at := d.DraftedAt
+	if at == "" {
+		at = time.Now().UTC().Format(time.RFC3339)
+	}
+	res, err := w.Exec(`
+		INSERT INTO abom_request_draft (session_id, drafted_at, description, compliant, non_compliant,
+		  rationale, digest)
+		SELECT row_id, ?, ?, ?, ?, ?, ? FROM abom_authoring_session WHERE row_id = ? AND request_id IS NULL`,
+		at, d.Description, d.Compliant, d.NonCompliant, d.Rationale, DraftDigest(d), d.SessionID)
 	if err != nil {
 		return 0, fmt.Errorf("keeping a draft from session %d: %w", d.SessionID, err)
 	}
@@ -132,8 +162,10 @@ func (s *Store) DraftSessions(run int64) ([]DraftSession, error) {
 		       COALESCE(s.ended_at, ''), s.detail,
 		       (SELECT COUNT(*) FROM abom_authoring_event e WHERE e.session_id = s.row_id),
 		       (SELECT COUNT(*) FROM abom_authoring_event e WHERE e.session_id = s.row_id AND e.decision = 'refused'),
-		       s.model_calls, s.input_tokens, s.output_tokens, s.nano_aiu,
-		       d.row_id, d.drafted_at, d.description, d.compliant, d.non_compliant, d.rationale
+		       s.model_calls, s.input_tokens, s.output_tokens, s.nano_aiu, COALESCE(s.queued_at, ''),
+		       (SELECT COUNT(*) FROM abom_authoring_session q WHERE s.state = 'queued' AND q.state = 'queued'
+		          AND (q.queued_at < s.queued_at OR (q.queued_at = s.queued_at AND q.row_id < s.row_id))),
+		       d.row_id, d.drafted_at, d.description, d.compliant, d.non_compliant, d.rationale, d.digest
 		FROM abom_authoring_session s
 		LEFT JOIN abom_request_draft d ON d.row_id =
 		  (SELECT MAX(row_id) FROM abom_request_draft WHERE session_id = s.row_id)
@@ -148,10 +180,10 @@ func (s *Store) DraftSessions(run int64) ([]DraftSession, error) {
 	for rows.Next() {
 		var d DraftSession
 		var calls, input, output, nano, draftID sql.NullInt64
-		var at, description, compliant, nonCompliant, rationale sql.NullString
+		var at, description, compliant, nonCompliant, rationale, digest sql.NullString
 		if err := rows.Scan(&d.RowID, &d.RunID, &d.QueryID, &d.State, &d.StartedBy, &d.Model, &d.StartedAt,
-			&d.EndedAt, &d.Detail, &d.Events, &d.Refused, &calls, &input, &output, &nano,
-			&draftID, &at, &description, &compliant, &nonCompliant, &rationale); err != nil {
+			&d.EndedAt, &d.Detail, &d.Events, &d.Refused, &calls, &input, &output, &nano, &d.QueuedAt, &d.Ahead,
+			&draftID, &at, &description, &compliant, &nonCompliant, &rationale, &digest); err != nil {
 			return nil, fmt.Errorf("scanning a drafting session: %w", err)
 		}
 		d.ModelCalls, d.InputTokens = reported(calls), reported(input)
@@ -159,7 +191,7 @@ func (s *Store) DraftSessions(run int64) ([]DraftSession, error) {
 		if draftID.Valid {
 			d.Draft = &RequestDraft{RowID: draftID.Int64, SessionID: d.RowID, DraftedAt: at.String,
 				Description: description.String, Compliant: compliant.String,
-				NonCompliant: nonCompliant.String, Rationale: rationale.String}
+				NonCompliant: nonCompliant.String, Rationale: rationale.String, Digest: digest.String}
 		}
 		out = append(out, d)
 	}

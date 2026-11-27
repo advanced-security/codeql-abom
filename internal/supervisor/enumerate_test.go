@@ -139,6 +139,61 @@ func TestWhatADueListingCannotAnswerIsAskedBesideIt(t *testing.T) {
 	}
 }
 
+// A declaration saved in Settings or with `own` queued nothing until the period came round, and
+// Start did not help: a repository newly included sat unread for up to an hour. A sweep would not
+// name it either when it has not moved, so the accounts are listed whole, and an event's ask for one
+// of them is not listed a second time.
+func TestAChangedDeclarationListsItsAccountsWholeOnTheNextCycle(t *testing.T) {
+	sup, _ := newSupervisor(t)
+	sup.EnumerateEvery = time.Hour
+	version := "sha256:a"
+	sup.Declared = func() (string, []string, error) { return version, []string{"has-ghas", "octo"}, nil }
+	var calls []Ask
+	sup.Enumerate = func(_ context.Context, ask Ask) (int, error) {
+		calls = append(calls, ask)
+		return 0, nil
+	}
+
+	sup.cycle(context.Background())
+	sup.cycle(context.Background())
+	version = "sha256:b"
+	sup.ListFullySoon("Has-GHAS")
+	sup.ReadSoon("has-ghas/new")
+	sup.cycle(context.Background())
+	sup.cycle(context.Background())
+
+	want := []Ask{{}, {Full: []string{"has-ghas", "octo"}}, {Repositories: []string{"has-ghas/new"}}}
+	if !reflect.DeepEqual(calls, want) {
+		t.Errorf("reads = %+v, want %+v", calls, want)
+	}
+}
+
+// A declaration that could not be read says nothing about whether it changed, and treating it as
+// changed would list every account whole each time the read fails.
+func TestAnUnreadableDeclarationIsNotAChange(t *testing.T) {
+	sup, _ := newSupervisor(t)
+	sup.EnumerateEvery = time.Hour
+	var fail bool
+	sup.Declared = func() (string, []string, error) {
+		if fail {
+			return "", nil, errors.New("the store is busy")
+		}
+		return "sha256:a", []string{"has-ghas"}, nil
+	}
+	var calls int
+	sup.Enumerate = func(context.Context, Ask) (int, error) { calls++; return 0, nil }
+
+	sup.cycle(context.Background())
+	fail = true
+	sup.cycle(context.Background())
+	fail = false
+	sup.cycle(context.Background())
+
+	if calls != 1 {
+		t.Errorf("read %d times, want only the first: the declaration never changed", calls)
+	}
+}
+
 // A new Actions advisory changes exposure with no repository changing, and the next refresh is up
 // to a day away. The floor still holds: an event cannot make the loop refetch every minute.
 func TestAnAdvisoryEventRefreshesOnceTheFloorAllows(t *testing.T) {

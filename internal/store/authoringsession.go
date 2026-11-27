@@ -1,6 +1,7 @@
 package store
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -28,12 +29,26 @@ const authoringSessionTable = `(
   model_calls   INTEGER,
   input_tokens  INTEGER,
   output_tokens INTEGER,
-  nano_aiu      INTEGER
+  nano_aiu      INTEGER,
+  -- The last report a worker's journal was replayed through, and its digest, which the next follows.
+  journal_seq   INTEGER NOT NULL DEFAULT 0,
+  journal_head  TEXT NOT NULL DEFAULT '',
+  -- When a session past the limit began waiting, NULL for one that never waited.
+  queued_at     TEXT,
+  -- The signed decision that asked for the session, which a waiting one is checked against as it begins.
+  decision      TEXT NOT NULL DEFAULT '',
+  -- The worker attempt running the session and the digest of its grant, so a coordinator that
+  -- restarts can find and verify what the worker reported.
+  attempt       TEXT NOT NULL DEFAULT '',
+  grant_digest  TEXT NOT NULL DEFAULT '',
+  -- What a draft that waited its turn drafts from, as JSON; empty for one handed its picks directly.
+  draft_picks   TEXT NOT NULL DEFAULT ''
 )`
 
 // sessionCopyColumns are the columns a rebuild carries forward.
 const sessionCopyColumns = `row_id, request_id, run_id, query_id, state, started_by, model, started_at,
-  ended_at, detail, model_calls, input_tokens, output_tokens, nano_aiu`
+  ended_at, detail, model_calls, input_tokens, output_tokens, nano_aiu, journal_seq, journal_head, queued_at,
+  decision, attempt, grant_digest, draft_picks`
 
 // authoringSessionDDL keeps every agent session on a request, and every hook invocation in one.
 const authoringSessionDDL = `
@@ -42,6 +57,10 @@ CREATE TABLE IF NOT EXISTS abom_authoring_session ` + authoringSessionTable + `;
 -- Two agents writing one query's files would each read the other's work as its own.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_authoring_session_running
   ON abom_authoring_session(request_id) WHERE state = 'running';
+
+-- Nor may one wait to write them while another works or waits on the same request.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_authoring_session_waiting
+  ON abom_authoring_session(request_id) WHERE state IN ('queued', 'running');
 
 -- Append-only: what an agent tried, as it was decided, including everything refused.
 CREATE TABLE IF NOT EXISTS abom_authoring_event (
@@ -69,6 +88,8 @@ CREATE INDEX IF NOT EXISTS idx_authoring_event_session ON abom_authoring_event(s
 
 // Where a session stands.
 const (
+	// SessionQueued is a session past the limit of sessions at once, waiting its turn.
+	SessionQueued  = "queued"
 	SessionRunning = "running"
 	// SessionFinished is an agent that stopped on its own.
 	SessionFinished = "finished"
@@ -101,6 +122,9 @@ type AuthoringSession struct {
 	Detail    string `json:"detail"`
 	Events    int    `json:"events"`
 	Refused   int    `json:"refused"`
+	// QueuedAt is when a session past the limit began waiting, and Ahead how many wait before it.
+	QueuedAt string `json:"queuedAt,omitempty"`
+	Ahead    int    `json:"ahead,omitempty"`
 	// What the session spent, each nil until the CLI reported it.
 	ModelCalls   *int64 `json:"modelCalls"`
 	InputTokens  *int64 `json:"inputTokens"`
@@ -110,9 +134,9 @@ type AuthoringSession struct {
 
 // AuthoringSpend is what one model call in a session cost, as far as the CLI reported it.
 type AuthoringSpend struct {
-	InputTokens  *int64
-	OutputTokens *int64
-	NanoAIU      *int64
+	InputTokens  *int64 `json:"inputTokens,omitempty"`
+	OutputTokens *int64 `json:"outputTokens,omitempty"`
+	NanoAIU      *int64 `json:"nanoAiu,omitempty"`
 }
 
 // AuthoringEvent is one hook invocation in a session.
@@ -156,8 +180,8 @@ func (s *Store) StartAuthoringSession(request int64, startedBy, model string) (i
 	var running, exists int
 	if err := tx.QueryRow(`
 		SELECT (SELECT COUNT(*) FROM abom_query_request WHERE row_id = ?),
-		       (SELECT COUNT(*) FROM abom_authoring_session WHERE request_id = ? AND state = ?)`,
-		request, request, SessionRunning).Scan(&exists, &running); err != nil {
+		       (SELECT COUNT(*) FROM abom_authoring_session WHERE request_id = ? AND state IN (?, ?))`,
+		request, request, SessionRunning, SessionQueued).Scan(&exists, &running); err != nil {
 		return 0, fmt.Errorf("reading request %d: %w", request, err)
 	}
 	switch {
@@ -181,15 +205,23 @@ func (s *Store) StartAuthoringSession(request int64, startedBy, model string) (i
 	return id, tx.Commit()
 }
 
-// EndAuthoringSession records how a session under way ended.
-func (s *Store) EndAuthoringSession(session int64, state, detail string) error {
+// CheckSessionEnd refuses a way of ending a session other than those a session ends in.
+func CheckSessionEnd(state string) error {
 	if !slices.Contains(sessionEnds, state) {
 		return fmt.Errorf("a session ends %s, not %q", strings.Join(sessionEnds, ", "), state)
 	}
+	return nil
+}
+
+// EndAuthoringSession records how a session under way, or waiting its turn, ended.
+func (s *Store) EndAuthoringSession(session int64, state, detail string) error {
+	if err := CheckSessionEnd(state); err != nil {
+		return err
+	}
 	res, err := s.db.Exec(`
 		UPDATE abom_authoring_session SET state = ?, detail = ?, ended_at = ?
-		WHERE row_id = ? AND state = ?`,
-		state, audit.Text(detail), time.Now().UTC().Format(time.RFC3339), session, SessionRunning)
+		WHERE row_id = ? AND state IN (?, ?)`,
+		state, audit.Text(detail), time.Now().UTC().Format(time.RFC3339), session, SessionRunning, SessionQueued)
 	if err != nil {
 		return fmt.Errorf("ending session %d: %w", session, err)
 	}
@@ -241,7 +273,9 @@ func (s *Store) AuthoringSessions(request int64) ([]AuthoringSession, error) {
 		SELECT s.row_id, s.request_id, s.state, s.started_by, s.model, s.started_at,
 		       COALESCE(s.ended_at, ''), s.detail, COUNT(e.row_id),
 		       COALESCE(SUM(e.decision = 'refused'), 0),
-		       s.model_calls, s.input_tokens, s.output_tokens, s.nano_aiu
+		       s.model_calls, s.input_tokens, s.output_tokens, s.nano_aiu, COALESCE(s.queued_at, ''),
+		       (SELECT COUNT(*) FROM abom_authoring_session q WHERE s.state = 'queued' AND q.state = 'queued'
+		          AND (q.queued_at < s.queued_at OR (q.queued_at = s.queued_at AND q.row_id < s.row_id)))
 		FROM abom_authoring_session s
 		LEFT JOIN abom_authoring_event e ON e.session_id = s.row_id
 		WHERE s.request_id = ?
@@ -254,7 +288,8 @@ func (s *Store) AuthoringSessions(request int64) ([]AuthoringSession, error) {
 		var a AuthoringSession
 		var calls, input, output, nano sql.NullInt64
 		if err := rows.Scan(&a.RowID, &a.RequestID, &a.State, &a.StartedBy, &a.Model, &a.StartedAt,
-			&a.EndedAt, &a.Detail, &a.Events, &a.Refused, &calls, &input, &output, &nano); err != nil {
+			&a.EndedAt, &a.Detail, &a.Events, &a.Refused, &calls, &input, &output, &nano, &a.QueuedAt,
+			&a.Ahead); err != nil {
 			return AuthoringSession{}, fmt.Errorf("scanning a session: %w", err)
 		}
 		a.ModelCalls, a.InputTokens = reported(calls), reported(input)
@@ -293,7 +328,11 @@ func reported(n sql.NullInt64) *int64 {
 // SetAuthoringSessionModel records the models a session's calls ran on, which the runtime chose
 // where it did not offer the one asked for.
 func (s *Store) SetAuthoringSessionModel(session int64, model string) error {
-	res, err := s.db.Exec(`UPDATE abom_authoring_session SET model = ? WHERE row_id = ?`, model, session)
+	return setAuthoringSessionModel(s.db, session, model)
+}
+
+func setAuthoringSessionModel(w authoringWriter, session int64, model string) error {
+	res, err := w.Exec(`UPDATE abom_authoring_session SET model = ? WHERE row_id = ?`, model, session)
 	if err != nil {
 		return fmt.Errorf("recording session %d's model: %w", session, err)
 	}
@@ -306,7 +345,16 @@ func (s *Store) SetAuthoringSessionModel(session int64, model string) error {
 // AddAuthoringSpend adds one model call's cost to its session as it arrives, so a session stopped
 // part way still says what it cost. A figure the call did not report leaves the total as it was.
 func (s *Store) AddAuthoringSpend(session int64, spent AuthoringSpend) error {
-	res, err := s.db.Exec(`
+	return addAuthoringSpend(s.db, session, spent)
+}
+
+func addAuthoringSpend(w authoringWriter, session int64, spent AuthoringSpend) error {
+	for _, n := range []*int64{spent.InputTokens, spent.OutputTokens, spent.NanoAIU} {
+		if n != nil && *n < 0 {
+			return fmt.Errorf("session %d cannot have spent less than nothing", session)
+		}
+	}
+	res, err := w.Exec(`
 		UPDATE abom_authoring_session SET
 		  model_calls = COALESCE(model_calls, 0) + 1,
 		  input_tokens = CASE WHEN CAST(?1 AS BIGINT) IS NULL THEN input_tokens ELSE COALESCE(input_tokens, 0) + ?1 END,
@@ -325,8 +373,38 @@ func (s *Store) AddAuthoringSpend(session int64, spent AuthoringSpend) error {
 
 // RecordAuthoringEvent appends one hook invocation to its session's timeline.
 func (s *Store) RecordAuthoringEvent(e AuthoringEvent) (int64, error) {
+	return recordAuthoringEvent(s.db, e)
+}
+
+// CheckAuthoringEvent refuses an event the store would not keep, before anything is kept.
+func CheckAuthoringEvent(e AuthoringEvent) error {
 	if e.SessionID == 0 || e.At == "" || e.Hook == "" || e.Tool == "" || e.Decision == "" {
-		return 0, errors.New("an event names its session, when, the hook, the tool and the decision")
+		return errors.New("an event names its session, when, the hook, the tool and the decision")
+	}
+	// The interface and the guide make it a link; a worker's report is what names it.
+	if d := e.Capture.ArtifactDigest; d != "" && !isDigest(d) {
+		return errors.New("an event names a printed tree only by its digest")
+	}
+	_, err := marshalCapture(safeAuditEvent(e, false).Capture)
+	return err
+}
+
+// isDigest is whether s is a SHA-256 as this store writes one: 64 lowercase hexadecimal digits.
+func isDigest(s string) bool {
+	if len(s) != sha256.Size*2 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func recordAuthoringEvent(w authoringWriter, e AuthoringEvent) (int64, error) {
+	if err := CheckAuthoringEvent(e); err != nil {
+		return 0, err
 	}
 	e = safeAuditEvent(e, false)
 	if e.Source != "sdk" {
@@ -344,7 +422,7 @@ func (s *Store) RecordAuthoringEvent(e AuthoringEvent) (int64, error) {
 		e.ReceivedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
 	if e.PolicyID == 0 && e.Capture.Policy == nil {
-		if err := s.db.QueryRow(`SELECT COALESCE(MAX(row_id),0) FROM abom_authoring_event
+		if err := w.QueryRow(`SELECT COALESCE(MAX(row_id),0) FROM abom_authoring_event
 			WHERE session_id=? AND hook='policy'`, e.SessionID).Scan(&e.PolicyID); err != nil {
 			return 0, err
 		}
@@ -352,7 +430,7 @@ func (s *Store) RecordAuthoringEvent(e AuthoringEvent) (int64, error) {
 	// Only reported SDK identities deduplicate; equal hook arguments are distinct observations.
 	if e.SourceID != "" {
 		var id int64
-		err := s.db.QueryRow(`SELECT row_id FROM abom_authoring_event WHERE session_id=? AND source_id=?`,
+		err := w.QueryRow(`SELECT row_id FROM abom_authoring_event WHERE session_id=? AND source_id=?`,
 			e.SessionID, e.SourceID).Scan(&id)
 		if err == nil {
 			return id, nil
@@ -362,7 +440,7 @@ func (s *Store) RecordAuthoringEvent(e AuthoringEvent) (int64, error) {
 		}
 	}
 	var id int64
-	err = s.db.QueryRow(`
+	err = w.QueryRow(`
 		INSERT INTO abom_authoring_event
 		  (session_id, at, hook, tool, subject, decision, step, reason, detail, took_ms,
 		   source, source_id, received_at, query_id, query_version, policy_id, capture)
@@ -371,7 +449,7 @@ func (s *Store) RecordAuthoringEvent(e AuthoringEvent) (int64, error) {
 		e.SessionID, e.At, e.Hook, e.Tool, e.Subject, e.Decision, e.Step, e.Reason, e.Detail, took,
 		e.Source, e.SourceID, e.ReceivedAt, e.QueryID, e.QueryVersion, e.PolicyID, capture).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) && e.SourceID != "" {
-		err := s.db.QueryRow(`SELECT row_id FROM abom_authoring_event WHERE session_id=? AND source_id=?`, e.SessionID, e.SourceID).Scan(&id)
+		err := w.QueryRow(`SELECT row_id FROM abom_authoring_event WHERE session_id=? AND source_id=?`, e.SessionID, e.SourceID).Scan(&id)
 		return id, err
 	}
 	if err != nil {
@@ -404,13 +482,25 @@ const authoringEventsLimit = 500
 // DecideTarget records the agent's choice of the query a request is about, with why. Only where
 // nobody chose one: the operator's choice is theirs, and a decision is made once.
 func (s *Store) DecideTarget(request int64, queryID, rationale string) error {
+	return decideTarget(s.db, request, queryID, rationale)
+}
+
+// CheckTargetDecision refuses a decided target the store would not keep.
+func CheckTargetDecision(queryID, rationale string) error {
 	if strings.TrimSpace(queryID) == "" {
 		return errors.New("a decided target names a query")
 	}
 	if strings.TrimSpace(rationale) == "" {
 		return errors.New("a decided target says why it was chosen")
 	}
-	res, err := s.db.Exec(`
+	return nil
+}
+
+func decideTarget(w authoringWriter, request int64, queryID, rationale string) error {
+	if err := CheckTargetDecision(queryID, rationale); err != nil {
+		return err
+	}
+	res, err := w.Exec(`
 		UPDATE abom_query_request SET query_id = ?, target_source = ?, target_detail = ?, updated_at = ?
 		WHERE row_id = ? AND query_id = ''`,
 		queryID, TargetAgent, rationale, time.Now().UTC().Format(time.RFC3339), request)
@@ -421,7 +511,7 @@ func (s *Store) DecideTarget(request int64, queryID, rationale string) error {
 		return err
 	}
 	var named string
-	switch err := s.db.QueryRow(`SELECT query_id FROM abom_query_request WHERE row_id = ?`,
+	switch err := w.QueryRow(`SELECT query_id FROM abom_query_request WHERE row_id = ?`,
 		request).Scan(&named); {
 	case errors.Is(err, sql.ErrNoRows):
 		return fmt.Errorf("deciding the target of request %d: %w", request, ErrNoQueryRequest)

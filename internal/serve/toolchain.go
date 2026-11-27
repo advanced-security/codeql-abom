@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 
 	"github.com/advanced-security/codeql-abom/internal/supervisor"
 	"github.com/advanced-security/codeql-abom/internal/toolchain"
@@ -41,7 +42,13 @@ func (s *Server) authoringReadiness(w http.ResponseWriter, r *http.Request) {
 	if checks == nil {
 		checks = []toolchain.Check{}
 	}
-	if s.Discovery != nil {
+	if s.SessionsElsewhere {
+		// What a session's Job runs is its image's; what this process runs says nothing about it.
+		checks = slices.DeleteFunc(checks, func(c toolchain.Check) bool {
+			return c.Key != toolchain.KeyPack && c.Key != toolchain.KeyToken
+		})
+	}
+	if s.Discovery != nil && !s.SessionsElsewhere {
 		free := toolchain.Check{Key: keyCodeQLFree, Name: "CodeQL free for a session", State: toolchain.Ready}
 		if state := s.crawlHoldingCodeQL(); state != "" {
 			free.State = toolchain.Problem

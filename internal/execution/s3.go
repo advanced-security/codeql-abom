@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,11 +13,25 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
-// maxObject bounds one object read back, so a hostile or broken worker cannot exhaust the
-// coordinator's memory with one output.
+// maxObject bounds any one object read back, so a hostile or broken worker cannot exhaust the
+// coordinator's memory with one output; a read that knows what it reads is bounded tighter.
 const maxObject = 512 << 20
+
+// readBounded reads body, refusing it with ErrTooLarge past limit, and limit past maxObject.
+func readBounded(key string, body io.Reader, limit int64) ([]byte, error) {
+	limit = min(limit, maxObject)
+	out, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(out)) > limit {
+		return nil, fmt.Errorf("reading %s: %w: %d bytes", key, ErrTooLarge, limit)
+	}
+	return out, nil
+}
 
 // S3Store is an object store in one bucket under one prefix: S3 on EKS, MinIO beside kind.
 type S3Store struct {
@@ -62,18 +77,18 @@ func (s *S3Store) Put(ctx context.Context, key string, body []byte) error {
 	return nil
 }
 
-func (s *S3Store) Get(ctx context.Context, key string) ([]byte, error) {
+func (s *S3Store) Get(ctx context.Context, key string, limit int64) ([]byte, error) {
 	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(s.prefix + key)})
+	var missing *types.NoSuchKey
+	if errors.As(err, &missing) {
+		return nil, fmt.Errorf("reading %s: %w", key, ErrNotFound)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", key, err)
 	}
 	defer out.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(out.Body, maxObject+1))
-	if err != nil {
-		return nil, err
+	if n := out.ContentLength; n != nil && *n > min(limit, maxObject) {
+		return nil, fmt.Errorf("reading %s: %w: %d bytes", key, ErrTooLarge, min(limit, maxObject))
 	}
-	if len(body) > maxObject {
-		return nil, fmt.Errorf("%s is larger than %d bytes", key, maxObject)
-	}
-	return body, nil
+	return readBounded(key, out.Body, limit)
 }

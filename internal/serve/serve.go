@@ -176,6 +176,9 @@ type Server struct {
 	// Authoring runs agent sessions on requests, in QueryDir. Nil answers that this server has no
 	// pack to author in.
 	Authoring Authoring
+	// SessionsElsewhere says Authoring runs each session in its own Job, taking none of this
+	// process's CodeQL, so discovery working is no reason to refuse one.
+	SessionsElsewhere bool
 
 	// ReadDeclarations records what catalog versions declare, read from the files on disk that are
 	// them, and answers why for each it could not. Nil says nothing here can read one.
@@ -413,6 +416,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/runs/{id}/drafts", s.startDraft)
 	mux.HandleFunc("POST /api/runs/{id}/drafts/stop", s.stopDraft)
 	mux.HandleFunc("GET /api/authoring-asts/{id}", s.authoringAST)
+	mux.HandleFunc("GET /api/authoring-sessions/{id}/asts/{digest}", reading(s.authoringASTByDigest))
 	mux.HandleFunc("GET /api/runs", s.runs)
 	mux.HandleFunc("POST /api/runs", s.startRun)
 	mux.HandleFunc("GET /api/runs/suggestion", reading(s.runSuggestion, "query"))

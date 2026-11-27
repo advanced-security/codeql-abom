@@ -262,3 +262,30 @@ func TestAWorkerIsLentNothingForARepositoryTheInstallationDoesNotSelect(t *testi
 		t.Error("the refusal dropped what was known about the installation")
 	}
 }
+
+// A session's token is revoked once the session ends rather than living out its hour, and the App never
+// hands it out again; revoking one GitHub has already ended is not a failure.
+func TestARevokedTokenEndsAtGitHubAndIsNeverHandedOutAgain(t *testing.T) {
+	key, _ := testKeys(t)
+	c := newClock()
+	gh := newFakeGitHub(t, key, c.Now,
+		fakeInstallation{ID: 11, Login: "has-ghas", Type: "Organization", Selection: "all", Granted: approvedEverything})
+	app := gh.app(c.Now)
+	ctx := context.Background()
+	session, _, err := app.TokenWith(ctx, "has-ghas", CopilotPermissions, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.Revoke(ctx, session); err != nil {
+		t.Fatalf("Revoke: %v", err)
+	}
+	if !slices.Contains(gh.revoked, session) {
+		t.Errorf("GitHub revoked %v, not the session's token", gh.revoked)
+	}
+	if again, _, err := app.TokenWith(ctx, "has-ghas", CopilotPermissions, false); err != nil || again == session {
+		t.Errorf("after revoking it the App handed out %q, %v", again, err)
+	}
+	if err := app.Revoke(ctx, session); err != nil {
+		t.Errorf("revoking a token GitHub already ended answered %v", err)
+	}
+}

@@ -134,6 +134,41 @@ func TestATestRunKeepsItsDatabases(t *testing.T) {
 
 // One query's tests are the only evidence about it: running the whole tree grades a query by its
 // neighbors' tests.
+// A session's worker runs its tests on a copy of the pack that the agent beside it cannot write, so the
+// copy is the only operator pack the CLI resolves, whichever the process was configured with; and it is
+// never on the search path, where a directory can supply an extractor the CLI runs.
+func TestATestRunInACopyOfThePackResolvesOnlyTheCopy(t *testing.T) {
+	fixture, err := filepath.Abs(filepath.Join("testdata", "testrun-pass.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub, _ := stubCodeQL(t, `printf '%s\n' "$@" > "$(dirname "$0")/argv.txt"`+"\ncat "+fixture+"\n")
+	shared := t.TempDir()
+	withCustomRoot(t, shared)
+	copied := t.TempDir()
+	r := &Runner{CodeQLPath: stub}
+	if _, err := r.RunTestsHeldIn(context.Background(), copied, []string{filepath.Join(copied, "test", "A")}); err != nil {
+		t.Fatalf("RunTestsHeldIn: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(filepath.Dir(stub), "argv.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Split(strings.TrimSpace(string(body)), "\n")
+	packs := ""
+	for i, arg := range args {
+		switch {
+		case arg == "--additional-packs" && i+1 < len(args):
+			packs = args[i+1]
+		case strings.HasPrefix(arg, "--search-path"):
+			t.Errorf("the run is handed %s", arg)
+		}
+	}
+	if packs != copied {
+		t.Errorf("the run resolves operator packs from %q, want only %q (not %q)", packs, copied, shared)
+	}
+}
+
 func TestATestRunNamesOnlyTheTestsItWasGiven(t *testing.T) {
 	fixture, err := filepath.Abs(filepath.Join("testdata", "testrun-pass.json"))
 	if err != nil {
